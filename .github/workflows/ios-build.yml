@@ -1,0 +1,51 @@
+name: Build iOS app
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-build.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Unsigned iOS build
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show selected Xcode
+        run: xcodebuild -version
+      - name: Build for physical iPhone/iPad
+        run: >-
+          xcodebuild
+          -project AirPlaySubtitlePlayer.xcodeproj
+          -scheme AirPlaySubtitlePlayer
+          -configuration Release
+          -sdk iphoneos
+          -destination 'generic/platform=iOS'
+          -derivedDataPath "$RUNNER_TEMP/DerivedData"
+          CODE_SIGNING_ALLOWED=NO
+          build
+      - name: Package unsigned IPA for ByteLoader
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          ditto "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/AirPlaySubtitlePlayer.app" "$RUNNER_TEMP/ipa/Payload/AirPlaySubtitlePlayer.app"
+          cd "$RUNNER_TEMP/ipa"
+          zip -qry "$RUNNER_TEMP/AirPlaySubtitlePlayer-unsigned.ipa" Payload
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirPlaySubtitlePlayer-unsigned
+          path: ${{ runner.temp }}/AirPlaySubtitlePlayer-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
