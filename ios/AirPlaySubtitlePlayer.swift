@@ -83,13 +83,19 @@ struct CatalogScreen: View {
 struct EpisodesScreen: View {
     let bridgeBaseURL: String
     let anime: Anime
-    let resumeEpisode: Int? = nil
+    let resumeEpisode: Int?
     @EnvironmentObject private var history: WatchHistoryStore
     @State private var series: Series?
     @State private var pendingServers: EpisodeServers?
     @State private var playback: PlaybackSession?
     @State private var loading = true
     @State private var errorMessage: String?
+
+    init(bridgeBaseURL: String, anime: Anime, resumeEpisode: Int? = nil) {
+        self.bridgeBaseURL = bridgeBaseURL
+        self.anime = anime
+        self.resumeEpisode = resumeEpisode
+    }
 
     var body: some View {
         List {
@@ -199,7 +205,7 @@ struct VideoScreen: View {
         if timeObserver == nil {
             timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 5, preferredTimescale: 600), queue: .main) { time in
                 guard time.seconds.isFinite, time.seconds >= 0 else { return }
-                history.update(historyEntry, positionSeconds: time.seconds)
+                Task { @MainActor in history.update(historyEntry, positionSeconds: time.seconds) }
             }
         }
         player.play()
@@ -245,19 +251,19 @@ private enum BridgeClient {
     }
 }
 
-private struct SearchResponse: Decodable { let results: [Anime] }
-private struct Anime: Codable, Hashable, Identifiable { let title: String; let watchUrl: String; let imageUrl: String?; let meta: String; var id: String { watchUrl } }
-private struct WatchRequest: Encodable { let watchUrl: String }
-private struct Series: Decodable { let seriesKey: String; let title: String; let episodes: [Episode] }
-private struct Episode: Decodable, Identifiable { let number: Int; let title: String; var id: Int { number } }
-private struct ServerResponse: Decodable { let episode: Int; let servers: [Server] }
-private struct Server: Decodable, Identifiable { let index: Int; let name: String; let type: String; var id: Int { index } }
-private struct EpisodeServers: Identifiable { let episode: Int; let seriesKey: String; let servers: [Server]; var id: Int { episode } }
-private struct PlayRequest: Encodable { let seriesKey: String; let episode: Int; let serverIndex: Int }
-private struct Playback: Decodable, Identifiable { let playbackUrl: String; let subtitleTracks: Int; var id: String { playbackUrl } }
-private struct PlaybackSession: Identifiable { let playback: Playback; let historyEntry: WatchHistoryEntry; var id: String { playback.id } }
+struct SearchResponse: Decodable { let results: [Anime] }
+struct Anime: Codable, Hashable, Identifiable { let title: String; let watchUrl: String; let imageUrl: String?; let meta: String; var id: String { watchUrl } }
+struct WatchRequest: Encodable { let watchUrl: String }
+struct Series: Decodable { let seriesKey: String; let title: String; let episodes: [Episode] }
+struct Episode: Decodable, Identifiable { let number: Int; let title: String; var id: Int { number } }
+struct ServerResponse: Decodable { let episode: Int; let servers: [Server] }
+struct Server: Decodable, Identifiable { let index: Int; let name: String; let type: String; var id: Int { index } }
+struct EpisodeServers: Identifiable { let episode: Int; let seriesKey: String; let servers: [Server]; var id: Int { episode } }
+struct PlayRequest: Encodable { let seriesKey: String; let episode: Int; let serverIndex: Int }
+struct Playback: Decodable, Identifiable { let playbackUrl: String; let subtitleTracks: Int; var id: String { playbackUrl } }
+struct PlaybackSession: Identifiable { let playback: Playback; let historyEntry: WatchHistoryEntry; var id: String { playback.id } }
 
-private struct WatchHistoryEntry: Codable, Hashable, Identifiable {
+struct WatchHistoryEntry: Codable, Hashable, Identifiable {
     let seriesTitle: String
     let watchUrl: String
     let episode: Int
