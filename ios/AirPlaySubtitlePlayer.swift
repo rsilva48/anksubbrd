@@ -451,62 +451,30 @@ struct SearchScreen: View {
 struct HistoryScreen: View {
     let bridgeBaseURL: String
     @EnvironmentObject private var history: WatchHistoryStore
-    @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
-    @State private var editMode: EditMode = .inactive
-    @State private var showBulkDeleteConfirmation = false
 
     var body: some View {
         NavigationStack {
-            historyList
-                .navigationTitle("Continuar viendo")
-                .modifier(AdaptableTabRootTitleStyle())
-                .toolbar {
-                    // Keep these items registered. TabView's adaptable
-                    // navigation bar does not reliably insert a ToolbarItem
-                    // that first appears after EditButton changes state.
-                    ToolbarItem(placement: .topBarTrailing) {
-                        selectAllButton
-                            .frame(width: editMode.isEditing ? nil : 0)
-                            .clipped()
-                            .opacity(editMode.isEditing ? 1 : 0)
-                            .allowsHitTesting(editMode.isEditing)
-                            .accessibilityHidden(!editMode.isEditing)
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        bulkDeleteButton
-                            .opacity(editMode.isEditing ? 1 : 0)
-                            .allowsHitTesting(editMode.isEditing)
-                            .accessibilityHidden(!editMode.isEditing)
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        EditButton()
-                    }
-                }
-                .confirmationDialog(
-                    "¿Borrar \(selectedEntryIDs.count) series?",
-                    isPresented: $showBulkDeleteConfirmation,
-                    titleVisibility: .visible
-                ) {
-                    Button("Borrar \(selectedEntryIDs.count) series", role: .destructive) {
-                        deleteSelected()
-                    }
-                }
+            NativeHistoryList(bridgeBaseURL: bridgeBaseURL)
         }
-        .environment(\.editMode, $editMode)
         .task(id: bridgeBaseURL) {
             await history.sync(with: bridgeBaseURL, force: true)
         }
-        .onChange(of: history.entries) { updatedEntries in
-            selectedEntryIDs.formIntersection(Set(updatedEntries.map(\.id)))
-        }
-        .onChange(of: editMode) { mode in
-            if !mode.isEditing {
-                selectedEntryIDs.removeAll()
-            }
-        }
     }
+}
 
-    private var historyList: some View {
+/// Owns the list, EditButton, and the environment value that EditButton changes.
+/// Keeping them in this one navigation subtree is required for native List edit
+/// mode to drive the contextual toolbar actions on both iPhone and iPad.
+private struct NativeHistoryList: View {
+    let bridgeBaseURL: String
+    @EnvironmentObject private var history: WatchHistoryStore
+    @Environment(\.editMode) private var editMode
+    @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
+    @State private var showBulkDeleteConfirmation = false
+
+    private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
+
+    var body: some View {
         List(selection: $selectedEntryIDs) {
             if history.entries.isEmpty {
                 Section {
@@ -534,8 +502,40 @@ struct HistoryScreen: View {
             }
         }
         .listStyle(.insetGrouped)
+        .navigationTitle("Continuar viendo")
+        .modifier(AdaptableTabRootTitleStyle())
+        .toolbar {
+            if isEditing {
+                ToolbarItem(placement: .topBarLeading) {
+                    selectAllButton
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    bulkDeleteButton
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                EditButton()
+            }
+        }
+        .confirmationDialog(
+            "¿Borrar \(selectedEntryIDs.count) series?",
+            isPresented: $showBulkDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Borrar \(selectedEntryIDs.count) series", role: .destructive) {
+                deleteSelected()
+            }
+        }
         .refreshable {
             await history.sync(with: bridgeBaseURL, force: true)
+        }
+        .onChange(of: history.entries) { updatedEntries in
+            selectedEntryIDs.formIntersection(Set(updatedEntries.map(\.id)))
+        }
+        .onChange(of: isEditing) { editing in
+            if !editing {
+                selectedEntryIDs.removeAll()
+            }
         }
     }
 
@@ -551,10 +551,9 @@ struct HistoryScreen: View {
                 selectedEntryIDs = Set(history.entries.map(\.id))
             }
         } label: {
-            Label(allEntriesSelected ? "Ninguno" : "Todos", systemImage: allEntriesSelected ? "xmark.circle" : "checkmark.circle")
+            Label(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo", systemImage: allEntriesSelected ? "xmark.circle" : "checkmark.circle")
         }
-        .accessibilityLabel(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo")
-        .disabled(!editMode.isEditing || history.entries.isEmpty)
+        .disabled(history.entries.isEmpty)
     }
 
     private var bulkDeleteButton: some View {
@@ -563,7 +562,7 @@ struct HistoryScreen: View {
         } label: {
             Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
         }
-        .disabled(!editMode.isEditing || selectedEntryIDs.isEmpty)
+        .disabled(selectedEntryIDs.isEmpty)
     }
 
     private func deleteSelected() {
