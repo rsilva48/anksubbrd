@@ -113,6 +113,17 @@ private enum SecureTokenStore {
         return true
     }
 
+    static func makeCurrentTokenSynchronizable(for bridgeBaseURL: String) throws -> Bool {
+        let account = try account(for: bridgeBaseURL)
+        if token(forAccount: account, synchronizable: true) != nil { return false }
+        guard let existing = token(forAccount: account, synchronizable: false) else { return false }
+        try save(existing, for: bridgeBaseURL)
+        guard token(forAccount: account, synchronizable: true) == existing else {
+            throw BridgeRequestError(message: "No se pudo verificar la copia sincronizable del token. La copia anterior sigue intacta.")
+        }
+        return true
+    }
+
     static func save(_ token: String, for bridgeBaseURL: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -213,6 +224,9 @@ struct MainTabScreen: View {
     @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
     @EnvironmentObject private var history: WatchHistoryStore
     @State private var requestedLocalNetworkAccess = false
+    @State private var availableUpdate: String?
+    @State private var showUpdate = false
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         TabView {
@@ -223,7 +237,7 @@ struct MainTabScreen: View {
                 .tabItem { Label("Recientes", systemImage: "clock.badge") }
 
             HistoryScreen(bridgeBaseURL: bridgeBaseURL)
-                .tabItem { Label("Continuar viendo", systemImage: "play.circle") }
+                .tabItem { Label("Continuar", systemImage: "play.circle") }
 
             SettingsScreen()
                 .tabItem { Label("Configuración", systemImage: "gearshape") }
@@ -234,6 +248,28 @@ struct MainTabScreen: View {
             history.activate(token: SecureTokenStore.currentToken(for: bridgeBaseURL), bridgeBaseURL: bridgeBaseURL)
             await requestLocalNetworkAccess()
             await history.sync(with: bridgeBaseURL, force: true)
+        }
+        .task {
+            if let version = await AppUpdateCheck.latestVersion() {
+                availableUpdate = version
+                showUpdate = true
+            }
+        }
+        .alert("Actualización disponible", isPresented: $showUpdate) {
+            Button("Abrir en LiveContainer") {
+                var components = URLComponents()
+                components.scheme = "livecontainer"
+                components.host = "install"
+                components.queryItems = [URLQueryItem(name: "url", value: AppUpdateCheck.latestIPA.absoluteString)]
+                if let url = components.url {
+                    openURL(url) { accepted in
+                        if !accepted { openURL(AppUpdateCheck.latestIPA) }
+                    }
+                }
+            }
+            Button("Ahora no", role: .cancel) { }
+        } message: {
+            Text("Está disponible la versión \(availableUpdate ?? ""). LiveContainer te pedirá confirmar la instalación.")
         }
     }
 
@@ -247,11 +283,48 @@ struct MainTabScreen: View {
     }
 }
 
+private enum AppUpdateCheck {
+    static let latestIPA = URL(string: "https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa")!
+    private struct Release: Decodable {
+        struct Asset: Decodable { let name: String; let state: String }
+        let tag_name: String
+        let assets: [Asset]
+    }
+    static func latestVersion() async -> String? {
+        guard let installed = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+              let local = parse(installed),
+              let url = URL(string: "https://api.github.com/repos/rsilva48/anksubbrd/releases/latest") else { return nil }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let response = response as? HTTPURLResponse, response.statusCode == 200 else { return nil }
+            let release = try JSONDecoder().decode(Release.self, from: data)
+            guard release.assets.contains(where: { $0.name == "AirPlaySubtitlePlayer-unsigned.ipa" && $0.state == "uploaded" }),
+                  let remote = parse(release.tag_name), remote.lexicographicallyPrecedes(local) == false,
+                  remote != local else { return nil }
+            return release.tag_name
+        } catch { return nil }
+    }
+    private static func parse(_ value: String) -> [Int]? {
+        let parts = value.trimmingCharacters(in: CharacterSet(charactersIn: "v")).split(separator: ".")
+        guard parts.count == 3 else { return nil }
+        let numbers = parts.compactMap { Int($0) }
+        return numbers.count == 3 ? numbers : nil
+    }
+}
+
 struct LatestScreen: View {
     let bridgeBaseURL: String
     @State private var page = 1
     @State private var season = ""
     @State private var status = ""
+    @State private var rating = "Todos"
+    @State private var mediaType = "Todos"
+    @State private var year = "Todos"
+    @State private var minimumScore = 0
+    @State private var showFilters = false
     @State private var results: [Anime] = []
     @State private var hasNext = false
     @State private var loading = false
@@ -260,25 +333,10 @@ struct LatestScreen: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Filtros") {
-                    Picker("Estación", selection: $season) {
-                        Text("Todas").tag("")
-                        Text("Invierno").tag("winter")
-                        Text("Primavera").tag("spring")
-                        Text("Verano").tag("summer")
-                        Text("Otoño").tag("fall")
-                    }
-                    Picker("Estado", selection: $status) {
-                        Text("Todos").tag("")
-                        Text("En emisión").tag("currently-airing")
-                        Text("Finalizado").tag("finished-airing")
-                        Text("Próximamente").tag("not-yet-aired")
-                    }
-                }
                 if loading { ProgressView("Cargando…") }
                 if let errorMessage { ErrorNotice(message: errorMessage) }
                 Section("Actualizaciones recientes") {
-                    ForEach(results) { anime in
+                    ForEach(results.filter { minimumScore == 0 || ($0.score ?? 0) >= Double(minimumScore) }) { anime in
                         NavigationLink {
                             EpisodesScreen(bridgeBaseURL: bridgeBaseURL, anime: anime, resumeEpisode: anime.episode)
                         } label: {
@@ -301,7 +359,11 @@ struct LatestScreen: View {
             }
             .navigationTitle("Recientes")
             .modifier(AdaptableTabRootTitleStyle())
-            .task(id: "\(bridgeBaseURL)|\(page)|\(season)|\(status)") { await loadPage() }
+            .toolbar { ToolbarItem(placement: .primaryAction) { Button { showFilters = true } label: { Label("Filtros", systemImage: "line.3.horizontal.decrease.circle") } } }
+            .sheet(isPresented: $showFilters) {
+                CatalogFilterSheet(season: $season, status: $status, rating: $rating, mediaType: $mediaType, year: $year, minimumScore: $minimumScore) { page = 1 }
+            }
+            .task(id: "\(bridgeBaseURL)|\(page)|\(season)|\(status)|\(rating)|\(mediaType)|\(year)") { await loadPage() }
             .onChange(of: season) { _ in page = 1 }
             .onChange(of: status) { _ in page = 1 }
             .refreshable { await loadPage() }
@@ -314,7 +376,7 @@ struct LatestScreen: View {
         defer { loading = false }
         do {
             let reply: LatestResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/latest", query: [
-                URLQueryItem(name: "page", value: String(page)), URLQueryItem(name: "season", value: season), URLQueryItem(name: "status", value: status)
+                URLQueryItem(name: "page", value: String(page)), URLQueryItem(name: "season", value: season), URLQueryItem(name: "status", value: status), URLQueryItem(name: "rating", value: rating == "Todos" ? "" : rating), URLQueryItem(name: "mediaType", value: mediaType == "Todos" ? "" : mediaType), URLQueryItem(name: "year", value: year == "Todos" ? "" : year)
             ])
             try Task.checkCancellation()
             results = reply.results
@@ -323,6 +385,59 @@ struct LatestScreen: View {
             return
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct CatalogFilterSheet: View {
+    @Binding var season: String
+    @Binding var status: String
+    @Binding var rating: String
+    @Binding var mediaType: String
+    @Binding var year: String
+    @Binding var minimumScore: Int
+    let onApply: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Catálogo") {
+                    Picker("Estación", selection: $season) {
+                        Text("Todas").tag(""); Text("Invierno").tag("winter"); Text("Primavera").tag("spring"); Text("Verano").tag("summer"); Text("Otoño").tag("fall")
+                    }
+                    Picker("Estado", selection: $status) {
+                        Text("Todos").tag(""); Text("En emisión").tag("currently-airing"); Text("Finalizado").tag("finished-airing"); Text("Próximamente").tag("not-yet-aired")
+                    }
+                    Picker("Clasificación", selection: $rating) {
+                        Text("Todas").tag("Todos")
+                        ForEach(["G", "PG", "PG-13", "R", "R+", "Rx"], id: \.self) { Text($0).tag($0) }
+                    }
+                    Picker("Tipo", selection: $mediaType) {
+                        Text("Todos").tag("Todos")
+                        ForEach(["TV", "Movie", "ONA", "OVA", "Special"], id: \.self) { Text($0).tag($0) }
+                    }
+                    Picker("Año", selection: $year) {
+                        Text("Todos").tag("Todos")
+                        ForEach(Array((1980...(Calendar.current.component(.year, from: Date()) + 1)).reversed()), id: \.self) { value in Text(String(value)).tag(String(value)) }
+                    }
+                    Picker("Puntuación mínima", selection: $minimumScore) {
+                        Text("Cualquiera").tag(0)
+                        ForEach([5, 6, 7, 8, 9], id: \.self) { Text("\($0).0+").tag($0) }
+                    }
+                } footer: {
+                    Text("La puntuación se filtra en los resultados de la página actual.")
+                }
+                Button("Limpiar filtros") {
+                    season = ""; status = ""; rating = "Todos"; mediaType = "Todos"; year = "Todos"; minimumScore = 0
+                }
+            }
+            .navigationTitle("Filtros")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Aplicar") { onApply(); dismiss() }
+                }
+            }
         }
     }
 }
@@ -342,16 +457,11 @@ struct SearchScreen: View {
     @State private var filterHasNext = false
     @State private var loading = false
     @State private var errorMessage: String?
+    @State private var showFilters = false
 
-    private var ratingOptions: [String] { ["Todos"] + Array(Set(results.compactMap(\.rating))).sorted() }
-    private var mediaTypeOptions: [String] { ["Todos"] + Array(Set(results.compactMap(\.mediaType))).sorted() }
-    private var yearOptions: [String] { ["Todos"] + Array(Set(results.compactMap(\.year))).sorted(by: >).map(String.init) }
     private var filteredResults: [Anime] {
         results.filter { anime in
-            (ratingFilter == "Todos" || anime.rating == ratingFilter)
-                && (minimumScore == 0 || (anime.score ?? 0) >= Double(minimumScore))
-                && (mediaTypeFilter == "Todos" || anime.mediaType == mediaTypeFilter)
-                && (yearFilter == "Todos" || String(anime.year ?? 0) == yearFilter)
+            minimumScore == 0 || (anime.score ?? 0) >= Double(minimumScore)
         }
     }
 
@@ -366,6 +476,13 @@ struct SearchScreen: View {
             }
             .navigationTitle("AirPlay Subtitles")
             .modifier(AdaptableTabRootTitleStyle())
+            .toolbar { ToolbarItem(placement: .primaryAction) { Button { showFilters = true } label: { Label("Filtros", systemImage: "line.3.horizontal.decrease.circle") } } }
+            .sheet(isPresented: $showFilters) {
+                CatalogFilterSheet(season: $seasonFilter, status: $statusFilter, rating: $ratingFilter, mediaType: $mediaTypeFilter, year: $yearFilter, minimumScore: $minimumScore) {
+                    filterPage = 1
+                    search()
+                }
+            }
         }
     }
 
@@ -394,8 +511,6 @@ struct SearchScreen: View {
                 Section { ErrorNotice(message: errorMessage) }
             }
 
-            Section("Filtros") { filterControls }
-
             if !results.isEmpty {
                 Section("Resultados (\(filteredResults.count))") {
                     ForEach(filteredResults) { anime in
@@ -414,7 +529,7 @@ struct SearchScreen: View {
                     ContentPlaceholder(icon: "sparkle.magnifyingglass", title: "Busca una serie", detail: "Escribe un título para consultar el catálogo desde tu bridge.")
                 }
             }
-            if !seasonFilter.isEmpty || !statusFilter.isEmpty {
+            if hasServerFilters {
                 Section { pageControls }
             }
         }
@@ -452,11 +567,6 @@ struct SearchScreen: View {
                         .liquidGlassCard()
                 }
 
-                Text("Filtros")
-                    .font(.title2.bold())
-                filterControls
-                    .padding(18)
-                    .liquidGlassCard()
                 if !results.isEmpty {
                     Text("Resultados (\(filteredResults.count))")
                         .font(.title2.bold())
@@ -480,48 +590,15 @@ struct SearchScreen: View {
                     ContentPlaceholder(icon: "sparkle.magnifyingglass", title: "Busca una serie", detail: "Escribe un título para consultar el catálogo desde tu bridge.")
                         .liquidGlassCard()
                 }
-                if !seasonFilter.isEmpty || !statusFilter.isEmpty { pageControls }
+                if hasServerFilters { pageControls }
             }
             .frame(maxWidth: 1120, alignment: .leading)
             .padding(24)
         }
     }
 
-    private var filterControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Estación", selection: $seasonFilter) {
-                Text("Todas").tag(""); Text("Invierno").tag("winter"); Text("Primavera").tag("spring"); Text("Verano").tag("summer"); Text("Otoño").tag("fall")
-            }
-            Picker("Estado", selection: $statusFilter) {
-                Text("Todos").tag(""); Text("En emisión").tag("currently-airing"); Text("Finalizado").tag("finished-airing"); Text("Próximamente").tag("not-yet-aired")
-            }
-            Button("Aplicar filtros de estación y estado") { filterPage = 1; search() }
-                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loading)
-            Picker("PG Rating", selection: $ratingFilter) {
-                ForEach(ratingOptions, id: \.self) { Text($0).tag($0) }
-            }
-            .pickerStyle(.menu)
-            Picker("Puntuación mínima", selection: $minimumScore) {
-                Text("Cualquiera").tag(0)
-                ForEach([5, 6, 7, 8, 9], id: \.self) { score in
-                    Text("\(score).0+").tag(score)
-                }
-            }
-            .pickerStyle(.menu)
-            Picker("Tipo", selection: $mediaTypeFilter) {
-                ForEach(mediaTypeOptions, id: \.self) { Text($0).tag($0) }
-            }
-            .pickerStyle(.menu)
-            Picker("Año", selection: $yearFilter) {
-                ForEach(yearOptions, id: \.self) { Text($0).tag($0) }
-            }
-            .pickerStyle(.menu)
-            if ratingFilter != "Todos" || minimumScore != 0 || mediaTypeFilter != "Todos" || yearFilter != "Todos" {
-                Button("Limpiar filtros") {
-                    ratingFilter = "Todos"; minimumScore = 0; mediaTypeFilter = "Todos"; yearFilter = "Todos"
-                }
-            }
-        }
+    private var hasServerFilters: Bool {
+        !seasonFilter.isEmpty || !statusFilter.isEmpty || ratingFilter != "Todos" || mediaTypeFilter != "Todos" || yearFilter != "Todos"
     }
 
     private var pageControls: some View {
@@ -542,16 +619,15 @@ struct SearchScreen: View {
             errorMessage = nil
             defer { loading = false }
             do {
-                if seasonFilter.isEmpty && statusFilter.isEmpty {
+                if !hasServerFilters {
                     let reply: SearchResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/search", query: [URLQueryItem(name: "q", value: searchQuery)])
                     results = reply.results
                     filterHasNext = false
                 } else {
-                    let reply: LatestResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/latest", query: [URLQueryItem(name: "q", value: searchQuery), URLQueryItem(name: "page", value: String(filterPage)), URLQueryItem(name: "season", value: seasonFilter), URLQueryItem(name: "status", value: statusFilter)])
+                    let reply: LatestResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/latest", query: [URLQueryItem(name: "q", value: searchQuery), URLQueryItem(name: "page", value: String(filterPage)), URLQueryItem(name: "season", value: seasonFilter), URLQueryItem(name: "status", value: statusFilter), URLQueryItem(name: "rating", value: ratingFilter == "Todos" ? "" : ratingFilter), URLQueryItem(name: "mediaType", value: mediaTypeFilter == "Todos" ? "" : mediaTypeFilter), URLQueryItem(name: "year", value: yearFilter == "Todos" ? "" : yearFilter)])
                     results = reply.results
                     filterHasNext = reply.hasNext
                 }
-                ratingFilter = "Todos"; minimumScore = 0; mediaTypeFilter = "Todos"; yearFilter = "Todos"
             } catch {
                 errorMessage = error.localizedDescription
             }
@@ -921,10 +997,11 @@ struct SettingsScreen: View {
                 bridgeBaseURL = canonicalURL
                 verifiedBridgeURL = canonicalURL
                 let migratedLegacyToken = try SecureTokenStore.migrateLegacyToken(to: canonicalURL)
+                let copiedLocalToken = try SecureTokenStore.makeCurrentTokenSynchronizable(for: canonicalURL)
                 refreshTokenState()
                 bridgeTokenVersion += 1
-                testResult = migratedLegacyToken
-                    ? "Conectado al bridge. Tu identidad anterior se movió al Llavero de iCloud para esta URL."
+                testResult = (migratedLegacyToken || copiedLocalToken)
+                    ? "Conectado. La identidad se guardó como sincronizable en el Llavero; iCloud puede tardar en copiarla a otros dispositivos."
                     : "Conectado al bridge. Ya puedes crear, restaurar o importar una identidad."
             } catch {
                 testResult = error.localizedDescription
@@ -1477,10 +1554,7 @@ struct VideoScreen: View {
     }
 
     var body: some View {
-        ZStack(alignment: .top) {
-            NativePlayer(player: player)
-                .ignoresSafeArea()
-                .simultaneousGesture(TapGesture().onEnded { showControls() })
+        VStack(spacing: 0) {
             if controlsVisible {
                 HStack {
                     Button("Cerrar") { savePosition(); player.pause(); dismiss() }
@@ -1490,21 +1564,26 @@ struct VideoScreen: View {
                     Button { savePosition(); player.pause(); onNext() } label: { Label("Siguiente", systemImage: "forward.end.fill") }
                         .disabled(!hasNext)
                 }
-                .buttonStyle(.borderedProminent)
-                .padding()
+                .buttonStyle(.bordered)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
+            NativePlayer(player: player)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .simultaneousGesture(TapGesture().onEnded { showControls() })
             if let range = activeSkipRange {
-                VStack {
+                HStack {
                     Spacer()
-                    HStack {
-                        Spacer()
-                        Button(range.label) { seek(to: range.end) }
-                            .buttonStyle(.borderedProminent)
-                    }
-                    .padding()
+                    Button(range.label) { seek(to: range.end) }
+                        .buttonStyle(.bordered)
                 }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
         }
+        .tint(.white)
+        .foregroundStyle(.white)
+        .background(Color.black.ignoresSafeArea())
         .onAppear { beginPlayback(); showControls() }
         .onDisappear { hideTask?.cancel(); savePosition(); removeObservers() }
     }

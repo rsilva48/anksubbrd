@@ -447,16 +447,23 @@ function parseSearch(html) {
 async function latestUpdated(params) {
   const page = Math.max(1, Math.min(10000, Number.parseInt(params.get('page') || '1', 10) || 1));
   const season = params.get('season') || '', status = params.get('status') || '';
+  const rating = params.get('rating') || '', mediaType = params.get('mediaType') || '', year = params.get('year') || '';
   const keyword = cleanText(params.get('q')).slice(0, 200);
   if (season && !['winter', 'spring', 'summer', 'fall'].includes(season)) throw new Error('Invalid season');
   if (status && !['finished-airing', 'currently-airing', 'not-yet-aired'].includes(status)) throw new Error('Invalid status');
-  const url = new URL(season || status || keyword ? '/filter' : '/latest-updated', providerOrigin);
+  if (rating && !['G', 'PG', 'PG-13', 'R', 'R+', 'Rx'].includes(rating)) throw new Error('Invalid rating');
+  if (mediaType && !['TV', 'Movie', 'ONA', 'OVA', 'Special'].includes(mediaType)) throw new Error('Invalid media type');
+  if (year && !/^\d{4}$/.test(year)) throw new Error('Invalid year');
+  const url = new URL(season || status || keyword || rating || mediaType || year ? '/filter' : '/latest-updated', providerOrigin);
   url.searchParams.set('page', String(page));
-  if (season || status || keyword) {
+  if (season || status || keyword || rating || mediaType || year) {
     url.searchParams.set('sort', keyword ? 'default' : 'latest-updated');
     if (keyword) url.searchParams.set('keyword', keyword);
     if (season) url.searchParams.append('season[]', season);
     if (status) url.searchParams.append('status[]', status);
+    if (rating) url.searchParams.append('rating[]', rating);
+    if (mediaType) url.searchParams.append('term_type[]', mediaType);
+    if (year) url.searchParams.append('year[]', year);
   }
   const response = await fetchWithTimeout(url, { headers: { Accept: 'text/html' } }, 15000, 'Latest catalog request');
   if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);

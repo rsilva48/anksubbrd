@@ -95,6 +95,8 @@ Usa mensajes de [Conventional Commits](https://www.conventionalcommits.org/) (po
 
 Al subir una etiqueta semántica, GitHub Actions compila un IPA sin firmar cuya versión corresponde a la etiqueta, y publica una GitHub Release con el IPA directamente descargable y los mensajes de commit desde la etiqueta anterior. En el primer release se incluye el historial previo. Una compilación de rama sin etiqueta conserva una versión de desarrollo; no publica una release. La Release solo se crea después de una compilación exitosa. Abre la página Releases desde el iPhone/iPad, descarga el IPA e impórtalo desde LiveContainer. La firma/compatibilidad efectiva depende de la instalación de LiveContainer y de sus certificados; este flujo no firma el IPA.
 
+El enlace permanente del IPA es `https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa`. La app revisa la última release pública al abrirse y, si hay una versión posterior con IPA, ofrece abrirla en LiveContainer. El instalador requiere confirmación; si el esquema no se puede abrir, se ofrece el enlace de descarga en el navegador. La actualización de LiveContainer y la conservación de datos dependen de cómo esté instalado y configurado en el dispositivo.
+
 El hook es local al clon y no afecta commits creados en la interfaz de GitHub u otros clones sin instalarlo. No cambia `core.hooksPath` si ya está configurado ni sustituye un `post-commit` existente. Las releases usan permisos de escritura únicamente en el job de publicación.
 
 ## Usarlo fuera de casa con Caddy
