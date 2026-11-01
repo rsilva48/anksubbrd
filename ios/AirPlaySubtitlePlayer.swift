@@ -453,40 +453,69 @@ struct HistoryScreen: View {
     @EnvironmentObject private var history: WatchHistoryStore
     @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
     @State private var editMode: EditMode = .inactive
+    @State private var showBulkDeleteConfirmation = false
 
     var body: some View {
         NavigationStack {
             historyList
-            .navigationTitle("Continuar viendo")
-            .modifier(AdaptableTabRootTitleStyle())
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button(editMode.isEditing ? "Listo" : "Editar") {
+                .navigationTitle("Continuar viendo")
+                .modifier(AdaptableTabRootTitleStyle())
+                .toolbar {
+                    // These items keep stable identities so that the native
+                    // TabView navigation bar updates their contents as the
+                    // system EditButton changes editMode.
+                    ToolbarItem(placement: .topBarLeading) {
                         if editMode.isEditing {
-                            selectedEntryIDs.removeAll()
-                            editMode = .inactive
-                        } else {
-                            editMode = .active
+                            Button(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo") {
+                                if allEntriesSelected {
+                                    selectedEntryIDs.removeAll()
+                                } else {
+                                    selectedEntryIDs = Set(history.entries.map(\.id))
+                                }
+                            }
+                            .disabled(history.entries.isEmpty)
                         }
                     }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if editMode.isEditing {
+                            Button(role: .destructive) {
+                                showBulkDeleteConfirmation = true
+                            } label: {
+                                Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
+                            }
+                            .disabled(selectedEntryIDs.isEmpty)
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        EditButton()
+                    }
                 }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if editMode.isEditing {
-                    bulkActions
+                .confirmationDialog(
+                    "¿Borrar \(selectedEntryIDs.count) series?",
+                    isPresented: $showBulkDeleteConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Borrar \(selectedEntryIDs.count) series", role: .destructive) {
+                        deleteSelected()
+                    }
                 }
-            }
         }
+        .environment(\.editMode, $editMode)
         .task(id: bridgeBaseURL) {
             await history.sync(with: bridgeBaseURL, force: true)
         }
         .onChange(of: history.entries) { updatedEntries in
             selectedEntryIDs.formIntersection(Set(updatedEntries.map(\.id)))
         }
+        .onChange(of: editMode) { mode in
+            if !mode.isEditing {
+                selectedEntryIDs.removeAll()
+            }
+        }
     }
 
     private var historyList: some View {
-        List {
+        List(selection: $selectedEntryIDs) {
             if history.entries.isEmpty {
                 Section {
                     ContentPlaceholder(icon: "play.circle", title: "Nada para continuar", detail: "Las series que reproduzcas aparecerán aquí con el segundo en que las dejaste.")
@@ -494,36 +523,19 @@ struct HistoryScreen: View {
             } else {
                 Section("Reproducciones recientes") {
                     ForEach(history.entries) { entry in
-                        if editMode.isEditing {
-                            Button {
-                                toggleSelection(for: entry)
+                        NavigationLink {
+                            episodeScreen(for: entry)
+                        } label: {
+                            HistoryRow(entry: entry)
+                        }
+                        .tag(entry.id)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                delete([entry])
                             } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: selectedEntryIDs.contains(entry.id) ? "checkmark.circle.fill" : "circle")
-                                        .font(.title3)
-                                        .foregroundStyle(selectedEntryIDs.contains(entry.id) ? Color.accentColor : Color.secondary)
-                                        .accessibilityHidden(true)
-                                    HistoryRow(entry: entry)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                Label("Borrar", systemImage: "trash")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(entry.seriesTitle), episodio \(entry.episode)")
-                            .accessibilityValue(selectedEntryIDs.contains(entry.id) ? "Seleccionado" : "Sin seleccionar")
-                        } else {
-                            NavigationLink {
-                                episodeScreen(for: entry)
-                            } label: {
-                                HistoryRow(entry: entry)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) {
-                                    delete([entry])
-                                } label: {
-                                    Label("Borrar", systemImage: "trash")
-                                }
-                                .tint(.red)
-                            }
+                            .tint(.red)
                         }
                     }
                 }
@@ -535,69 +547,8 @@ struct HistoryScreen: View {
         }
     }
 
-    private var bulkActions: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                Button("Seleccionar todo") {
-                    selectedEntryIDs = Set(history.entries.map(\.id))
-                }
-                .disabled(history.entries.isEmpty || selectedEntryIDs.count == history.entries.count)
-
-                Button("Deseleccionar todo") {
-                    selectedEntryIDs.removeAll()
-                }
-                .disabled(selectedEntryIDs.isEmpty)
-
-                Divider()
-                    .frame(height: 22)
-
-                deleteSelectedButton
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    selectedEntryIDs = Set(history.entries.map(\.id))
-                } label: {
-                    Label("Todos", systemImage: "checkmark.circle")
-                }
-                .accessibilityLabel("Seleccionar todo")
-                .disabled(history.entries.isEmpty || selectedEntryIDs.count == history.entries.count)
-
-                Button {
-                    selectedEntryIDs.removeAll()
-                } label: {
-                    Label("Ninguno", systemImage: "circle")
-                }
-                .accessibilityLabel("Deseleccionar todo")
-                .disabled(selectedEntryIDs.isEmpty)
-
-                deleteSelectedButton
-            }
-        }
-        .font(.subheadline.weight(.semibold))
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    private var deleteSelectedButton: some View {
-        Button(role: .destructive) {
-            deleteSelected()
-        } label: {
-            Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
-        }
-        .tint(.red)
-        .disabled(selectedEntryIDs.isEmpty)
-    }
-
-    private func toggleSelection(for entry: WatchHistoryEntry) {
-        if selectedEntryIDs.contains(entry.id) {
-            selectedEntryIDs.remove(entry.id)
-        } else {
-            selectedEntryIDs.insert(entry.id)
-        }
+    private var allEntriesSelected: Bool {
+        !history.entries.isEmpty && selectedEntryIDs.count == history.entries.count
     }
 
     private func deleteSelected() {
