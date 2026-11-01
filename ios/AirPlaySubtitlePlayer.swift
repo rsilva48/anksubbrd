@@ -639,7 +639,7 @@ struct TokenProvisioningSheet: View {
                         Text("Este paso crea un secreto de 256 bits. No podrás recuperar el token si lo pierdes.")
                     }
                 } else {
-                    Section("Respalda este token antes de continuar") {
+                    Section {
                         Text(generatedToken)
                             .font(.system(.footnote, design: .monospaced))
                             .textSelection(.enabled)
@@ -647,6 +647,8 @@ struct TokenProvisioningSheet: View {
                             Label("Copiar o compartir de forma segura", systemImage: "square.and.arrow.up")
                         }
                         Toggle("Ya guardé este token en un lugar seguro", isOn: $confirmedBackup)
+                    } header: {
+                        Text("Respalda este token antes de continuar")
                     } footer: {
                         Text("Será la única credencial para acceder a este historial. Puedes usarlo después en otro dispositivo para compartir la misma lista.")
                     }
