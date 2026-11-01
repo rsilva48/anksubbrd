@@ -17,6 +17,7 @@ struct AirPlaySubtitlePlayerApp: App {
 
 struct MainTabScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
+    @State private var requestedLocalNetworkAccess = false
 
     var body: some View {
         TabView {
@@ -30,6 +31,18 @@ struct MainTabScreen: View {
                 .tabItem { Label("Configuración", systemImage: "gearshape") }
         }
         .tint(.indigo)
+        .task {
+            await requestLocalNetworkAccess()
+        }
+    }
+
+    private func requestLocalNetworkAccess() async {
+        guard !requestedLocalNetworkAccess else { return }
+        requestedLocalNetworkAccess = true
+        // A foreground request to the configured private address makes iOS show
+        // its Local Network consent alert before the user starts a catalog action.
+        // The result is deliberately ignored: this is only a permission warm-up.
+        _ = try? await BridgeClient.get(base: bridgeBaseURL, path: "/health", timeoutInterval: 5)
     }
 }
 
@@ -851,11 +864,13 @@ extension Server {
 }
 
 private enum BridgeClient {
-    static func get<T: Decodable>(base: String, path: String, query: [URLQueryItem] = []) async throws -> T {
+    static func get<T: Decodable>(base: String, path: String, query: [URLQueryItem] = [], timeoutInterval: TimeInterval = 30) async throws -> T {
         var components = try components(base: base, path: path)
         components.queryItems = query
         guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
-        return try await request(URLRequest(url: url))
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeoutInterval
+        return try await self.request(request)
     }
 
     static func post<T: Decodable, Body: Encodable>(base: String, path: String, body: Body) async throws -> T {
