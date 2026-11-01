@@ -460,17 +460,30 @@ struct HistoryScreen: View {
             .navigationTitle("Continuar viendo")
             .modifier(AdaptableTabRootTitleStyle())
             .toolbar {
-                if editMode.isEditing && !selectedEntryIDs.isEmpty {
-                    ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(placement: .primaryAction) {
+                    EditButton()
+                }
+                ToolbarItemGroup(placement: .bottomBar) {
+                    if editMode.isEditing {
+                        Button("Seleccionar todo") {
+                            selectedEntryIDs = Set(history.entries.map(\.id))
+                        }
+                        .disabled(history.entries.isEmpty || selectedEntryIDs.count == history.entries.count)
+
+                        Button("Deseleccionar todo") {
+                            selectedEntryIDs.removeAll()
+                        }
+                        .disabled(selectedEntryIDs.isEmpty)
+
+                        Spacer()
+
                         Button(role: .destructive) {
                             deleteSelected()
                         } label: {
                             Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
                         }
+                        .disabled(selectedEntryIDs.isEmpty)
                     }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    EditButton()
                 }
             }
         }
@@ -503,6 +516,7 @@ struct HistoryScreen: View {
                             } label: {
                                 Label("Borrar", systemImage: "trash")
                             }
+                            .tint(.red)
                         }
                     }
                 }
