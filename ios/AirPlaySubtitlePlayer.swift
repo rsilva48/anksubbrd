@@ -193,6 +193,21 @@ private struct NativeSidebarAdaptableTabStyle: ViewModifier {
     }
 }
 
+/// On iPad, the native adaptable tab bar shares the navigation-bar area while
+/// morphing to and from the sidebar. Keeping root titles inline avoids a large
+/// title being partially covered during that system transition. iPhone keeps
+/// its normal large-title appearance.
+private struct AdaptableTabRootTitleStyle: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            content.navigationBarTitleDisplayMode(.inline)
+        } else {
+            content
+        }
+    }
+}
+
 struct MainTabScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
     @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
@@ -263,6 +278,7 @@ struct SearchScreen: View {
                 }
             }
             .navigationTitle("AirPlay Subtitles")
+            .modifier(AdaptableTabRootTitleStyle())
         }
     }
 
@@ -447,6 +463,7 @@ struct HistoryScreen: View {
                 }
             }
             .navigationTitle("Continuar viendo")
+            .modifier(AdaptableTabRootTitleStyle())
         }
         .task(id: bridgeBaseURL) {
             await history.sync(with: bridgeBaseURL, force: true)
@@ -589,6 +606,7 @@ struct SettingsScreen: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Configuración")
+            .modifier(AdaptableTabRootTitleStyle())
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
