@@ -477,7 +477,6 @@ struct HistoryScreen: View {
                 }
             }
         }
-        .environment(\.editMode, $editMode)
         .task(id: bridgeBaseURL) {
             await history.sync(with: bridgeBaseURL, force: true)
         }
@@ -487,7 +486,7 @@ struct HistoryScreen: View {
     }
 
     private var historyList: some View {
-        List(selection: $selectedEntryIDs) {
+        List {
             if history.entries.isEmpty {
                 Section {
                     ContentPlaceholder(icon: "play.circle", title: "Nada para continuar", detail: "Las series que reproduzcas aparecerán aquí con el segundo en que las dejaste.")
@@ -495,18 +494,36 @@ struct HistoryScreen: View {
             } else {
                 Section("Reproducciones recientes") {
                     ForEach(history.entries) { entry in
-                        NavigationLink {
-                            episodeScreen(for: entry)
-                        } label: {
-                            HistoryRow(entry: entry)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                delete([entry])
+                        if editMode.isEditing {
+                            Button {
+                                toggleSelection(for: entry)
                             } label: {
-                                Label("Borrar", systemImage: "trash")
+                                HStack(spacing: 12) {
+                                    Image(systemName: selectedEntryIDs.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+                                        .font(.title3)
+                                        .foregroundStyle(selectedEntryIDs.contains(entry.id) ? Color.accentColor : Color.secondary)
+                                        .accessibilityHidden(true)
+                                    HistoryRow(entry: entry)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .tint(.red)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(entry.seriesTitle), episodio \(entry.episode)")
+                            .accessibilityValue(selectedEntryIDs.contains(entry.id) ? "Seleccionado" : "Sin seleccionar")
+                        } else {
+                            NavigationLink {
+                                episodeScreen(for: entry)
+                            } label: {
+                                HistoryRow(entry: entry)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    delete([entry])
+                                } label: {
+                                    Label("Borrar", systemImage: "trash")
+                                }
+                                .tint(.red)
+                            }
                         }
                     }
                 }
@@ -573,6 +590,14 @@ struct HistoryScreen: View {
         }
         .tint(.red)
         .disabled(selectedEntryIDs.isEmpty)
+    }
+
+    private func toggleSelection(for entry: WatchHistoryEntry) {
+        if selectedEntryIDs.contains(entry.id) {
+            selectedEntryIDs.remove(entry.id)
+        } else {
+            selectedEntryIDs.insert(entry.id)
+        }
     }
 
     private func deleteSelected() {
