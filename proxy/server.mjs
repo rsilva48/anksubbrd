@@ -57,11 +57,34 @@ function resolveStreamFile(sources) {
   if (Array.isArray(sources)) return resolveStreamFile(sources[0]);
   return typeof sources?.file === 'string' ? sources.file : null;
 }
-function subtitleLanguage(track) {
-  const value = `${track?.label ?? ''} ${track?.kind ?? ''}`.toLowerCase();
-  if (/spanish|espa[nñ]ol|\bes\b/.test(value)) return 'es';
-  if (/english|\ben\b/.test(value)) return 'en';
-  return 'und';
+function subtitleDetails(track, index) {
+  // The provider supplies human labels but not an HLS language tag.  Apple
+  // collapses every `und` track into one “Unknown language” item, so derive a
+  // BCP-47 tag from both the label and the VTT filename.
+  const label = cleanText(track?.label);
+  const value = `${label} ${track?.srclang ?? ''} ${track?.file ?? ''}`.toLowerCase();
+  const matches = (pattern) => pattern.test(value);
+
+  if (matches(/chinese|(?:^|[-_/.])(?:chi|zho|cmn)(?:[-_/.]|$)/)) {
+    const traditional = matches(/traditional|hant|(?:^|[-_/.])chi-11(?:[-_/.]|$)/);
+    return { name: label || `Chinese (${traditional ? 'Traditional' : 'Simplified'})`, language: traditional ? 'zh-Hant' : 'zh-Hans' };
+  }
+  if (matches(/english|(?:^|[-_/.])(?:eng|en)(?:[-_/.]|$)/)) return { name: label || 'English', language: 'en' };
+  if (matches(/spanish|espa[nñ]ol|(?:^|[-_/.])(?:spa|es)(?:[-_/.]|$)/)) return { name: label || 'Spanish', language: 'es' };
+  if (matches(/indonesian|(?:^|[-_/.])(?:ind|id)(?:[-_/.]|$)/)) return { name: label || 'Indonesian', language: 'id' };
+  if (matches(/japanese|(?:^|[-_/.])(?:jpn|ja)(?:[-_/.]|$)/)) return { name: label || 'Japanese', language: 'ja' };
+  if (matches(/korean|(?:^|[-_/.])(?:kor|ko)(?:[-_/.]|$)/)) return { name: label || 'Korean', language: 'ko' };
+  if (matches(/malay|(?:^|[-_/.])(?:may|msa|ms)(?:[-_/.]|$)/)) return { name: label || 'Malay', language: 'ms' };
+  if (matches(/thai|(?:^|[-_/.])(?:tha|th)(?:[-_/.]|$)/)) return { name: label || 'Thai', language: 'th' };
+  if (matches(/vietnamese|(?:^|[-_/.])(?:vie|vi)(?:[-_/.]|$)/)) return { name: label || 'Vietnamese', language: 'vi' };
+  if (matches(/french|fran[cç]ais|(?:^|[-_/.])(?:fre|fra|fr)(?:[-_/.]|$)/)) return { name: label || 'French', language: 'fr' };
+  if (matches(/german|deutsch|(?:^|[-_/.])(?:ger|deu|de)(?:[-_/.]|$)/)) return { name: label || 'German', language: 'de' };
+  if (matches(/italian|(?:^|[-_/.])(?:ita|it)(?:[-_/.]|$)/)) return { name: label || 'Italian', language: 'it' };
+  if (matches(/portuguese|portugu[eê]s|(?:^|[-_/.])(?:por|pt)(?:[-_/.]|$)/)) return { name: label || 'Portuguese', language: 'pt' };
+  if (matches(/russian|русский|(?:^|[-_/.])(?:rus|ru)(?:[-_/.]|$)/)) return { name: label || 'Russian', language: 'ru' };
+  if (matches(/arabic|(?:^|[-_/.])(?:ara|ar)(?:[-_/.]|$)/)) return { name: label || 'Arabic', language: 'ar' };
+
+  return { name: label || `Subtitles ${index + 1}`, language: 'und' };
 }
 async function resolvePlayerSource(embedUrl) {
   const page = await fetchWithTimeout(embedUrl, { headers: { Accept: 'text/html', Referer: `${providerOrigin}/`, 'User-Agent': playerUserAgent } }, 15000, 'Player page request');
@@ -81,12 +104,15 @@ async function resolvePlayerSource(embedUrl) {
   if (!file) throw new Error('Player source did not include an HLS file');
   const hlsUrl = attachCdnToken(absoluteUrl(file, playerOrigin));
   const tracks = Array.isArray(sourcePayload.tracks) ? sourcePayload.tracks : [];
-  const subtitles = tracks.map((track, index) => ({
-    name: cleanText(track?.label) || `Subtitles ${index + 1}`,
-    language: subtitleLanguage(track),
-    vttUrl: absoluteUrl(track?.file ?? '', playerOrigin),
-    default: index === 0,
-  })).filter((track) => track.vttUrl && new URL(track.vttUrl).pathname.toLowerCase().endsWith('.vtt'));
+  const subtitles = tracks
+    .filter((track) => /^(captions|subtitles)$/i.test(cleanText(track?.kind)))
+    .map((track, index) => ({
+      ...subtitleDetails(track, index),
+      vttUrl: absoluteUrl(track?.file ?? '', playerOrigin),
+    }))
+    .filter((track) => track.vttUrl && new URL(track.vttUrl).pathname.toLowerCase().endsWith('.vtt'));
+  const defaultIndex = subtitles.findIndex((track) => track.language === 'en');
+  subtitles.forEach((track, index) => { track.default = index === (defaultIndex >= 0 ? defaultIndex : 0); });
   console.info(`[bridge] Public source metadata returned ${subtitles.length} subtitle track(s)`);
   console.info(`[bridge] HLS candidate: ${playlistDescriptor(hlsUrl)}`);
   return {
