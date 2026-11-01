@@ -1,0 +1,26 @@
+[Unit]
+Description=AirPlay Subtitle Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=airplaybridge
+Group=airplaybridge
+WorkingDirectory=/opt/airplay-subtitle-bridge/proxy
+Environment=BRIDGE_HOST=127.0.0.1
+Environment=BRIDGE_PORT=8787
+Environment=HISTORY_STORE_PATH=/var/lib/airplay-subtitle-bridge/history.json
+EnvironmentFile=/etc/airplay-subtitle-bridge.env
+ExecStart=/usr/bin/node server.mjs
+Restart=on-failure
+RestartSec=3
+StateDirectory=airplay-subtitle-bridge
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/airplay-subtitle-bridge
+
+[Install]
+WantedBy=multi-user.target

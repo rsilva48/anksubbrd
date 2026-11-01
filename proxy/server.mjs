@@ -1,5 +1,7 @@
 import http from 'node:http';
-import { createDecipheriv, createHmac, randomUUID } from 'node:crypto';
+import { createDecipheriv, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { load } from 'cheerio';
 
 const host = process.env.BRIDGE_HOST ?? '0.0.0.0';
@@ -11,6 +13,11 @@ const cdnTokenSecret = 'MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s';
 const sourceEncKey = 'i?LMTAx0Q6,:}50U';
 const sourceEncIv = "W0;27ToaUpl_P%'c";
 const playerUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0';
+const bridgeAccessToken = cleanText(process.env.BRIDGE_ACCESS_TOKEN);
+const historyStorePath = resolve(process.env.HISTORY_STORE_PATH ?? `${process.cwd()}/data/history.json`);
+const mediaUrlSigningKey = randomUUID();
+let historyEntries;
+let historyMutation = Promise.resolve();
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -20,9 +27,34 @@ function text(response, status, body, type = 'text/plain; charset=utf-8') {
   response.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' }); response.end(body);
 }
 function absoluteUrl(value, parent) { return new URL(value, parent).toString(); }
-function mediaUrl(id, upstream) { return `/media/${id}?url=${encodeURIComponent(upstream)}`; }
+function protectedPath(path) {
+  if (!bridgeAccessToken) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(bridgeAccessToken)}`;
+}
+function mediaUrlSignature(id, upstream) { return createHmac('sha256', mediaUrlSigningKey).update(`${id}\n${upstream}`).digest('base64url'); }
+function mediaUrl(id, upstream) { return protectedPath(`/media/${id}?url=${encodeURIComponent(upstream)}&sig=${mediaUrlSignature(id, upstream)}`); }
 function isPlaylist(url, contentType) { return new URL(url).pathname.toLowerCase().endsWith('.m3u8') || contentType.includes('mpegurl'); }
 function cleanText(value) { return String(value ?? '').replace(/\s+/g, ' ').trim(); }
+function sameSecret(left, right) {
+  const leftBuffer = Buffer.from(String(left)); const rightBuffer = Buffer.from(String(right));
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+function requestedAccessToken(request, requestUrl) {
+  const authorization = cleanText(request.headers.authorization);
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
+  return cleanText(request.headers['x-bridge-token'] ?? bearer ?? requestUrl.searchParams.get('access_token'));
+}
+function isAuthorized(request, requestUrl) {
+  return !bridgeAccessToken || sameSecret(requestedAccessToken(request, requestUrl), bridgeAccessToken);
+}
+function forwardedValue(request, name) { return cleanText(request.headers[name]).split(',')[0].trim(); }
+function requestOrigin(request) {
+  const forwardedProtocol = forwardedValue(request, 'x-forwarded-proto');
+  const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
+  const authority = forwardedValue(request, 'x-forwarded-host') || cleanText(request.headers.host);
+  if (!authority) throw new Error('Request host was not provided');
+  return `${protocol}://${authority}`;
+}
 function base64Url(value) { return Buffer.from(value).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
 function playlistDescriptor(value) {
   const url = new URL(value); const token = url.searchParams.get('token'); let expiresIn = null;
@@ -153,19 +185,136 @@ function readBody(request) {
     request.on('end', () => resolve(body)); request.on('error', reject);
   });
 }
+function historyDate(value) {
+  // Swift's default JSONEncoder encodes Date as seconds since 2001-01-01.
+  if (typeof value === 'number' && Number.isFinite(value)) return new Date((value + 978307200) * 1000);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? new Date() : parsed;
+}
+function historyTimestamp(date) {
+  return (new Date(date).valueOf() / 1000) - 978307200;
+}
+function historyText(value, fallback = '', maximum = 500) {
+  return cleanText(value).slice(0, maximum) || fallback;
+}
+function normalizeHistoryEntry(value) {
+  const watchUrl = requireProviderUrl(historyText(value?.watchUrl, '', 2000)).toString();
+  const episode = Number(value?.episode);
+  if (!Number.isInteger(episode) || episode < 1 || episode > 100000) throw new Error('History episode is invalid');
+  const position = Number(value?.positionSeconds);
+  return {
+    seriesTitle: historyText(value?.seriesTitle, 'Untitled'),
+    watchUrl,
+    imageUrl: value?.imageUrl ? historyText(value.imageUrl, '', 2000) : null,
+    episode,
+    episodeTitle: historyText(value?.episodeTitle, `Episode ${episode}`),
+    serverName: historyText(value?.serverName, ''),
+    positionSeconds: Number.isFinite(position) ? Math.max(0, position) : 0,
+    updatedAt: historyDate(value?.updatedAt).toISOString(),
+  };
+}
+function historyKey(entry) { return `${entry.watchUrl}#${entry.episode}`; }
+function serializeHistoryEntry(entry) {
+  return { ...entry, updatedAt: historyTimestamp(entry.updatedAt) };
+}
+async function loadHistory() {
+  if (historyEntries) return historyEntries;
+  try {
+    const parsed = JSON.parse(await readFile(historyStorePath, 'utf8'));
+    const rawEntries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    historyEntries = rawEntries.map(normalizeHistoryEntry);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.warn(`[bridge] History store could not be read: ${error.message}`);
+    historyEntries = [];
+  }
+  return historyEntries;
+}
+async function storedHistory() {
+  await historyMutation; const entries = await loadHistory();
+  return entries.map(serializeHistoryEntry);
+}
+async function mergeHistory(entries) {
+  if (!Array.isArray(entries) || entries.length > 100) throw new Error('History payload is invalid');
+  const incoming = entries.map(normalizeHistoryEntry);
+  historyMutation = historyMutation.then(async () => {
+    const existing = await loadHistory(); const merged = new Map(existing.map((entry) => [historyKey(entry), entry]));
+    for (const entry of incoming) {
+      const previous = merged.get(historyKey(entry));
+      if (!previous || new Date(entry.updatedAt) >= new Date(previous.updatedAt)) merged.set(historyKey(entry), entry);
+    }
+    historyEntries = [...merged.values()].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)).slice(0, 100);
+    await mkdir(dirname(historyStorePath), { recursive: true });
+    const temporaryPath = `${historyStorePath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, JSON.stringify({ version: 1, entries: historyEntries }), 'utf8');
+    await rename(temporaryPath, historyStorePath);
+    return historyEntries;
+  });
+  return (await historyMutation).map(serializeHistoryEntry);
+}
 
 function parseSearch(html) {
   const $ = load(html); const seen = new Set(); const results = [];
   $('a.item[href*="/watch/"]').each((_, node) => {
     const url = new URL($(node).attr('href'), providerOrigin).toString();
     if (seen.has(url)) return; seen.add(url);
+    const metaItems = $(node).find('.meta').first().children().map((_, child) => ({
+      text: cleanText($(child).text()),
+      classes: String($(child).attr('class') ?? ''),
+    })).get();
+    const rating = metaItems.find((item) => /(?:^|\s)rating(?:\s|$)/i.test(item.classes))?.text ?? null;
+    const scoreText = metaItems.find((item) => /(?:^|\s)text-gray2(?:\s|$)/i.test(item.classes))?.text ?? '';
+    const score = /^\d+(?:\.\d+)?$/.test(scoreText) ? Number(scoreText) : null;
+    const mediaType = metaItems.map((item) => item.text).find((item) => /^(TV|Movie|ONA|OVA|Special)$/i.test(item)) ?? null;
+    const yearText = metaItems.map((item) => item.text).find((item) => /^\d{4}$/.test(item)) ?? '';
     results.push({
       title: cleanText($(node).find('.name').first().text()) || 'Untitled', watchUrl: url,
       imageUrl: $(node).find('img').first().attr('src') ? absoluteUrl($(node).find('img').first().attr('src'), providerOrigin) : null,
       meta: cleanText($(node).find('.meta').text()),
+      rating, score, mediaType, year: yearText ? Number(yearText) : null,
     });
   });
   return results;
+}
+function normalizedTitle(value) {
+  return cleanText(value)
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .toLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+function seasonIdentity(title) {
+  let base = cleanText(title); let seasonNumber = null;
+  const patterns = [
+    /\bseason\s*(\d+)\b/i,
+    /\bs\s*(\d+)\b/i,
+    /\b(\d+)(?:st|nd|rd|th)\s+season\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = base.match(pattern);
+    if (!match) continue;
+    seasonNumber = Number(match[1]);
+    base = cleanText(base.replace(pattern, ''));
+    break;
+  }
+  return { base, baseKey: normalizedTitle(base), seasonNumber };
+}
+function seasonRecord(anime) {
+  return { ...anime, seasonNumber: seasonIdentity(anime.title).seasonNumber ?? 1 };
+}
+async function discoverRelatedSeasons(series) {
+  const identity = seasonIdentity(series.title);
+  if (identity.baseKey.length < 3) return [seasonRecord(series)];
+  try {
+    const searchMarkup = (await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(identity.base)}`)).html ?? '';
+    const candidates = parseSearch(searchMarkup).filter((candidate) => seasonIdentity(candidate.title).baseKey === identity.baseKey);
+    if (!candidates.some((candidate) => candidate.watchUrl === series.watchUrl)) {
+      candidates.push({ title: series.title, watchUrl: series.watchUrl, imageUrl: null, meta: '' });
+    }
+    const unique = [...new Map(candidates.map((candidate) => [candidate.watchUrl, seasonRecord(candidate)])).values()];
+    return unique.sort((left, right) => left.seasonNumber - right.seasonNumber || left.title.localeCompare(right.title));
+  } catch (error) {
+    console.warn(`[bridge] Related season lookup failed: ${error.message}`);
+    return [seasonRecord(series)];
+  }
 }
 function parseSeriesPage(html, watchUrl) {
   const $ = load(html); const root = $('#watch-main'); const animeId = root.attr('data-id');
@@ -204,9 +353,10 @@ async function getSeries(watchUrl) {
   const series = parseSeriesPage(await page.text(), url.toString());
   const episodeMarkup = await providerJson(`/ajax/episode/list/${series.animeId}`); const episodes = parseEpisodes(episodeMarkup);
   if (!episodes.length) throw new Error('No episodes were returned');
-  const key = randomUUID(); seriesCache.set(key, { ...series, episodes, expiresAt: Date.now() + 20 * 60 * 1000 });
-  console.info(`[bridge] Loaded ${series.title}: ${episodes.length} episode(s)`);
-  return { seriesKey: key, title: series.title, episodes: episodes.map(({ number, title }) => ({ number, title })) };
+  const seasons = await discoverRelatedSeasons(series);
+  const key = randomUUID(); seriesCache.set(key, { ...series, episodes, seasons, expiresAt: Date.now() + 20 * 60 * 1000 });
+  console.info(`[bridge] Loaded ${series.title}: ${episodes.length} episode(s), ${seasons.length} related season(s)`);
+  return { seriesKey: key, title: series.title, episodes: episodes.map(({ number, title }) => ({ number, title })), seasons };
 }
 function cachedSeries(key) {
   const series = seriesCache.get(key);
@@ -223,7 +373,7 @@ async function getServers(seriesKey, episodeNumber) {
   series.lastServers = { episodeNumber: episode.number, servers };
   return { episode: episode.number, servers: servers.map(({ index, name, type }) => ({ index, name, type })) };
 }
-async function createPlayback(seriesKey, episodeNumber, serverIndex, requestHost) {
+async function createPlayback(seriesKey, episodeNumber, serverIndex, playbackOrigin) {
   const series = cachedSeries(seriesKey);
   if (!series.lastServers || series.lastServers.episodeNumber !== Number(episodeNumber)) await getServers(seriesKey, episodeNumber);
   const server = series.lastServers.servers.find((candidate) => candidate.index === Number(serverIndex)); if (!server) throw new Error('Server was not found');
@@ -236,7 +386,7 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, requestHost
   const expiry = setTimeout(() => { sources.delete(id); }, 2 * 60 * 60 * 1000);
   expiry.unref();
   console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
-  return { playbackUrl: `http://${requestHost}/watch/${id}/master.m3u8`, subtitleTracks: media.subtitles.length, serverName: server.name };
+  return { playbackUrl: `${playbackOrigin}${protectedPath(`/watch/${id}/master.m3u8`)}`, subtitleTracks: media.subtitles.length, serverName: server.name, serverKind: server.type };
 }
 
 function rewriteUriLines(textValue, baseUrl, id) {
@@ -248,7 +398,7 @@ function rewriteUriLines(textValue, baseUrl, id) {
 }
 function injectSubtitles(master, source, id) {
   const tracks = source.subtitles ?? []; if (!tracks.length || /TYPE=SUBTITLES/.test(master)) return master;
-  const declarations = tracks.map((track, index) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="bridge-subs",NAME="${track.name.replaceAll('"', '')}",LANGUAGE="${track.language.replaceAll('"', '')}",DEFAULT=${track.default ? 'YES' : 'NO'},AUTOSELECT=YES,URI="/subtitle/${id}/${index}.m3u8"`);
+  const declarations = tracks.map((track, index) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="bridge-subs",NAME="${track.name.replaceAll('"', '')}",LANGUAGE="${track.language.replaceAll('"', '')}",DEFAULT=${track.default ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${protectedPath(`/subtitle/${id}/${index}.m3u8`)}"`);
   const variants = master.replace(/#EXT-X-STREAM-INF:([^\r\n]*)/g, (line, attrs) => /(?:^|,)SUBTITLES=/.test(attrs) ? line : `#EXT-X-STREAM-INF:${attrs},SUBTITLES="bridge-subs"`);
   return variants.replace(/^#EXTM3U\s*$/m, '#EXTM3U\n' + declarations.join('\n'));
 }
@@ -289,22 +439,33 @@ const server = http.createServer(async (request, response) => {
     if (requestUrl.pathname === '/health' || requestUrl.pathname.startsWith('/api/')) {
       console.info(`[bridge] ${request.method} ${requestUrl.pathname}`);
     }
+    if (!isAuthorized(request, requestUrl)) return json(response, 401, { error: 'Bridge access token is required' });
     if (request.method === 'GET' && requestUrl.pathname === '/health') return json(response, 200, { ok: true });
     if (request.method === 'GET' && requestUrl.pathname === '/api/search') {
       const results = parseSearch((await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(requestUrl.searchParams.get('q') ?? '')}`)).html ?? '');
       console.info(`[bridge] Search returned ${results.length} result(s)`);
       return json(response, 200, { results });
     }
+    if (request.method === 'GET' && requestUrl.pathname === '/api/history') return json(response, 200, { entries: await storedHistory() });
+    if (request.method === 'PUT' && requestUrl.pathname === '/api/history') {
+      const body = JSON.parse(await readBody(request));
+      return json(response, 200, { entries: await mergeHistory(body.entries) });
+    }
     if (request.method === 'POST' && requestUrl.pathname === '/api/series') return json(response, 200, await getSeries(JSON.parse(await readBody(request)).watchUrl));
     const serversRoute = requestUrl.pathname.match(/^\/api\/series\/([\w-]+)\/servers$/);
     if (request.method === 'GET' && serversRoute) return json(response, 200, await getServers(serversRoute[1], requestUrl.searchParams.get('episode')));
-    if (request.method === 'POST' && requestUrl.pathname === '/api/play') { const body = JSON.parse(await readBody(request)); return json(response, 201, await createPlayback(body.seriesKey, body.episode, body.serverIndex, request.headers.host)); }
+    if (request.method === 'POST' && requestUrl.pathname === '/api/play') { const body = JSON.parse(await readBody(request)); return json(response, 201, await createPlayback(body.seriesKey, body.episode, body.serverIndex, requestOrigin(request))); }
     const watch = requestUrl.pathname.match(/^\/watch\/([\w-]+)\/master\.m3u8$/);
     if (request.method === 'GET' && watch) { const source = sources.get(watch[1]); if (!source) return json(response, 404, { error: 'Unknown or expired source' }); return await sendUpstream(response, source.hlsUrl, watch[1], source, true, request.headers.range); }
     const subtitle = requestUrl.pathname.match(/^\/subtitle\/([\w-]+)\/(\d+)\.m3u8$/);
     if (request.method === 'GET' && subtitle) { const source = sources.get(subtitle[1]); const track = source?.subtitles[Number(subtitle[2])]; if (!track) return json(response, 404, { error: 'Unknown subtitle track' }); return track.playlistUrl ? await sendUpstream(response, track.playlistUrl, subtitle[1], source, false, request.headers.range) : await sendSingleVttPlaylist(response, track, subtitle[1], source); }
     const media = requestUrl.pathname.match(/^\/media\/([\w-]+)$/);
-    if (request.method === 'GET' && media) { const source = sources.get(media[1]); const upstream = requestUrl.searchParams.get('url'); if (!source || !upstream) return json(response, 404, { error: 'Unknown media request' }); return await sendUpstream(response, new URL(upstream).toString(), media[1], source, false, request.headers.range); }
+    if (request.method === 'GET' && media) {
+      const source = sources.get(media[1]); const upstream = requestUrl.searchParams.get('url'); const signature = requestUrl.searchParams.get('sig');
+      if (!source || !upstream) return json(response, 404, { error: 'Unknown media request' });
+      if (!sameSecret(signature, mediaUrlSignature(media[1], upstream))) return json(response, 403, { error: 'Invalid media request' });
+      return await sendUpstream(response, new URL(upstream).toString(), media[1], source, false, request.headers.range);
+    }
     json(response, 404, { error: 'Not found' });
   } catch (error) {
     console.error(`[bridge] ${request.method} ${requestUrl.pathname} failed: ${error.message}`);

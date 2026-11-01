@@ -1,6 +1,6 @@
 # AirPlay Subtitle Bridge
 
-Aplicación personal de iPhone/iPad para navegar automáticamente un catálogo de anime a través de tu bridge, elegir serie, episodio y servidor, y reproducirlo por AirPlay con subtítulos como pistas HLS reales.
+Aplicación personal de iPhone/iPad para navegar automáticamente un catálogo de anime a través de tu bridge, elegir serie, episodio y servidor, y reproducirlo por AirPlay con subtítulos como pistas HLS reales. El bridge también puede guardar el progreso privado para que continúes entre dispositivos.
 
 ```text
 App iOS: buscar → serie → episodio → servidor
@@ -14,7 +14,7 @@ AVPlayer en iPhone/iPad ───────── AirPlay ──────�
 
 No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor usando las mismas solicitudes AJAX públicas que utiliza la página. Consulta los metadatos públicos del reproductor, descifra su fuente temporal y conserva en memoria el HLS y los VTT. Después sirve un manifiesto HLS que declara cada VTT como subtítulo para `AVPlayer`.
 
-Las URLs de reproducción, tokens y subtítulos no se registran en disco, no se devuelven a la app y desaparecen al reiniciar el bridge.
+Las URLs y tokens temporales del proveedor no se registran en disco y desaparecen al reiniciar el bridge. Si activas `BRIDGE_ACCESS_TOKEN`, la app recibe ese token sólo dentro de las URLs HLS temporales que necesita el receptor AirPlay; por eso deben viajar siempre por HTTPS.
 
 ## Requisitos del bridge
 
@@ -60,9 +60,11 @@ Si no aparece esa línea, el iPhone/iPad no está llegando al equipo del bridge:
 2. Abre **Configuración**, escribe una vez la dirección de tu bridge local y usa **Probar conexión**. La dirección queda guardada en el dispositivo.
 3. En **Buscar**, busca por título y elige una serie y un episodio.
 4. Elige una fuente desde las pestañas `Sub` o `Dub`. La predeterminada se cambia en **Configuración** y es `Sub` inicialmente.
-5. Usa el botón AirPlay de los controles nativos. Las pistas que el reproductor publica como VTT se anuncian como subtítulos HLS.
+5. Usa el botón AirPlay dentro de los controles nativos del vídeo, no **Duplicar pantalla** desde el Centro de control. La app configura la sesión como vídeo de larga duración para que el TV reciba vídeo, audio y pistas VTT como reproducción externa.
 
-La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. El historial se guarda sólo en `UserDefaults` del iPhone/iPad; no se transmite al bridge ni al sitio.
+Los resultados separan `PG Rating`, puntuación, tipo (`TV`, `Movie`, `ONA`, `OVA`, `Special`) y año en etiquetas que también funcionan como filtros. Al abrir una serie, las temporadas relacionadas aparecen juntas; al finalizar un episodio se inicia el siguiente con el mismo servidor/tipo cuando está disponible.
+
+La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. Si ejecutas el bridge con historial (configuración predeterminada), la app sincroniza de manera privada esas entradas entre tus dispositivos; no inicia sesión ni transmite credenciales al sitio de origen.
 
 La primera reproducción de un servidor tarda sólo lo necesario para solicitar los metadatos públicos de la fuente. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
 
@@ -74,8 +76,34 @@ La app usa estas rutas locales; no necesitas llamarlas manualmente.
 - `POST /api/series` con `{ "watchUrl": "…" }`
 - `GET /api/series/:seriesKey/servers?episode=2`
 - `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`
+- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso
 
-Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch/...` del origen configurado para el catálogo y no expone un proxy genérico para otros dominios.
+Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch/...` del origen configurado para el catálogo y no expone un proxy genérico para otros dominios. El historial se guarda en `proxy/data/history.json` por defecto (o en la ruta definida por `HISTORY_STORE_PATH`); esa carpeta está excluida de Git.
+
+## Usarlo fuera de casa con Caddy
+
+Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y un token privado. No expongas el puerto `8787` al Internet público.
+
+1. En el servidor Linux, instala el proyecto en `/opt/airplay-subtitle-bridge` y ejecuta `npm install` dentro de `proxy`.
+2. Crea el usuario de servicio y el archivo privado de entorno:
+
+   ```sh
+   sudo useradd --system --home /var/lib/airplay-subtitle-bridge --shell /usr/sbin/nologin airplaybridge
+   sudo install -m 600 -o root -g airplaybridge /dev/null /etc/airplay-subtitle-bridge.env
+   sudo sh -c 'printf "BRIDGE_ACCESS_TOKEN=%s\n" "$(openssl rand -hex 32)" > /etc/airplay-subtitle-bridge.env'
+   ```
+
+3. Copia [`deploy/airplay-subtitle-bridge.service.example`](deploy/airplay-subtitle-bridge.service.example) a `/etc/systemd/system/airplay-subtitle-bridge.service`, revísalo si la ruta de Node no es `/usr/bin/node`, y actívalo:
+
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now airplay-subtitle-bridge
+   ```
+
+4. Copia [`deploy/Caddyfile.example`](deploy/Caddyfile.example) a la configuración de Caddy, sustituye `bridge.example.com`, verifica que el DNS del dominio apunte al servidor y recarga Caddy. El servicio Node escucha sólo en `127.0.0.1`; Caddy publica HTTPS y conserva los encabezados necesarios para que las URL HLS apunten al dominio público.
+5. En cada iPhone/iPad configura `https://bridge.example.com` y pega el mismo valor de `BRIDGE_ACCESS_TOKEN` en **Configuración → Acceso privado**. El token se agrega a las peticiones de la API; las URL temporales de vídeo lo propagan internamente para que el Apple TV pueda obtener el vídeo y los VTT.
+
+No actives registros de acceso detallados para este host de Caddy: las URL temporales de reproducción llevan un token de acceso. El bridge no registra ese valor ni las URL HLS completas.
 
 ## Compilar la app iOS sin Mac
 
@@ -86,6 +114,6 @@ El IPA no viene firmado, pero es el formato que espera ByteLoader. Descárgalo d
 ## Límites técnicos
 
 - Si una fuente no entrega HLS y VTT, no podrá convertirse en subtítulos AirPlay por este bridge.
-- No se admiten DRM, paywalls, login ni mecanismos de acceso que impidan al receptor AirPlay recuperar el manifiesto local.
-- El TV debe poder alcanzar directamente la dirección IP y el puerto del bridge: AirPlay puede volver a pedir el manifiesto desde el receptor.
-- Para pruebas, usa el bridge sólo en tu red privada. Si usas HTTP local, la app permite networking local mediante ATS; para una red no confiable, pon el bridge detrás de HTTPS con un certificado válido.
+- No se admiten DRM, paywalls ni mecanismos de acceso que impidan al receptor AirPlay recuperar el manifiesto.
+- Para una conexión local, el TV debe poder alcanzar la IP LAN del bridge. Para uso remoto, tanto iPhone/iPad como el receptor AirPlay deben tener salida a Internet hacia el dominio HTTPS de Caddy.
+- El inicio de sesión en el sitio de origen no es necesario ni se automatiza: el progreso compartido vive en tu bridge protegido por token, no en el sitio.

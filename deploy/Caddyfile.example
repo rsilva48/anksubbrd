@@ -1,0 +1,6 @@
+# Sustituye bridge.example.com por tu dominio. Caddy obtiene y renueva el
+# certificado HTTPS automáticamente cuando el DNS A/AAAA apunta al servidor.
+bridge.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8787
+}

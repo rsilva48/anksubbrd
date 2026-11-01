@@ -20,6 +20,8 @@
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>La app se conecta al bridge de vídeo dentro de tu red local.</string>
+    <key>AVInitialRouteSharingPolicy</key>
+    <string>LongFormVideo</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
