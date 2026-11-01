@@ -13,10 +13,10 @@ const cdnTokenSecret = 'MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s';
 const sourceEncKey = 'i?LMTAx0Q6,:}50U';
 const sourceEncIv = "W0;27ToaUpl_P%'c";
 const playerUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0';
-const bridgeAccessToken = cleanText(process.env.BRIDGE_ACCESS_TOKEN);
+const bridgeUsers = configuredBridgeUsers();
 const historyStorePath = resolve(process.env.HISTORY_STORE_PATH ?? `${process.cwd()}/data/history.json`);
 const mediaUrlSigningKey = randomUUID();
-let historyProfiles;
+let historyUsers;
 let historyMutation = Promise.resolve();
 
 function json(response, status, body) {
@@ -27,14 +27,32 @@ function text(response, status, body, type = 'text/plain; charset=utf-8') {
   response.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' }); response.end(body);
 }
 function absoluteUrl(value, parent) { return new URL(value, parent).toString(); }
-function protectedPath(path) {
-  if (!bridgeAccessToken) return path;
-  return `${path}${path.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(bridgeAccessToken)}`;
+function protectedPath(path, accessToken) {
+  if (!accessToken) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(accessToken)}`;
 }
 function mediaUrlSignature(id, upstream) { return createHmac('sha256', mediaUrlSigningKey).update(`${id}\n${upstream}`).digest('base64url'); }
-function mediaUrl(id, upstream) { return protectedPath(`/media/${id}?url=${encodeURIComponent(upstream)}&sig=${mediaUrlSignature(id, upstream)}`); }
+function mediaUrl(id, upstream, accessToken) { return protectedPath(`/media/${id}?url=${encodeURIComponent(upstream)}&sig=${mediaUrlSignature(id, upstream)}`, accessToken); }
 function isPlaylist(url, contentType) { return new URL(url).pathname.toLowerCase().endsWith('.m3u8') || contentType.includes('mpegurl'); }
 function cleanText(value) { return String(value ?? '').replace(/\s+/g, ' ').trim(); }
+function normalizedUserId(value) {
+  const userId = cleanText(value).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(userId)) throw new Error('Bridge user IDs must use 1-40 lowercase letters, numbers, hyphens, or underscores');
+  return userId;
+}
+function configuredBridgeUsers() {
+  const configured = cleanText(process.env.BRIDGE_USER_TOKENS);
+  if (configured) {
+    let entries;
+    try { entries = Object.entries(JSON.parse(configured)); } catch { throw new Error('BRIDGE_USER_TOKENS must be a JSON object of user IDs to tokens'); }
+    if (!entries.length) throw new Error('BRIDGE_USER_TOKENS cannot be empty');
+    const users = entries.map(([userId, token]) => ({ userId: normalizedUserId(userId), token: cleanText(token) }));
+    if (users.some((user) => !user.token) || new Set(users.map((user) => user.userId)).size !== users.length) throw new Error('BRIDGE_USER_TOKENS contains an invalid user or token');
+    return users;
+  }
+  const token = cleanText(process.env.BRIDGE_ACCESS_TOKEN);
+  return token ? [{ userId: 'default', token }] : [];
+}
 function sameSecret(left, right) {
   const leftBuffer = Buffer.from(String(left)); const rightBuffer = Buffer.from(String(right));
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
@@ -44,8 +62,10 @@ function requestedAccessToken(request, requestUrl) {
   const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   return cleanText(request.headers['x-bridge-token'] ?? bearer ?? requestUrl.searchParams.get('access_token'));
 }
-function isAuthorized(request, requestUrl) {
-  return !bridgeAccessToken || sameSecret(requestedAccessToken(request, requestUrl), bridgeAccessToken);
+function authenticatedUser(request, requestUrl) {
+  if (!bridgeUsers.length) return { userId: 'local', token: '' };
+  const token = requestedAccessToken(request, requestUrl);
+  return bridgeUsers.find((user) => sameSecret(token, user.token)) ?? null;
 }
 function forwardedValue(request, name) { return cleanText(request.headers[name]).split(',')[0].trim(); }
 function requestOrigin(request) {
@@ -197,14 +217,6 @@ function historyTimestamp(date) {
 function historyText(value, fallback = '', maximum = 500) {
   return cleanText(value).slice(0, maximum) || fallback;
 }
-function normalizedHistoryProfile(value) {
-  const profile = cleanText(value).toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(profile)) throw new Error('History profile must use 1-40 lowercase letters, numbers, hyphens, or underscores');
-  return profile;
-}
-function requestedHistoryProfile(request) {
-  return normalizedHistoryProfile(request.headers['x-history-profile'] ?? 'default');
-}
 function normalizeHistoryEntry(value) {
   const watchUrl = requireProviderUrl(historyText(value?.watchUrl, '', 2000)).toString();
   const episode = Number(value?.episode);
@@ -226,45 +238,47 @@ function serializeHistoryEntry(entry) {
   return { ...entry, updatedAt: historyTimestamp(entry.updatedAt) };
 }
 async function loadHistory() {
-  if (historyProfiles) return historyProfiles;
-  historyProfiles = new Map();
+  if (historyUsers) return historyUsers;
+  historyUsers = new Map();
   try {
     const parsed = JSON.parse(await readFile(historyStorePath, 'utf8'));
-    const rawProfiles = parsed?.profiles && typeof parsed.profiles === 'object'
-      ? parsed.profiles
+    const rawUsers = parsed?.users && typeof parsed.users === 'object'
+      ? parsed.users
+      : parsed?.profiles && typeof parsed.profiles === 'object'
+        ? parsed.profiles
       : { default: Array.isArray(parsed?.entries) ? parsed.entries : [] };
-    for (const [profile, entries] of Object.entries(rawProfiles)) {
-      const normalizedProfile = normalizedHistoryProfile(profile);
+    for (const [userId, entries] of Object.entries(rawUsers)) {
+      const normalizedUser = normalizedUserId(userId);
       if (!Array.isArray(entries)) continue;
       const normalizedEntries = [];
       for (const entry of entries) {
         try { normalizedEntries.push(normalizeHistoryEntry(entry)); } catch { /* Ignore corrupted history rows. */ }
       }
-      historyProfiles.set(normalizedProfile, normalizedEntries);
+      historyUsers.set(normalizedUser, normalizedEntries);
     }
   } catch (error) {
     if (error?.code !== 'ENOENT') console.warn(`[bridge] History store could not be read: ${error.message}`);
   }
-  return historyProfiles;
+  return historyUsers;
 }
-async function storedHistory(profile) {
-  await historyMutation; const profiles = await loadHistory();
-  return (profiles.get(profile) ?? []).map(serializeHistoryEntry);
+async function storedHistory(userId) {
+  await historyMutation; const users = await loadHistory();
+  return (users.get(userId) ?? []).map(serializeHistoryEntry);
 }
-async function mergeHistory(profile, entries) {
+async function mergeHistory(userId, entries) {
   if (!Array.isArray(entries) || entries.length > 100) throw new Error('History payload is invalid');
   const incoming = entries.map(normalizeHistoryEntry);
   historyMutation = historyMutation.then(async () => {
-    const profiles = await loadHistory(); const existing = profiles.get(profile) ?? []; const merged = new Map(existing.map((entry) => [historyKey(entry), entry]));
+    const users = await loadHistory(); const existing = users.get(userId) ?? []; const merged = new Map(existing.map((entry) => [historyKey(entry), entry]));
     for (const entry of incoming) {
       const previous = merged.get(historyKey(entry));
       if (!previous || new Date(entry.updatedAt) >= new Date(previous.updatedAt)) merged.set(historyKey(entry), entry);
     }
     const mergedEntries = [...merged.values()].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)).slice(0, 100);
-    profiles.set(profile, mergedEntries);
+    users.set(userId, mergedEntries);
     await mkdir(dirname(historyStorePath), { recursive: true });
     const temporaryPath = `${historyStorePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, JSON.stringify({ version: 2, profiles: Object.fromEntries(profiles) }), 'utf8');
+    await writeFile(temporaryPath, JSON.stringify({ version: 3, users: Object.fromEntries(users) }), 'utf8');
     await rename(temporaryPath, historyStorePath);
     return mergedEntries;
   });
@@ -392,7 +406,7 @@ async function getServers(seriesKey, episodeNumber) {
   series.lastServers = { episodeNumber: episode.number, servers };
   return { episode: episode.number, servers: servers.map(({ index, name, type }) => ({ index, name, type })) };
 }
-async function createPlayback(seriesKey, episodeNumber, serverIndex, playbackOrigin) {
+async function createPlayback(seriesKey, episodeNumber, serverIndex, playbackOrigin, user) {
   const series = cachedSeries(seriesKey);
   if (!series.lastServers || series.lastServers.episodeNumber !== Number(episodeNumber)) await getServers(seriesKey, episodeNumber);
   const server = series.lastServers.servers.find((candidate) => candidate.index === Number(serverIndex)); if (!server) throw new Error('Server was not found');
@@ -401,23 +415,23 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, playbackOri
   if (!reply?.url) throw new Error('Player URL was not returned');
   console.info('[bridge] Player URL returned; resolving public source metadata');
   const media = await resolvePlayerSource(reply.url);
-  const id = randomUUID(); sources.set(id, media);
+  const id = randomUUID(); sources.set(id, { ...media, userId: user.userId, accessToken: user.token });
   const expiry = setTimeout(() => { sources.delete(id); }, 2 * 60 * 60 * 1000);
   expiry.unref();
   console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
-  return { playbackUrl: `${playbackOrigin}${protectedPath(`/watch/${id}/master.m3u8`)}`, subtitleTracks: media.subtitles.length, serverName: server.name, serverKind: server.type };
+  return { playbackUrl: `${playbackOrigin}${protectedPath(`/watch/${id}/master.m3u8`, user.token)}`, subtitleTracks: media.subtitles.length, serverName: server.name, serverKind: server.type };
 }
 
-function rewriteUriLines(textValue, baseUrl, id) {
+function rewriteUriLines(textValue, baseUrl, id, source) {
   return textValue.split(/\r?\n/).map((line) => {
     const value = line.trim(); if (!value) return line;
-    if (!value.startsWith('#')) return mediaUrl(id, absoluteUrl(value, baseUrl));
-    return line.replace(/URI="([^"]+)"/g, (match, uri) => uri.startsWith('/subtitle/') ? match : `URI="${mediaUrl(id, absoluteUrl(uri, baseUrl))}"`);
+    if (!value.startsWith('#')) return mediaUrl(id, absoluteUrl(value, baseUrl), source.accessToken);
+    return line.replace(/URI="([^"]+)"/g, (match, uri) => uri.startsWith('/subtitle/') ? match : `URI="${mediaUrl(id, absoluteUrl(uri, baseUrl), source.accessToken)}"`);
   }).join('\n');
 }
 function injectSubtitles(master, source, id) {
   const tracks = source.subtitles ?? []; if (!tracks.length || /TYPE=SUBTITLES/.test(master)) return master;
-  const declarations = tracks.map((track, index) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="bridge-subs",NAME="${track.name.replaceAll('"', '')}",LANGUAGE="${track.language.replaceAll('"', '')}",DEFAULT=${track.default ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${protectedPath(`/subtitle/${id}/${index}.m3u8`)}"`);
+  const declarations = tracks.map((track, index) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="bridge-subs",NAME="${track.name.replaceAll('"', '')}",LANGUAGE="${track.language.replaceAll('"', '')}",DEFAULT=${track.default ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${protectedPath(`/subtitle/${id}/${index}.m3u8`, source.accessToken)}"`);
   const variants = master.replace(/#EXT-X-STREAM-INF:([^\r\n]*)/g, (line, attrs) => /(?:^|,)SUBTITLES=/.test(attrs) ? line : `#EXT-X-STREAM-INF:${attrs},SUBTITLES="bridge-subs"`);
   return variants.replace(/^#EXTM3U\s*$/m, '#EXTM3U\n' + declarations.join('\n'));
 }
@@ -443,12 +457,12 @@ async function fetchUpstream(url, source, range) {
 async function sendUpstream(response, upstreamUrl, id, source, inject, range) {
   const upstream = await fetchUpstream(upstreamUrl, source, range); upstream.body = removePlayerTransportPrefix(upstream.url, upstream.body); const type = upstream.type;
   if (!isPlaylist(upstream.url, type)) { response.writeHead(200, { 'content-type': upstream.url.toLowerCase().includes('.vtt') ? 'text/vtt; charset=utf-8' : type || 'application/octet-stream' }); response.end(upstream.body); return; }
-  let playlist = upstream.body.toString('utf8'); const manifestStart = playlist.indexOf('#EXTM3U'); if (manifestStart > 0) playlist = playlist.slice(manifestStart); if (inject) playlist = injectSubtitles(playlist, source, id); playlist = rewriteUriLines(playlist, upstream.url, id);
+  let playlist = upstream.body.toString('utf8'); const manifestStart = playlist.indexOf('#EXTM3U'); if (manifestStart > 0) playlist = playlist.slice(manifestStart); if (inject) playlist = injectSubtitles(playlist, source, id); playlist = rewriteUriLines(playlist, upstream.url, id, source);
   text(response, 200, playlist, 'application/vnd.apple.mpegurl; charset=utf-8');
 }
 async function sendSingleVttPlaylist(response, track, id, source) {
   if (!track.duration) { const vtt = await fetchUpstream(track.vttUrl, source); const body = vtt.body.toString('utf8'); if (!/^WEBVTT(?:\r?\n|$)/.test(body)) throw new Error('Subtitle did not return WebVTT'); track.duration = durationFromVtt(body); }
-  const duration = track.duration; const playlist = ['#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${duration}`, '#EXT-X-PLAYLIST-TYPE:VOD', `#EXTINF:${duration}.000,`, mediaUrl(id, track.vttUrl), '#EXT-X-ENDLIST', ''].join('\n');
+  const duration = track.duration; const playlist = ['#EXTM3U', '#EXT-X-VERSION:3', `#EXT-X-TARGETDURATION:${duration}`, '#EXT-X-PLAYLIST-TYPE:VOD', `#EXTINF:${duration}.000,`, mediaUrl(id, track.vttUrl, source.accessToken), '#EXT-X-ENDLIST', ''].join('\n');
   text(response, 200, playlist, 'application/vnd.apple.mpegurl; charset=utf-8');
 }
 
@@ -458,7 +472,8 @@ const server = http.createServer(async (request, response) => {
     if (requestUrl.pathname === '/health' || requestUrl.pathname.startsWith('/api/')) {
       console.info(`[bridge] ${request.method} ${requestUrl.pathname}`);
     }
-    if (!isAuthorized(request, requestUrl)) return json(response, 401, { error: 'Bridge access token is required' });
+    const user = authenticatedUser(request, requestUrl);
+    if (!user) return json(response, 401, { error: 'A valid bridge access token is required' });
     if (request.method === 'GET' && requestUrl.pathname === '/health') return json(response, 200, { ok: true });
     if (request.method === 'GET' && requestUrl.pathname === '/api/search') {
       const results = parseSearch((await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(requestUrl.searchParams.get('q') ?? '')}`)).html ?? '');
@@ -466,26 +481,25 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { results });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
-      const profile = requestedHistoryProfile(request);
-      return json(response, 200, { entries: await storedHistory(profile) });
+      return json(response, 200, { entries: await storedHistory(user.userId) });
     }
     if (request.method === 'PUT' && requestUrl.pathname === '/api/history') {
-      const profile = requestedHistoryProfile(request);
       const body = JSON.parse(await readBody(request));
-      return json(response, 200, { entries: await mergeHistory(profile, body.entries) });
+      return json(response, 200, { entries: await mergeHistory(user.userId, body.entries) });
     }
     if (request.method === 'POST' && requestUrl.pathname === '/api/series') return json(response, 200, await getSeries(JSON.parse(await readBody(request)).watchUrl));
     const serversRoute = requestUrl.pathname.match(/^\/api\/series\/([\w-]+)\/servers$/);
     if (request.method === 'GET' && serversRoute) return json(response, 200, await getServers(serversRoute[1], requestUrl.searchParams.get('episode')));
-    if (request.method === 'POST' && requestUrl.pathname === '/api/play') { const body = JSON.parse(await readBody(request)); return json(response, 201, await createPlayback(body.seriesKey, body.episode, body.serverIndex, requestOrigin(request))); }
+    if (request.method === 'POST' && requestUrl.pathname === '/api/play') { const body = JSON.parse(await readBody(request)); return json(response, 201, await createPlayback(body.seriesKey, body.episode, body.serverIndex, requestOrigin(request), user)); }
     const watch = requestUrl.pathname.match(/^\/watch\/([\w-]+)\/master\.m3u8$/);
-    if (request.method === 'GET' && watch) { const source = sources.get(watch[1]); if (!source) return json(response, 404, { error: 'Unknown or expired source' }); return await sendUpstream(response, source.hlsUrl, watch[1], source, true, request.headers.range); }
+    if (request.method === 'GET' && watch) { const source = sources.get(watch[1]); if (!source) return json(response, 404, { error: 'Unknown or expired source' }); if (source.userId !== user.userId) return json(response, 403, { error: 'Playback belongs to another user' }); return await sendUpstream(response, source.hlsUrl, watch[1], source, true, request.headers.range); }
     const subtitle = requestUrl.pathname.match(/^\/subtitle\/([\w-]+)\/(\d+)\.m3u8$/);
-    if (request.method === 'GET' && subtitle) { const source = sources.get(subtitle[1]); const track = source?.subtitles[Number(subtitle[2])]; if (!track) return json(response, 404, { error: 'Unknown subtitle track' }); return track.playlistUrl ? await sendUpstream(response, track.playlistUrl, subtitle[1], source, false, request.headers.range) : await sendSingleVttPlaylist(response, track, subtitle[1], source); }
+    if (request.method === 'GET' && subtitle) { const source = sources.get(subtitle[1]); const track = source?.subtitles[Number(subtitle[2])]; if (!track) return json(response, 404, { error: 'Unknown subtitle track' }); if (source.userId !== user.userId) return json(response, 403, { error: 'Playback belongs to another user' }); return track.playlistUrl ? await sendUpstream(response, track.playlistUrl, subtitle[1], source, false, request.headers.range) : await sendSingleVttPlaylist(response, track, subtitle[1], source); }
     const media = requestUrl.pathname.match(/^\/media\/([\w-]+)$/);
     if (request.method === 'GET' && media) {
       const source = sources.get(media[1]); const upstream = requestUrl.searchParams.get('url'); const signature = requestUrl.searchParams.get('sig');
       if (!source || !upstream) return json(response, 404, { error: 'Unknown media request' });
+      if (source.userId !== user.userId) return json(response, 403, { error: 'Playback belongs to another user' });
       if (!sameSecret(signature, mediaUrlSignature(media[1], upstream))) return json(response, 403, { error: 'Invalid media request' });
       return await sendUpstream(response, new URL(upstream).toString(), media[1], source, false, request.headers.range);
     }

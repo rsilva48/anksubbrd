@@ -1,6 +1,7 @@
 import AVKit
 import AVFAudio
 import CoreMedia
+import CryptoKit
 import Foundation
 import SwiftUI
 
@@ -30,25 +31,17 @@ private func configureAirPlayVideoSession() {
     }
 }
 
-private enum HistoryProfile {
-    static let preferenceKey = "anksubbrd.history-profile"
-
-    static func normalized(_ value: String) -> String {
-        let candidate = value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-        let filtered = String(candidate.filter { character in
-            character.isASCII && (character.isLetter || character.isNumber || character == "-" || character == "_")
-        }.prefix(40))
-        guard let first = filtered.first, first.isLetter || first.isNumber else { return "default" }
-        return filtered
+private enum HistoryIdentity {
+    static func storageID(for token: String) -> String {
+        let value = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return "local" }
+        return SHA256.hash(data: Data(value.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
     }
 }
 
 struct MainTabScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
-    @AppStorage(HistoryProfile.preferenceKey) private var historyProfile = "default"
+    @AppStorage("anksubbrd.bridge-access-token") private var bridgeAccessToken = ""
     @EnvironmentObject private var history: WatchHistoryStore
     @State private var requestedLocalNetworkAccess = false
 
@@ -64,8 +57,8 @@ struct MainTabScreen: View {
                 .tabItem { Label("Configuración", systemImage: "gearshape") }
         }
         .tint(.indigo)
-        .task(id: "\(bridgeBaseURL)|\(historyProfile)") {
-            history.activate(profile: historyProfile)
+        .task(id: "\(bridgeBaseURL)|\(bridgeAccessToken)") {
+            history.activate(token: bridgeAccessToken)
             await requestLocalNetworkAccess()
             await history.sync(with: bridgeBaseURL, force: true)
         }
@@ -365,7 +358,6 @@ struct HistoryScreen: View {
 struct SettingsScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
     @AppStorage("anksubbrd.bridge-access-token") private var bridgeAccessToken = ""
-    @AppStorage(HistoryProfile.preferenceKey) private var historyProfile = "default"
     @AppStorage("anksubbrd.default-track-type") private var defaultTrackType = StreamKind.sub.rawValue
     @State private var testingBridge = false
     @State private var testResult: String?
@@ -407,17 +399,7 @@ struct SettingsScreen: View {
                 } header: {
                     Text("Acceso privado")
                 } footer: {
-                    Text("Déjalo vacío sólo para un bridge dentro de tu red. Para exponerlo por Internet, configura el mismo token en el servidor y en todos tus dispositivos.")
-                }
-
-                Section {
-                    TextField("Por ejemplo: trabajo", text: $historyProfile)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } header: {
-                    Text("Perfil de historial")
-                } footer: {
-                    Text("Usa el mismo perfil en los dispositivos que deban compartir “Continuar viendo”. Usa otro —por ejemplo, ipad-privado— para una lista separada. Los perfiles no se enumeran ni se mezclan.")
+                    Text("El token identifica tu historial en el bridge. Usa el mismo token en dispositivos que deban compartir lista y otro token para una lista aislada. Déjalo vacío sólo en una red local de confianza.")
                 }
 
                 Section {
@@ -1116,7 +1098,7 @@ private enum BridgeClient {
         guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeoutInterval
-        authorize(&request, path: path)
+        authorize(&request)
         return try await self.request(request)
     }
 
@@ -1128,7 +1110,7 @@ private enum BridgeClient {
         request.timeoutInterval = path == "/api/play" ? 90 : 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        authorize(&request, path: path)
+        authorize(&request)
         return try await self.request(request)
     }
 
@@ -1140,7 +1122,7 @@ private enum BridgeClient {
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        authorize(&request, path: path)
+        authorize(&request)
         return try await self.request(request)
     }
 
@@ -1155,14 +1137,10 @@ private enum BridgeClient {
         return components
     }
 
-    private static func authorize(_ request: inout URLRequest, path: String) {
+    private static func authorize(_ request: inout URLRequest) {
         let token = UserDefaults.standard.string(forKey: "anksubbrd.bridge-access-token")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !token.isEmpty {
             request.setValue(token, forHTTPHeaderField: "X-Bridge-Token")
-        }
-        if path == "/api/history" {
-            let profile = HistoryProfile.normalized(UserDefaults.standard.string(forKey: HistoryProfile.preferenceKey) ?? "default")
-            request.setValue(profile, forHTTPHeaderField: "X-History-Profile")
         }
     }
 
@@ -1244,16 +1222,17 @@ struct WatchHistoryEntry: Codable, Hashable, Identifiable {
 private final class WatchHistoryStore: ObservableObject {
     @Published private(set) var entries: [WatchHistoryEntry]
     private let legacyKey = "anksubbrd.watch-history.v1"
+    private let profileMigrationKey = "anksubbrd.watch-history.v2.default"
     private let defaults: UserDefaults
-    private var activeProfile: String
+    private var activeIdentity: String
     private var lastSync = Date.distantPast
     private var syncing = false
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        activeProfile = HistoryProfile.normalized(defaults.string(forKey: HistoryProfile.preferenceKey) ?? "default")
+        activeIdentity = HistoryIdentity.storageID(for: defaults.string(forKey: "anksubbrd.bridge-access-token") ?? "")
         entries = []
-        entries = loadEntries(for: activeProfile)
+        entries = loadEntries(for: activeIdentity)
     }
 
     func position(for watchUrl: String, episode: Int) -> Double {
@@ -1272,12 +1251,12 @@ private final class WatchHistoryStore: ObservableObject {
         upsert(copy)
     }
 
-    func activate(profile: String) {
-        let normalizedProfile = HistoryProfile.normalized(profile)
-        guard activeProfile != normalizedProfile else { return }
+    func activate(token: String) {
+        let identity = HistoryIdentity.storageID(for: token)
+        guard activeIdentity != identity else { return }
         persist()
-        activeProfile = normalizedProfile
-        entries = loadEntries(for: activeProfile)
+        activeIdentity = identity
+        entries = loadEntries(for: activeIdentity)
         lastSync = .distantPast
     }
 
@@ -1319,13 +1298,13 @@ private final class WatchHistoryStore: ObservableObject {
         persist()
     }
 
-    private func storageKey(for profile: String) -> String {
-        "anksubbrd.watch-history.v2.\(profile)"
+    private func storageKey(for identity: String) -> String {
+        "anksubbrd.watch-history.v3.\(identity)"
     }
 
-    private func loadEntries(for profile: String) -> [WatchHistoryEntry] {
-        let data = defaults.data(forKey: storageKey(for: profile))
-            ?? (profile == "default" ? defaults.data(forKey: legacyKey) : nil)
+    private func loadEntries(for identity: String) -> [WatchHistoryEntry] {
+        let data = defaults.data(forKey: storageKey(for: identity))
+            ?? (identity == "local" ? defaults.data(forKey: profileMigrationKey) ?? defaults.data(forKey: legacyKey) : nil)
             ?? Data()
         return ((try? JSONDecoder().decode([WatchHistoryEntry].self, from: data)) ?? [])
             .sorted { $0.updatedAt > $1.updatedAt }
@@ -1333,7 +1312,7 @@ private final class WatchHistoryStore: ObservableObject {
 
     private func persist() {
         if let data = try? JSONEncoder().encode(entries) {
-            defaults.set(data, forKey: storageKey(for: activeProfile))
+            defaults.set(data, forKey: storageKey(for: activeIdentity))
         }
     }
 }

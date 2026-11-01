@@ -14,7 +14,7 @@ AVPlayer en iPhone/iPad ───────── AirPlay ──────�
 
 No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor usando las mismas solicitudes AJAX públicas que utiliza la página. Consulta los metadatos públicos del reproductor, descifra su fuente temporal y conserva en memoria el HLS y los VTT. Después sirve un manifiesto HLS que declara cada VTT como subtítulo para `AVPlayer`.
 
-Las URLs y tokens temporales del proveedor no se registran en disco y desaparecen al reiniciar el bridge. Si activas `BRIDGE_ACCESS_TOKEN`, la app recibe ese token sólo dentro de las URLs HLS temporales que necesita el receptor AirPlay; por eso deben viajar siempre por HTTPS.
+Las URLs y tokens temporales del proveedor no se registran en disco y desaparecen al reiniciar el bridge. Si activas un token de bridge, la app recibe sólo su propio token dentro de las URLs HLS temporales que necesita el receptor AirPlay; por eso deben viajar siempre por HTTPS.
 
 ## Requisitos del bridge
 
@@ -66,7 +66,7 @@ Los resultados separan `PG Rating`, puntuación, tipo (`TV`, `Movie`, `ONA`, `OV
 
 La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. Si ejecutas el bridge con historial (configuración predeterminada), la app sincroniza de manera privada esas entradas entre tus dispositivos; no inicia sesión ni transmite credenciales al sitio de origen.
 
-En **Configuración → Perfil de historial**, asigna un identificador por lista. Por ejemplo, configura `trabajo` en los dos iPhone para que compartan una sola lista y `ipad-privado` en el iPad para mantener otra separada. Todos pueden usar el mismo `BRIDGE_ACCESS_TOKEN`; el bridge no enumera perfiles ni mezcla sus miniaturas o progreso. Usa letras minúsculas, números, guiones o guiones bajos, con un máximo de 40 caracteres.
+Cada token representa un usuario distinto en el bridge. Dos dispositivos con el mismo token comparten el historial; un dispositivo con otro token recibe un historial aislado. La app no envía un nombre de perfil que pueda cambiarse para consultar otra lista: el servidor deriva la identidad directamente del token y también impide que una sesión de vídeo de un usuario sea recuperada por otro.
 
 La primera reproducción de un servidor tarda sólo lo necesario para solicitar los metadatos públicos de la fuente. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
 
@@ -78,7 +78,7 @@ La app usa estas rutas locales; no necesitas llamarlas manualmente.
 - `POST /api/series` con `{ "watchUrl": "…" }`
 - `GET /api/series/:seriesKey/servers?episode=2`
 - `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`
-- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso (el perfil viaja en `X-History-Profile`)
+- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso; el usuario se deriva del token de acceso
 
 Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch/...` del origen configurado para el catálogo y no expone un proxy genérico para otros dominios. El historial se guarda en `proxy/data/history.json` por defecto (o en la ruta definida por `HISTORY_STORE_PATH`); esa carpeta está excluida de Git.
 
@@ -87,12 +87,19 @@ Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch
 Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y un token privado. No expongas el puerto `8787` al Internet público.
 
 1. En el servidor Linux, instala el proyecto en `/opt/airplay-subtitle-bridge` y ejecuta `npm install` dentro de `proxy`.
-2. Crea el usuario de servicio y el archivo privado de entorno:
+2. Crea el usuario de servicio y el archivo privado de entorno. Genera un token por usuario: por ejemplo, usa el mismo token de `trabajo` en ambos iPhone y un token diferente para el iPad privado.
 
    ```sh
    sudo useradd --system --home /var/lib/airplay-subtitle-bridge --shell /usr/sbin/nologin airplaybridge
    sudo install -m 600 -o root -g airplaybridge /dev/null /etc/airplay-subtitle-bridge.env
-   sudo sh -c 'printf "BRIDGE_ACCESS_TOKEN=%s\n" "$(openssl rand -hex 32)" > /etc/airplay-subtitle-bridge.env'
+   openssl rand -hex 32 # token para trabajo
+   openssl rand -hex 32 # token para ipad-privado
+   ```
+
+   Edita `/etc/airplay-subtitle-bridge.env` y guarda los dos valores sin espacios adicionales:
+
+   ```ini
+   BRIDGE_USER_TOKENS={"trabajo":"TOKEN_DE_TRABAJO","ipad-privado":"TOKEN_DEL_IPAD"}
    ```
 
 3. Copia [`deploy/airplay-subtitle-bridge.service.example`](deploy/airplay-subtitle-bridge.service.example) a `/etc/systemd/system/airplay-subtitle-bridge.service`, revísalo si la ruta de Node no es `/usr/bin/node`, y actívalo:
@@ -103,7 +110,7 @@ Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y
    ```
 
 4. Copia [`deploy/Caddyfile.example`](deploy/Caddyfile.example) a la configuración de Caddy, sustituye `bridge.example.com`, verifica que el DNS del dominio apunte al servidor y recarga Caddy. El servicio Node escucha sólo en `127.0.0.1`; Caddy publica HTTPS y conserva los encabezados necesarios para que las URL HLS apunten al dominio público.
-5. En cada iPhone/iPad configura `https://bridge.example.com` y pega el mismo valor de `BRIDGE_ACCESS_TOKEN` en **Configuración → Acceso privado**. El token se agrega a las peticiones de la API; las URL temporales de vídeo lo propagan internamente para que el Apple TV pueda obtener el vídeo y los VTT.
+5. En cada iPhone/iPad configura `https://bridge.example.com` y pega su token en **Configuración → Acceso privado**. Pon `TOKEN_DE_TRABAJO` en los dos iPhone y `TOKEN_DEL_IPAD` sólo en el iPad. El token se agrega a las peticiones de la API; las URL temporales de vídeo lo propagan internamente para que el Apple TV pueda obtener el vídeo y los VTT del mismo usuario.
 
 No actives registros de acceso detallados para este host de Caddy: las URL temporales de reproducción llevan un token de acceso. El bridge no registra ese valor ni las URL HLS completas.
 
