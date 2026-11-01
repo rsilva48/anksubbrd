@@ -219,6 +219,9 @@ struct MainTabScreen: View {
             SearchScreen(bridgeBaseURL: bridgeBaseURL)
                 .tabItem { Label("Buscar", systemImage: "magnifyingglass") }
 
+            LatestScreen(bridgeBaseURL: bridgeBaseURL)
+                .tabItem { Label("Recientes", systemImage: "clock.badge") }
+
             HistoryScreen(bridgeBaseURL: bridgeBaseURL)
                 .tabItem { Label("Continuar viendo", systemImage: "play.circle") }
 
@@ -241,6 +244,86 @@ struct MainTabScreen: View {
         // its Local Network consent alert before the user starts a catalog action.
         // The result is deliberately ignored: this is only a permission warm-up.
         let _: HealthResponse? = try? await BridgeClient.get(base: bridgeBaseURL, path: "/health", timeoutInterval: 5)
+    }
+}
+
+struct LatestScreen: View {
+    let bridgeBaseURL: String
+    @State private var page = 1
+    @State private var season = ""
+    @State private var status = ""
+    @State private var results: [Anime] = []
+    @State private var hasNext = false
+    @State private var loading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Filtros") {
+                    Picker("Estación", selection: $season) {
+                        Text("Todas").tag("")
+                        Text("Invierno").tag("winter")
+                        Text("Primavera").tag("spring")
+                        Text("Verano").tag("summer")
+                        Text("Otoño").tag("fall")
+                    }
+                    Picker("Estado", selection: $status) {
+                        Text("Todos").tag("")
+                        Text("En emisión").tag("currently-airing")
+                        Text("Finalizado").tag("finished-airing")
+                        Text("Próximamente").tag("not-yet-aired")
+                    }
+                }
+                if loading { ProgressView("Cargando…") }
+                if let errorMessage { ErrorNotice(message: errorMessage) }
+                Section("Actualizaciones recientes") {
+                    ForEach(results) { anime in
+                        NavigationLink {
+                            EpisodesScreen(bridgeBaseURL: bridgeBaseURL, anime: anime, resumeEpisode: anime.episode)
+                        } label: {
+                            VStack(alignment: .leading) {
+                                AnimeRow(anime: anime)
+                                if let episode = anime.episode { Text("Episodio \(episode)").font(.caption).foregroundStyle(.secondary) }
+                            }
+                        }
+                    }
+                }
+                Section {
+                    HStack {
+                        Button("Anterior") { page -= 1 }.disabled(page <= 1 || loading)
+                        Spacer()
+                        Text("Página \(page)")
+                        Spacer()
+                        Button("Siguiente") { page += 1 }.disabled(!hasNext || loading)
+                    }
+                }
+            }
+            .navigationTitle("Recientes")
+            .modifier(AdaptableTabRootTitleStyle())
+            .task(id: "\(bridgeBaseURL)|\(page)|\(season)|\(status)") { await loadPage() }
+            .onChange(of: season) { _ in page = 1 }
+            .onChange(of: status) { _ in page = 1 }
+            .refreshable { await loadPage() }
+        }
+    }
+
+    private func loadPage() async {
+        loading = true
+        errorMessage = nil
+        defer { loading = false }
+        do {
+            let reply: LatestResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/latest", query: [
+                URLQueryItem(name: "page", value: String(page)), URLQueryItem(name: "season", value: season), URLQueryItem(name: "status", value: status)
+            ])
+            try Task.checkCancellation()
+            results = reply.results
+            hasNext = reply.hasNext
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 
@@ -595,7 +678,7 @@ private struct NativeHistoryList: View {
     private func episodeScreen(for entry: WatchHistoryEntry) -> EpisodesScreen {
         EpisodesScreen(
             bridgeBaseURL: bridgeBaseURL,
-            anime: Anime(title: entry.seriesTitle, watchUrl: entry.watchUrl, imageUrl: entry.imageUrl, meta: "", rating: nil, score: nil, mediaType: nil, year: nil),
+            anime: Anime(title: entry.seriesTitle, watchUrl: entry.watchUrl, imageUrl: entry.imageUrl, meta: "", rating: nil, score: nil, mediaType: nil, year: nil, titleJp: entry.titleJp),
             resumeEpisode: entry.episode
         )
     }
@@ -610,6 +693,10 @@ struct SettingsScreen: View {
     @AppStorage("anksubbrd.verified-bridge-url") private var verifiedBridgeURL = ""
     @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
     @AppStorage("anksubbrd.default-track-type") private var defaultTrackType = StreamKind.sub.rawValue
+    @AppStorage("anksubbrd.autonext") private var autoNext = true
+    @AppStorage("anksubbrd.autoskip-intro") private var autoSkipIntro = false
+    @AppStorage("anksubbrd.autoskip-outro") private var autoSkipOutro = false
+    @AppStorage("anksubbrd.title-language") private var titleLanguage = "en"
     @State private var testingBridge = false
     @State private var testResult: String?
     @State private var tokenConfigured = false
@@ -659,6 +746,18 @@ struct SettingsScreen: View {
                 }
 
                 privateIdentitySection
+
+                Section("Reproducción") {
+                    Toggle("Reproducir el siguiente episodio", isOn: $autoNext)
+                    Toggle("Saltar intro automáticamente", isOn: $autoSkipIntro)
+                    Toggle("Saltar outro automáticamente", isOn: $autoSkipOutro)
+                }
+                Section("Catálogo") {
+                    Picker("Idioma de los títulos", selection: $titleLanguage) {
+                        Text("Inglés").tag("en")
+                        Text("Japonés").tag("jp")
+                    }
+                }
 
                 Section {
                     Picker("Mostrar servidores por defecto", selection: $defaultTrackType) {
@@ -1020,6 +1119,8 @@ struct EpisodesScreen: View {
     let anime: Anime
     let resumeEpisode: Int?
     @EnvironmentObject private var history: WatchHistoryStore
+    @AppStorage("anksubbrd.autonext") private var autoNext = true
+    @AppStorage("anksubbrd.title-language") private var titleLanguage = "en"
     @State private var series: Series?
     @State private var pendingServers: EpisodeServers?
     @State private var playback: PlaybackSession?
@@ -1102,7 +1203,7 @@ struct EpisodesScreen: View {
                 }
             }
         }
-        .navigationTitle(anime.title)
+        .navigationTitle(anime.displayTitle(language: titleLanguage))
         .task(id: anime.watchUrl) { await loadSeries() }
         .sheet(item: $pendingServers) { selection in
             ServerPicker(selection: selection, isPreparing: preparingPlayback) { server in
@@ -1110,9 +1211,12 @@ struct EpisodesScreen: View {
             }
         }
         .fullScreenCover(item: $playback, onDismiss: { startQueuedAutoPlay() }) { item in
-            VideoScreen(playback: item.playback, historyEntry: item.historyEntry, bridgeBaseURL: bridgeBaseURL) {
-                queueAutoPlay(after: item)
-            }
+            VideoScreen(playback: item.playback, historyEntry: item.historyEntry, bridgeBaseURL: bridgeBaseURL,
+                        hasPrevious: adjacentEpisode(to: item, offset: -1) != nil,
+                        hasNext: adjacentEpisode(to: item, offset: 1) != nil,
+                        onPrevious: { queueEpisode(after: item, offset: -1) },
+                        onNext: { queueEpisode(after: item, offset: 1) },
+                        onFinished: { if autoNext { queueEpisode(after: item, offset: 1) } })
                 .environmentObject(history)
         }
         .overlay {
@@ -1177,7 +1281,8 @@ struct EpisodesScreen: View {
                         episodeTitle: episodeTitle,
                         serverName: resolved.serverName,
                         positionSeconds: history.position(for: anime.watchUrl, episode: episode),
-                        updatedAt: Date()
+                        updatedAt: Date(),
+                        titleJp: anime.titleJp
                     )
                 )
             } catch {
@@ -1186,12 +1291,17 @@ struct EpisodesScreen: View {
         }
     }
 
-    private func queueAutoPlay(after finished: PlaybackSession) {
+    private func adjacentEpisode(to finished: PlaybackSession, offset: Int) -> Episode? {
         guard let series,
               let currentIndex = series.episodes.firstIndex(where: { $0.number == finished.historyEntry.episode }),
-              series.episodes.indices.contains(currentIndex + 1) else { return }
+              series.episodes.indices.contains(currentIndex + offset) else { return nil }
+        return series.episodes[currentIndex + offset]
+    }
+
+    private func queueEpisode(after finished: PlaybackSession, offset: Int) {
+        guard let series, let episode = adjacentEpisode(to: finished, offset: offset) else { return }
         queuedAutoPlay = QueuedAutoPlay(
-            episode: series.episodes[currentIndex + 1],
+            episode: episode,
             seriesKey: series.seriesKey,
             serverName: finished.playback.serverName,
             serverKind: finished.playback.serverKind
@@ -1233,7 +1343,8 @@ struct EpisodesScreen: View {
                         episodeTitle: request.episode.title,
                         serverName: resolved.serverName,
                         positionSeconds: history.position(for: anime.watchUrl, episode: request.episode.number),
-                        updatedAt: Date()
+                        updatedAt: Date(),
+                        titleJp: anime.titleJp
                     )
                 )
             } catch {
@@ -1308,6 +1419,10 @@ struct VideoScreen: View {
     let playback: Playback
     let historyEntry: WatchHistoryEntry
     let bridgeBaseURL: String
+    let hasPrevious: Bool
+    let hasNext: Bool
+    let onPrevious: () -> Void
+    let onNext: () -> Void
     let onFinished: () -> Void
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var history: WatchHistoryStore
@@ -1315,34 +1430,72 @@ struct VideoScreen: View {
     @State private var timeObserver: Any?
     @State private var endObserver: NSObjectProtocol?
     @State private var didFinish = false
+    @State private var controlsVisible = true
+    @State private var currentSeconds: Double = 0
+    @State private var hideTask: Task<Void, Never>?
+    @AppStorage("anksubbrd.autoskip-intro") private var autoSkipIntro = false
+    @AppStorage("anksubbrd.autoskip-outro") private var autoSkipOutro = false
 
-    init(playback: Playback, historyEntry: WatchHistoryEntry, bridgeBaseURL: String, onFinished: @escaping () -> Void) {
+    init(playback: Playback, historyEntry: WatchHistoryEntry, bridgeBaseURL: String, hasPrevious: Bool, hasNext: Bool, onPrevious: @escaping () -> Void, onNext: @escaping () -> Void, onFinished: @escaping () -> Void) {
         self.playback = playback
         self.historyEntry = historyEntry
         self.bridgeBaseURL = bridgeBaseURL
+        self.hasPrevious = hasPrevious
+        self.hasNext = hasNext
+        self.onPrevious = onPrevious
+        self.onNext = onNext
         self.onFinished = onFinished
         _player = State(initialValue: AVPlayer(url: URL(string: playback.playbackUrl)!))
     }
 
     var body: some View {
-        NavigationStack {
+        ZStack(alignment: .top) {
             NativePlayer(player: player)
                 .ignoresSafeArea()
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cerrar") {
-                            savePosition()
-                            player.pause()
-                            dismiss()
-                        }
+                .simultaneousGesture(TapGesture().onEnded { showControls() })
+            if controlsVisible {
+                HStack {
+                    Button("Cerrar") { savePosition(); player.pause(); dismiss() }
+                    Spacer()
+                    Button { savePosition(); player.pause(); onPrevious() } label: { Label("Anterior", systemImage: "backward.end.fill") }
+                        .disabled(!hasPrevious)
+                    Button { savePosition(); player.pause(); onNext() } label: { Label("Siguiente", systemImage: "forward.end.fill") }
+                        .disabled(!hasNext)
+                }
+                .buttonStyle(.borderedProminent)
+                .padding()
+            }
+            if let range = activeSkipRange {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(range.label) { seek(to: range.end) }
+                            .buttonStyle(.borderedProminent)
                     }
+                    .padding()
                 }
-                .onAppear { beginPlayback() }
-                .onDisappear {
-                    savePosition()
-                    removeObservers()
-                }
+            }
         }
+        .onAppear { beginPlayback(); showControls() }
+        .onDisappear { hideTask?.cancel(); savePosition(); removeObservers() }
+    }
+
+    private var activeSkipRange: (label: String, end: Double)? {
+        if let intro = playback.intro, currentSeconds >= intro.start, currentSeconds < intro.end, !autoSkipIntro { return ("Saltar intro", intro.end) }
+        if let outro = playback.outro, currentSeconds >= outro.start, currentSeconds < outro.end, !autoSkipOutro { return ("Saltar outro", outro.end) }
+        return nil
+    }
+
+    private func seek(to seconds: Double) {
+        currentSeconds = seconds
+        player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
+    }
+
+    private func showControls() {
+        controlsVisible = true
+        hideTask?.cancel()
+        hideTask = Task { try? await Task.sleep(nanoseconds: 5_000_000_000); if !Task.isCancelled { controlsVisible = false } }
     }
 
     private func beginPlayback() {
@@ -1355,9 +1508,12 @@ struct VideoScreen: View {
             player.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
         }
         if timeObserver == nil {
-            timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 5, preferredTimescale: 600), queue: .main) { time in
+            timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { time in
                 guard time.seconds.isFinite, time.seconds >= 0 else { return }
                 Task { @MainActor in
+                    currentSeconds = time.seconds
+                    if autoSkipIntro, let intro = playback.intro, time.seconds >= intro.start, time.seconds < intro.end { seek(to: intro.end) }
+                    else if autoSkipOutro, let outro = playback.outro, time.seconds >= outro.start, time.seconds < outro.end { seek(to: outro.end) }
                     history.update(historyEntry, positionSeconds: time.seconds)
                     await history.sync(with: bridgeBaseURL)
                 }
@@ -1417,12 +1573,13 @@ struct NativePlayer: UIViewControllerRepresentable {
 
 struct AnimeRow: View {
     let anime: Anime
+    @AppStorage("anksubbrd.title-language") private var titleLanguage = "en"
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             PosterImage(imageURL: anime.imageUrl)
             VStack(alignment: .leading, spacing: 4) {
-                Text(anime.title)
+                Text(anime.displayTitle(language: titleLanguage))
                     .font(.headline)
                     .foregroundStyle(.primary)
                 AnimeMetadataTags(anime: anime)
@@ -1434,12 +1591,13 @@ struct AnimeRow: View {
 
 struct HistoryRow: View {
     let entry: WatchHistoryEntry
+    @AppStorage("anksubbrd.title-language") private var titleLanguage = "en"
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             PosterImage(imageURL: entry.imageUrl)
             VStack(alignment: .leading, spacing: 4) {
-                Text(entry.seriesTitle)
+                Text(titleLanguage == "jp" ? (entry.titleJp ?? entry.seriesTitle) : entry.seriesTitle)
                     .font(.headline)
                     .foregroundStyle(.primary)
                 Text("Episodio \(entry.episode) · \(formatTime(entry.positionSeconds))")
@@ -1456,12 +1614,13 @@ struct HistoryRow: View {
 
 struct AnimeCard: View {
     let anime: Anime
+    @AppStorage("anksubbrd.title-language") private var titleLanguage = "en"
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             PosterImage(imageURL: anime.imageUrl, width: 88, height: 124)
             VStack(alignment: .leading, spacing: 7) {
-                Text(anime.title)
+                Text(anime.displayTitle(language: titleLanguage))
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
@@ -1763,6 +1922,7 @@ struct BridgeRequestError: LocalizedError {
 struct BridgeErrorResponse: Decodable { let error: String? }
 struct HealthResponse: Decodable { let ok: Bool }
 struct SearchResponse: Decodable { let results: [Anime] }
+struct LatestResponse: Decodable { let results: [Anime]; let page: Int; let hasNext: Bool }
 struct Anime: Codable, Hashable, Identifiable {
     let title: String
     let watchUrl: String
@@ -1772,7 +1932,10 @@ struct Anime: Codable, Hashable, Identifiable {
     let score: Double?
     let mediaType: String?
     let year: Int?
+    var titleJp: String? = nil
+    var episode: Int? = nil
     var id: String { watchUrl }
+    func displayTitle(language: String) -> String { language == "jp" ? (titleJp?.isEmpty == false ? titleJp! : title) : title }
 }
 struct WatchRequest: Encodable { let watchUrl: String }
 struct Series: Decodable { let seriesKey: String; let title: String; let episodes: [Episode]; let seasons: [Season] }
@@ -1794,7 +1957,8 @@ struct ServerResponse: Decodable { let episode: Int; let servers: [Server] }
 struct Server: Decodable, Identifiable { let index: Int; let name: String; let type: String; var id: Int { index } }
 struct EpisodeServers: Identifiable { let episode: Int; let seriesKey: String; let servers: [Server]; var id: Int { episode } }
 struct PlayRequest: Encodable { let seriesKey: String; let episode: Int; let serverIndex: Int }
-struct Playback: Decodable, Identifiable { let playbackUrl: String; let subtitleTracks: Int; let serverName: String; let serverKind: String?; var id: String { playbackUrl } }
+struct SkipRange: Decodable { let start: Double; let end: Double }
+struct Playback: Decodable, Identifiable { let playbackUrl: String; let subtitleTracks: Int; let serverName: String; let serverKind: String?; let intro: SkipRange?; let outro: SkipRange?; var id: String { playbackUrl } }
 struct PlaybackSession: Identifiable { let playback: Playback; let historyEntry: WatchHistoryEntry; var id: String { playback.id } }
 struct QueuedAutoPlay { let episode: Episode; let seriesKey: String; let serverName: String; let serverKind: String? }
 struct HistoryResponse: Decodable {
@@ -1817,6 +1981,7 @@ struct WatchHistoryEntry: Codable, Hashable, Identifiable {
     let serverName: String
     var positionSeconds: Double
     var updatedAt: Date
+    var titleJp: String? = nil
     var id: String { "\(watchUrl)#\(episode)" }
 }
 

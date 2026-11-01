@@ -261,9 +261,15 @@ async function resolvePlayerSource(embedUrl) {
   console.info(`[bridge] HLS candidate: ${playlistDescriptor(hlsUrl)}`);
   return {
     hlsUrl,
+    intro: validSkipRange(sourcePayload.intro),
+    outro: validSkipRange(sourcePayload.outro),
     requestHeaders: { Referer: `${playerOrigin}/`, Origin: playerOrigin, 'User-Agent': playerUserAgent, Accept: '*/*', 'Accept-Language': 'en-US,en;q=0.9' },
     subtitles,
   };
+}
+function validSkipRange(value) {
+  const start = Number(value?.start), end = Number(value?.end);
+  return value && Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start ? { start, end } : null;
 }
 function requireProviderUrl(value) {
   const url = new URL(value, providerOrigin);
@@ -316,6 +322,7 @@ function normalizeHistoryEntry(value) {
   const position = Number(value?.positionSeconds);
   return {
     seriesTitle: historyText(value?.seriesTitle, 'Untitled'),
+    titleJp: value?.titleJp ? historyText(value.titleJp, '', 500) : null,
     watchUrl,
     imageUrl: value?.imageUrl ? historyText(value.imageUrl, '', 2000) : null,
     episode,
@@ -429,12 +436,39 @@ function parseSearch(html) {
     const yearText = metaItems.map((item) => item.text).find((item) => /^\d{4}$/.test(item)) ?? '';
     results.push({
       title: cleanText($(node).find('.name').first().text()) || 'Untitled', watchUrl: url,
+      titleJp: cleanText($(node).find('.name').first().attr('data-jp')) || null,
       imageUrl: $(node).find('img').first().attr('src') ? absoluteUrl($(node).find('img').first().attr('src'), providerOrigin) : null,
       meta: cleanText($(node).find('.meta').text()),
       rating, score, mediaType, year: yearText ? Number(yearText) : null,
     });
   });
   return results;
+}
+async function latestUpdated(params) {
+  const page = Math.max(1, Math.min(10000, Number.parseInt(params.get('page') || '1', 10) || 1));
+  const season = params.get('season') || '', status = params.get('status') || '';
+  if (season && !['winter', 'spring', 'summer', 'fall'].includes(season)) throw new Error('Invalid season');
+  if (status && !['finished-airing', 'currently-airing', 'not-yet-aired'].includes(status)) throw new Error('Invalid status');
+  const url = new URL(season || status ? '/filter' : '/latest-updated', providerOrigin);
+  url.searchParams.set('page', String(page));
+  if (season || status) {
+    url.searchParams.set('sort', 'latest-updated');
+    if (season) url.searchParams.append('season[]', season);
+    if (status) url.searchParams.append('status[]', status);
+  }
+  const response = await fetchWithTimeout(url, { headers: { Accept: 'text/html' } }, 15000, 'Latest catalog request');
+  if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);
+  const $ = load(await response.text()); const results = [];
+  $('.ani.poster').each((_, node) => {
+    const card = $(node).parent(), name = card.find('a.name.d-title').first();
+    const href = name.attr('href') || $(node).find('a').first().attr('href');
+    if (!href) return;
+    const watch = requireProviderUrl(href); const episode = Number(watch.pathname.match(/\/ep-(\d+)\/?$/)?.[1]) || null;
+    watch.pathname = watch.pathname.replace(/\/ep-\d+\/?$/, ''); watch.search = '';
+    const src = $(node).find('img').first().attr('src');
+    results.push({ title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: watch.toString(), imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta: cleanText(card.find('.info .meta').text()), rating: null, score: null, mediaType: cleanText($(node).find('.right').text()) || null, year: null, episode });
+  });
+  return { results, page, hasNext: $('a[rel=next]').length > 0 };
 }
 function normalizedTitle(value) {
   return cleanText(value)
@@ -547,7 +581,7 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, playbackOri
   const expiry = setTimeout(() => { sources.delete(id); }, 2 * 60 * 60 * 1000);
   expiry.unref();
   console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
-  return { playbackUrl: `${playbackOrigin}${protectedPath(`/watch/${id}/master.m3u8`, user.token)}`, subtitleTracks: media.subtitles.length, serverName: server.name, serverKind: server.type };
+  return { playbackUrl: `${playbackOrigin}${protectedPath(`/watch/${id}/master.m3u8`, user.token)}`, subtitleTracks: media.subtitles.length, serverName: server.name, serverKind: server.type, intro: media.intro, outro: media.outro };
 }
 
 function rewriteUriLines(textValue, baseUrl, id, source) {
@@ -619,6 +653,7 @@ const server = http.createServer(async (request, response) => {
       console.info(`[bridge] Search returned ${results.length} result(s)`);
       return json(response, 200, { results });
     }
+    if (request.method === 'GET' && requestUrl.pathname === '/api/latest') return json(response, 200, await latestUpdated(requestUrl.searchParams));
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
       return json(response, 200, await storedHistory(user.userId));
     }
