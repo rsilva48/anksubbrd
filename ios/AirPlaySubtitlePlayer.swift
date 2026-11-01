@@ -461,31 +461,7 @@ struct HistoryScreen: View {
                 .navigationTitle("Continuar viendo")
                 .modifier(AdaptableTabRootTitleStyle())
                 .toolbar {
-                    // These items keep stable identities so that the native
-                    // TabView navigation bar updates their contents as the
-                    // system EditButton changes editMode.
-                    ToolbarItem(placement: .topBarLeading) {
-                        if editMode.isEditing {
-                            Button(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo") {
-                                if allEntriesSelected {
-                                    selectedEntryIDs.removeAll()
-                                } else {
-                                    selectedEntryIDs = Set(history.entries.map(\.id))
-                                }
-                            }
-                            .disabled(history.entries.isEmpty)
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        if editMode.isEditing {
-                            Button(role: .destructive) {
-                                showBulkDeleteConfirmation = true
-                            } label: {
-                                Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
-                            }
-                            .disabled(selectedEntryIDs.isEmpty)
-                        }
-                    }
+                    historyEditingToolbar
                     ToolbarItem(placement: .topBarTrailing) {
                         EditButton()
                     }
@@ -549,6 +525,58 @@ struct HistoryScreen: View {
 
     private var allEntriesSelected: Bool {
         !history.entries.isEmpty && selectedEntryIDs.count == history.entries.count
+    }
+
+    @ToolbarContentBuilder
+    private var historyEditingToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarLeading) {
+                selectAllButton
+            }
+            .hidden(!editMode.isEditing)
+
+            ToolbarItem(placement: .topBarTrailing) {
+                bulkDeleteButton
+            }
+            .hidden(!editMode.isEditing)
+        } else {
+            // On older systems ToolbarContent.hidden(_:) is unavailable. The
+            // items remain in place but are visually and interactively absent
+            // until the native EditButton activates the shared edit mode.
+            ToolbarItem(placement: .topBarLeading) {
+                selectAllButton
+                    .opacity(editMode.isEditing ? 1 : 0)
+                    .allowsHitTesting(editMode.isEditing)
+                    .accessibilityHidden(!editMode.isEditing)
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                bulkDeleteButton
+                    .opacity(editMode.isEditing ? 1 : 0)
+                    .allowsHitTesting(editMode.isEditing)
+                    .accessibilityHidden(!editMode.isEditing)
+            }
+        }
+    }
+
+    private var selectAllButton: some View {
+        Button(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo") {
+            if allEntriesSelected {
+                selectedEntryIDs.removeAll()
+            } else {
+                selectedEntryIDs = Set(history.entries.map(\.id))
+            }
+        }
+        .disabled(history.entries.isEmpty)
+    }
+
+    private var bulkDeleteButton: some View {
+        Button(role: .destructive) {
+            showBulkDeleteConfirmation = true
+        } label: {
+            Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
+        }
+        .disabled(selectedEntryIDs.isEmpty)
     }
 
     private func deleteSelected() {
