@@ -73,7 +73,16 @@ function parseServers(html) {
   const $ = load(html); const servers = [];
   $('li[data-link-id]').each((index, node) => {
     const item = $(node); const linkId = item.attr('data-link-id'); if (!linkId) return;
-    servers.push({ index, name: cleanText(item.text()) || `Server ${index + 1}`, type: String(item.closest('[data-type]').attr('data-type') ?? 'sub').toLowerCase(), linkId });
+    const serverMarkup = [
+      item.attr('data-type'),
+      item.closest('[data-type]').attr('data-type'),
+      item.attr('class'),
+      item.parent().attr('class'),
+      item.closest('div, ul, section').attr('class'),
+      item.text(),
+    ].filter(Boolean).join(' ').toLowerCase();
+    const type = /(?:^|[^a-z])dub(?:[^a-z]|$)/.test(serverMarkup) ? 'dub' : 'sub';
+    servers.push({ index, name: cleanText(item.text()) || `Server ${index + 1}`, type, linkId });
   });
   return servers;
 }
@@ -84,6 +93,7 @@ async function getSeries(watchUrl) {
   const episodeMarkup = await providerJson(`/ajax/episode/list/${series.animeId}`); const episodes = parseEpisodes(episodeMarkup);
   if (!episodes.length) throw new Error('No episodes were returned');
   const key = randomUUID(); seriesCache.set(key, { ...series, episodes, expiresAt: Date.now() + 20 * 60 * 1000 });
+  console.info(`[bridge] Loaded ${series.title}: ${episodes.length} episode(s)`);
   return { seriesKey: key, title: series.title, episodes: episodes.map(({ number, title }) => ({ number, title })) };
 }
 function cachedSeries(key) {
@@ -96,6 +106,8 @@ async function getServers(seriesKey, episodeNumber) {
   if (!episode) throw new Error('Episode was not found');
   const markup = await providerJson(`/ajax/server/list?servers=${encodeURIComponent(episode.ids)}`); const servers = parseServers(markup);
   if (!servers.length) throw new Error('No servers were returned');
+  const subCount = servers.filter((server) => server.type === 'sub').length;
+  console.info(`[bridge] Episode ${episode.number}: ${subCount} Sub, ${servers.length - subCount} Dub servers`);
   series.lastServers = { episodeNumber: episode.number, servers };
   return { episode: episode.number, servers: servers.map(({ index, name, type }) => ({ index, name, type })) };
 }
@@ -162,10 +174,12 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, requestHost
   const series = cachedSeries(seriesKey);
   if (!series.lastServers || series.lastServers.episodeNumber !== Number(episodeNumber)) await getServers(seriesKey, episodeNumber);
   const server = series.lastServers.servers.find((candidate) => candidate.index === Number(serverIndex)); if (!server) throw new Error('Server was not found');
+  console.info(`[bridge] Resolving episode ${episodeNumber}, ${server.type.toUpperCase()} server ${server.name}`);
   const reply = await providerJson(`/ajax/server?get=${encodeURIComponent(server.linkId)}`); if (!reply?.url) throw new Error('Player URL was not returned');
   const media = await resolveEmbed(reply.url); const id = randomUUID(); sources.set(id, media);
   const expiry = setTimeout(() => { const source = sources.get(id); sources.delete(id); source?.mediaPage?.close().catch(() => {}); }, 2 * 60 * 60 * 1000);
   expiry.unref();
+  console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
   return { playbackUrl: `http://${requestHost}/watch/${id}/master.m3u8`, subtitleTracks: media.subtitles.length };
 }
 
@@ -230,8 +244,15 @@ async function sendSingleVttPlaylist(response, track, id, source) {
 const server = http.createServer(async (request, response) => {
   const requestUrl = new URL(request.url, `http://${request.headers.host}`);
   try {
+    if (requestUrl.pathname === '/health' || requestUrl.pathname.startsWith('/api/')) {
+      console.info(`[bridge] ${request.method} ${requestUrl.pathname}`);
+    }
     if (request.method === 'GET' && requestUrl.pathname === '/health') return json(response, 200, { ok: true });
-    if (request.method === 'GET' && requestUrl.pathname === '/api/search') return json(response, 200, { results: parseSearch((await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(requestUrl.searchParams.get('q') ?? '')}`)).html ?? '') });
+    if (request.method === 'GET' && requestUrl.pathname === '/api/search') {
+      const results = parseSearch((await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(requestUrl.searchParams.get('q') ?? '')}`)).html ?? '');
+      console.info(`[bridge] Search returned ${results.length} result(s)`);
+      return json(response, 200, { results });
+    }
     if (request.method === 'POST' && requestUrl.pathname === '/api/series') return json(response, 200, await getSeries(JSON.parse(await readBody(request)).watchUrl));
     const serversRoute = requestUrl.pathname.match(/^\/api\/series\/([\w-]+)\/servers$/);
     if (request.method === 'GET' && serversRoute) return json(response, 200, await getServers(serversRoute[1], requestUrl.searchParams.get('episode')));
@@ -243,6 +264,9 @@ const server = http.createServer(async (request, response) => {
     const media = requestUrl.pathname.match(/^\/media\/([\w-]+)$/);
     if (request.method === 'GET' && media) { const source = sources.get(media[1]); const upstream = requestUrl.searchParams.get('url'); if (!source || !upstream) return json(response, 404, { error: 'Unknown media request' }); return await sendUpstream(response, new URL(upstream).toString(), media[1], source, false, request.headers.range); }
     json(response, 404, { error: 'Not found' });
-  } catch (error) { json(response, 502, { error: error.message }); }
+  } catch (error) {
+    console.error(`[bridge] ${request.method} ${requestUrl.pathname} failed: ${error.message}`);
+    json(response, 502, { error: error.message });
+  }
 });
 server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));

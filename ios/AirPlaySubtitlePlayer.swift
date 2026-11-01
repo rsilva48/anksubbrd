@@ -6,12 +6,36 @@ import SwiftUI
 @main
 struct AirPlaySubtitlePlayerApp: App {
     @StateObject private var history = WatchHistoryStore()
-    var body: some Scene { WindowGroup { CatalogScreen().environmentObject(history) } }
+
+    var body: some Scene {
+        WindowGroup {
+            MainTabScreen()
+                .environmentObject(history)
+        }
+    }
 }
 
-struct CatalogScreen: View {
-    @EnvironmentObject private var history: WatchHistoryStore
-    @AppStorage("bridgeBaseURL") private var bridgeBaseURL = "http://192.168.1.20:8787"
+struct MainTabScreen: View {
+    @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
+
+    var body: some View {
+        TabView {
+            SearchScreen(bridgeBaseURL: bridgeBaseURL)
+                .tabItem { Label("Buscar", systemImage: "magnifyingglass") }
+
+            HistoryScreen(bridgeBaseURL: bridgeBaseURL)
+                .tabItem { Label("Continuar viendo", systemImage: "play.circle") }
+
+            SettingsScreen()
+                .tabItem { Label("Configuración", systemImage: "gearshape") }
+        }
+        .tint(.indigo)
+    }
+}
+
+struct SearchScreen: View {
+    let bridgeBaseURL: String
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var query = ""
     @State private var results: [Anime] = []
     @State private var loading = false
@@ -19,63 +43,272 @@ struct CatalogScreen: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("Bridge local") {
-                    TextField("http://IP-DEL-BRIDGE:8787", text: $bridgeBaseURL)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
-                }
-                Section("Buscar") {
-                    HStack {
-                        TextField("Título de anime", text: $query)
-                            .textInputAutocapitalization(.never)
-                            .submitLabel(.search)
-                            .onSubmit { search() }
-                        Button("Buscar") { search() }.disabled(query.trimmingCharacters(in: .whitespaces).isEmpty || loading)
-                    }
-                }
-                if loading { ProgressView("Consultando catálogo…") }
-                if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
-                if !history.entries.isEmpty {
-                    Section("Continuar viendo") {
-                        ForEach(history.entries) { entry in
-                            NavigationLink(value: entry) {
-                                VStack(alignment: .leading) {
-                                    Text(entry.seriesTitle)
-                                    Text("Episodio \(entry.episode) · \(formatTime(entry.positionSeconds))")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                }
-                Section("Resultados") {
-                    ForEach(results) { anime in
-                        NavigationLink(value: anime) {
-                            VStack(alignment: .leading) {
-                                Text(anime.title)
-                                if !anime.meta.isEmpty { Text(anime.meta).font(.caption).foregroundStyle(.secondary) }
-                            }
-                        }
-                    }
+            Group {
+                if horizontalSizeClass == .regular {
+                    tabletContent
+                } else {
+                    phoneContent
                 }
             }
             .navigationTitle("AirPlay Subtitles")
-            .navigationDestination(for: Anime.self) { anime in EpisodesScreen(bridgeBaseURL: bridgeBaseURL, anime: anime) }
-            .navigationDestination(for: WatchHistoryEntry.self) { entry in
-                EpisodesScreen(bridgeBaseURL: bridgeBaseURL, anime: Anime(title: entry.seriesTitle, watchUrl: entry.watchUrl, imageUrl: nil, meta: ""), resumeEpisode: entry.episode)
+        }
+    }
+
+    private var phoneContent: some View {
+        List {
+            Section {
+                HStack {
+                    TextField("Título de anime", text: $query)
+                        .textInputAutocapitalization(.never)
+                        .submitLabel(.search)
+                        .onSubmit { search() }
+                    Button("Buscar") { search() }
+                        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loading)
+                }
+            } header: {
+                Text("Buscar")
+            } footer: {
+                Text("El bridge local se configura en la pestaña Configuración.")
+            }
+
+            if loading {
+                Section { ProgressView("Consultando catálogo…") }
+            }
+
+            if let errorMessage {
+                Section { ErrorNotice(message: errorMessage) }
+            }
+
+            if !results.isEmpty {
+                Section("Resultados") {
+                    ForEach(results) { anime in
+                        NavigationLink {
+                            EpisodesScreen(bridgeBaseURL: bridgeBaseURL, anime: anime)
+                        } label: {
+                            AnimeRow(anime: anime)
+                        }
+                    }
+                }
+            } else if !loading && errorMessage == nil {
+                Section {
+                    ContentPlaceholder(icon: "sparkle.magnifyingglass", title: "Busca una serie", detail: "Escribe un título para consultar el catálogo desde tu bridge.")
+                }
             }
         }
     }
 
+    private var tabletContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(spacing: 14) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    TextField("Busca una serie", text: $query)
+                        .textInputAutocapitalization(.never)
+                        .submitLabel(.search)
+                        .onSubmit { search() }
+                    Button { search() } label: {
+                        Label("Buscar", systemImage: "arrow.right")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loading)
+                }
+                .padding(18)
+                .liquidGlassCard()
+
+                if loading {
+                    HStack { ProgressView(); Text("Consultando catálogo…") }
+                        .padding(18)
+                        .liquidGlassCard()
+                }
+
+                if let errorMessage {
+                    ErrorNotice(message: errorMessage)
+                        .padding(18)
+                        .liquidGlassCard()
+                }
+
+                if !results.isEmpty {
+                    Text("Resultados")
+                        .font(.title2.bold())
+                    LiquidGlassGroup {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 240, maximum: 340), spacing: 18)], spacing: 18) {
+                            ForEach(results) { anime in
+                                NavigationLink {
+                                    EpisodesScreen(bridgeBaseURL: bridgeBaseURL, anime: anime)
+                                } label: {
+                                    AnimeCard(anime: anime)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                } else if !loading && errorMessage == nil {
+                    ContentPlaceholder(icon: "sparkle.magnifyingglass", title: "Busca una serie", detail: "Escribe un título para consultar el catálogo desde tu bridge.")
+                        .liquidGlassCard()
+                }
+            }
+            .frame(maxWidth: 1120, alignment: .leading)
+            .padding(24)
+        }
+    }
+
     private func search() {
-        loading = true; errorMessage = nil
+        let searchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !searchQuery.isEmpty else { return }
         Task { @MainActor in
+            loading = true
+            errorMessage = nil
+            defer { loading = false }
             do {
-                let reply: SearchResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/search", query: [URLQueryItem(name: "q", value: query)])
+                let reply: SearchResponse = try await BridgeClient.get(
+                    base: bridgeBaseURL,
+                    path: "/api/search",
+                    query: [URLQueryItem(name: "q", value: searchQuery)]
+                )
                 results = reply.results
-            } catch { errorMessage = error.localizedDescription }
-            loading = false
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+struct HistoryScreen: View {
+    let bridgeBaseURL: String
+    @EnvironmentObject private var history: WatchHistoryStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if horizontalSizeClass == .regular {
+                    tabletContent
+                } else {
+                    phoneContent
+                }
+            }
+            .navigationTitle("Continuar viendo")
+        }
+    }
+
+    private var phoneContent: some View {
+        List {
+            if history.entries.isEmpty {
+                Section {
+                    ContentPlaceholder(icon: "play.circle", title: "Nada para continuar", detail: "Las series que reproduzcas aparecerán aquí con el segundo en que las dejaste.")
+                }
+            } else {
+                Section("Reproducciones recientes") {
+                    ForEach(history.entries) { entry in
+                        NavigationLink {
+                            episodeScreen(for: entry)
+                        } label: {
+                            HistoryRow(entry: entry)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var tabletContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if history.entries.isEmpty {
+                    ContentPlaceholder(icon: "play.circle", title: "Nada para continuar", detail: "Las series que reproduzcas aparecerán aquí con el segundo en que las dejaste.")
+                        .liquidGlassCard()
+                } else {
+                    Text("Reproducciones recientes")
+                        .font(.title2.bold())
+                    LiquidGlassGroup {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 360), spacing: 18)], spacing: 18) {
+                            ForEach(history.entries) { entry in
+                                NavigationLink {
+                                    episodeScreen(for: entry)
+                                } label: {
+                                    HistoryCard(entry: entry)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: 1120, alignment: .leading)
+            .padding(24)
+        }
+    }
+
+    private func episodeScreen(for entry: WatchHistoryEntry) -> EpisodesScreen {
+        EpisodesScreen(
+            bridgeBaseURL: bridgeBaseURL,
+            anime: Anime(title: entry.seriesTitle, watchUrl: entry.watchUrl, imageUrl: entry.imageUrl, meta: ""),
+            resumeEpisode: entry.episode
+        )
+    }
+}
+
+struct SettingsScreen: View {
+    @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
+    @AppStorage("anksubbrd.default-track-type") private var defaultTrackType = StreamKind.sub.rawValue
+    @State private var testingBridge = false
+    @State private var testResult: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Bridge local") {
+                    TextField("http://IP-DEL-BRIDGE:8787", text: $bridgeBaseURL)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled()
+                    Button {
+                        testBridge()
+                    } label: {
+                        if testingBridge {
+                            HStack { ProgressView(); Text("Probando conexión…") }
+                        } else {
+                            Label("Probar conexión", systemImage: "network")
+                        }
+                    }
+                    .disabled(testingBridge)
+
+                    if let testResult {
+                        Text(testResult)
+                            .font(.footnote)
+                            .foregroundStyle(testResult.hasPrefix("Conectado") ? .green : .red)
+                    }
+                } footer: {
+                    Text("La dirección se guarda en este iPhone o iPad. Usa la IP LAN del equipo donde ejecutas el bridge.")
+                }
+
+                Section("Audio y subtítulos") {
+                    Picker("Mostrar servidores por defecto", selection: $defaultTrackType) {
+                        ForEach(StreamKind.allCases) { kind in
+                            Text(kind.displayName).tag(kind.rawValue)
+                        }
+                    }
+                } footer: {
+                    Text("Al abrir los servidores de un episodio podrás cambiar entre las pestañas Sub y Dub. Sub es la opción predeterminada.")
+                }
+            }
+            .navigationTitle("Configuración")
+        }
+    }
+
+    private func testBridge() {
+        Task { @MainActor in
+            testingBridge = true
+            testResult = nil
+            defer { testingBridge = false }
+            do {
+                let health: HealthResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/health")
+                testResult = health.ok ? "Conectado al bridge." : "El bridge respondió de forma inesperada."
+            } catch {
+                testResult = error.localizedDescription
+            }
         }
     }
 }
@@ -89,6 +322,9 @@ struct EpisodesScreen: View {
     @State private var pendingServers: EpisodeServers?
     @State private var playback: PlaybackSession?
     @State private var loading = true
+    @State private var loadingServers = false
+    @State private var preparingPlayback = false
+    @State private var activityDescription = ""
     @State private var errorMessage: String?
 
     init(bridgeBaseURL: String, anime: Anime, resumeEpisode: Int? = nil) {
@@ -99,79 +335,191 @@ struct EpisodesScreen: View {
 
     var body: some View {
         List {
-            if loading { ProgressView("Cargando episodios…") }
-            if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
+            if loading {
+                Section { ProgressView("Cargando episodios…") }
+            }
+
+            if loadingServers {
+                Section { ProgressView(activityDescription.isEmpty ? "Cargando servidores…" : activityDescription) }
+            }
+
+            if let errorMessage {
+                Section { ErrorNotice(message: errorMessage) }
+            }
+
             if let series {
                 if let resumeEpisode, let episode = series.episodes.first(where: { $0.number == resumeEpisode }) {
                     Section("Continuar") {
-                        Button("Continuar episodio \(episode.number)") { loadServers(for: episode, seriesKey: series.seriesKey) }
+                        Button {
+                            loadServers(for: episode, seriesKey: series.seriesKey)
+                        } label: {
+                            Label("Continuar episodio \(episode.number) en \(formatTime(history.position(for: anime.watchUrl, episode: episode.number)))", systemImage: "play.fill")
+                        }
+                        .disabled(loadingServers || preparingPlayback)
                     }
                 }
-                ForEach(series.episodes) { episode in
-                    Button {
-                        loadServers(for: episode, seriesKey: series.seriesKey)
-                    } label: {
-                        VStack(alignment: .leading) {
-                            Text("Episodio \(episode.number)")
-                            Text(episode.title).font(.caption).foregroundStyle(.secondary)
+
+                Section("Episodios") {
+                    ForEach(series.episodes) { episode in
+                        Button {
+                            loadServers(for: episode, seriesKey: series.seriesKey)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Episodio \(episode.number)")
+                                    .foregroundStyle(.primary)
+                                if !episode.title.isEmpty {
+                                    Text(episode.title)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
+                        .disabled(loadingServers || preparingPlayback)
                     }
                 }
             }
         }
         .navigationTitle(anime.title)
-        .task { await loadSeries() }
+        .task(id: anime.watchUrl) { await loadSeries() }
         .sheet(item: $pendingServers) { selection in
-            ServerPicker(selection: selection) { server in play(episode: selection.episode, server: server) }
+            ServerPicker(selection: selection, isPreparing: preparingPlayback) { server in
+                play(episode: selection.episode, server: server)
+            }
         }
-        .fullScreenCover(item: $playback) { item in VideoScreen(playback: item.playback, historyEntry: item.historyEntry).environmentObject(history) }
+        .fullScreenCover(item: $playback) { item in
+            VideoScreen(playback: item.playback, historyEntry: item.historyEntry)
+                .environmentObject(history)
+        }
+        .overlay {
+            if preparingPlayback {
+                LoadingOverlay(message: activityDescription)
+            }
+        }
     }
 
     private func loadSeries() async {
-        defer { loading = false }
-        do { series = try await BridgeClient.post(base: bridgeBaseURL, path: "/api/series", body: WatchRequest(watchUrl: anime.watchUrl)) }
-        catch { errorMessage = error.localizedDescription }
-    }
-    private func loadServers(for episode: Episode, seriesKey: String) {
+        loading = true
         errorMessage = nil
-        Task { @MainActor in
-            do {
-                let reply: ServerResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/series/\(seriesKey)/servers", query: [URLQueryItem(name: "episode", value: String(episode.number))])
-                pendingServers = EpisodeServers(episode: episode.number, seriesKey: seriesKey, servers: reply.servers)
-            } catch { errorMessage = error.localizedDescription }
+        defer { loading = false }
+        do {
+            series = try await BridgeClient.post(base: bridgeBaseURL, path: "/api/series", body: WatchRequest(watchUrl: anime.watchUrl))
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
+
+    private func loadServers(for episode: Episode, seriesKey: String) {
+        Task { @MainActor in
+            loadingServers = true
+            activityDescription = "Cargando servidores del episodio \(episode.number)…"
+            errorMessage = nil
+            defer { loadingServers = false }
+            do {
+                let reply: ServerResponse = try await BridgeClient.get(
+                    base: bridgeBaseURL,
+                    path: "/api/series/\(seriesKey)/servers",
+                    query: [URLQueryItem(name: "episode", value: String(episode.number))]
+                )
+                pendingServers = EpisodeServers(episode: episode.number, seriesKey: seriesKey, servers: reply.servers)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func play(episode: Int, server: Server) {
         guard let series else { return }
-        pendingServers = nil; errorMessage = nil
+        preparingPlayback = true
+        activityDescription = "Preparando \(server.name)…"
+        errorMessage = nil
+        pendingServers = nil
         Task { @MainActor in
+            defer { preparingPlayback = false }
             do {
-                let resolved: Playback = try await BridgeClient.post(base: bridgeBaseURL, path: "/api/play", body: PlayRequest(seriesKey: series.seriesKey, episode: episode, serverIndex: server.index))
-                let episodeTitle = series.episodes.first(where: { $0.number == episode })?.title ?? "Episode \(episode)"
-                playback = PlaybackSession(playback: resolved, historyEntry: WatchHistoryEntry(seriesTitle: series.title, watchUrl: anime.watchUrl, episode: episode, episodeTitle: episodeTitle, serverName: server.name, positionSeconds: history.position(for: anime.watchUrl, episode: episode), updatedAt: Date()))
+                let resolved: Playback = try await BridgeClient.post(
+                    base: bridgeBaseURL,
+                    path: "/api/play",
+                    body: PlayRequest(seriesKey: series.seriesKey, episode: episode, serverIndex: server.index)
+                )
+                let episodeTitle = series.episodes.first(where: { $0.number == episode })?.title ?? "Episodio \(episode)"
+                playback = PlaybackSession(
+                    playback: resolved,
+                    historyEntry: WatchHistoryEntry(
+                        seriesTitle: series.title,
+                        watchUrl: anime.watchUrl,
+                        imageUrl: anime.imageUrl,
+                        episode: episode,
+                        episodeTitle: episodeTitle,
+                        serverName: server.name,
+                        positionSeconds: history.position(for: anime.watchUrl, episode: episode),
+                        updatedAt: Date()
+                    )
+                )
+            } catch {
+                errorMessage = error.localizedDescription
             }
-            catch { errorMessage = error.localizedDescription }
         }
     }
 }
 
 struct ServerPicker: View {
     let selection: EpisodeServers
+    let isPreparing: Bool
     let onServer: (Server) -> Void
+    @AppStorage("anksubbrd.default-track-type") private var defaultTrackType = StreamKind.sub.rawValue
+    @State private var selectedTrack = StreamKind.sub.rawValue
     @Environment(\.dismiss) private var dismiss
+
+    private var filteredServers: [Server] {
+        selection.servers.filter { $0.kind.rawValue == selectedTrack }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(selection.servers) { server in
-                    Button { dismiss(); onServer(server) } label: {
-                        HStack { Text(server.name); Spacer(); Text(server.type.uppercased()).foregroundStyle(.secondary) }
+                Section {
+                    Picker("Tipo", selection: $selectedTrack) {
+                        ForEach(StreamKind.allCases) { kind in
+                            Text(kind.displayName).tag(kind.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                if filteredServers.isEmpty {
+                    Section {
+                        ContentPlaceholder(icon: "tray", title: "Sin servidores \(selectedTrack == StreamKind.dub.rawValue ? "Dub" : "Sub")", detail: "Este episodio no publicó una fuente para esta pestaña.")
+                    }
+                } else {
+                    Section("Servidores \(selectedTrack == StreamKind.dub.rawValue ? "Dub" : "Sub")") {
+                        ForEach(filteredServers) { server in
+                            Button {
+                                onServer(server)
+                            } label: {
+                                HStack {
+                                    Text(server.name)
+                                    Spacer()
+                                    Image(systemName: "play.circle")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .disabled(isPreparing)
+                        }
                     }
                 }
             }
-            .navigationTitle("Servidor — Episodio \(selection.episode)")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } } }
+            .navigationTitle("Episodio \(selection.episode)")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancelar") { dismiss() }
+                        .disabled(isPreparing)
+                }
+            }
+            .onAppear {
+                selectedTrack = StreamKind(rawValue: defaultTrackType)?.rawValue ?? StreamKind.sub.rawValue
+            }
         }
+        .interactiveDismissDisabled(isPreparing)
     }
 }
 
@@ -188,12 +536,25 @@ struct VideoScreen: View {
         self.historyEntry = historyEntry
         _player = State(initialValue: AVPlayer(url: URL(string: playback.playbackUrl)!))
     }
+
     var body: some View {
         NavigationStack {
-            NativePlayer(player: player).ignoresSafeArea()
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cerrar") { savePosition(); player.pause(); dismiss() } } }
+            NativePlayer(player: player)
+                .ignoresSafeArea()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cerrar") {
+                            savePosition()
+                            player.pause()
+                            dismiss()
+                        }
+                    }
+                }
                 .onAppear { beginPlayback() }
-                .onDisappear { savePosition(); removeObserver() }
+                .onDisappear {
+                    savePosition()
+                    removeObserver()
+                }
         }
     }
 
@@ -201,58 +562,351 @@ struct VideoScreen: View {
         history.open(historyEntry)
         let resumeAt = history.position(for: historyEntry.watchUrl, episode: historyEntry.episode)
         player.allowsExternalPlayback = true
-        if resumeAt > 3 { player.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600)) }
+        if resumeAt > 3 {
+            player.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
+        }
         if timeObserver == nil {
             timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 5, preferredTimescale: 600), queue: .main) { time in
                 guard time.seconds.isFinite, time.seconds >= 0 else { return }
-                Task { @MainActor in history.update(historyEntry, positionSeconds: time.seconds) }
+                Task { @MainActor in
+                    history.update(historyEntry, positionSeconds: time.seconds)
+                }
             }
         }
         player.play()
     }
+
     private func savePosition() {
         let seconds = player.currentTime().seconds
-        if seconds.isFinite, seconds >= 0 { history.update(historyEntry, positionSeconds: seconds) }
+        if seconds.isFinite, seconds >= 0 {
+            history.update(historyEntry, positionSeconds: seconds)
+        }
     }
+
     private func removeObserver() {
-        if let timeObserver { player.removeTimeObserver(timeObserver); self.timeObserver = nil }
+        if let timeObserver {
+            player.removeTimeObserver(timeObserver)
+            self.timeObserver = nil
+        }
     }
 }
 
 struct NativePlayer: UIViewControllerRepresentable {
     let player: AVPlayer
+
     func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController(); controller.player = player
-        controller.allowsPictureInPicturePlayback = true; controller.updatesNowPlayingInfoCenter = true
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.allowsPictureInPicturePlayback = true
+        controller.updatesNowPlayingInfoCenter = true
         return controller
     }
-    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) { controller.player = player }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        controller.player = player
+    }
+}
+
+struct AnimeRow: View {
+    let anime: Anime
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            PosterImage(imageURL: anime.imageUrl)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(anime.title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                if !anime.meta.isEmpty {
+                    Text(anime.meta)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+struct HistoryRow: View {
+    let entry: WatchHistoryEntry
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            PosterImage(imageURL: entry.imageUrl)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.seriesTitle)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                Text("Episodio \(entry.episode) · \(formatTime(entry.positionSeconds))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(entry.serverName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+struct AnimeCard: View {
+    let anime: Anime
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            PosterImage(imageURL: anime.imageUrl, width: 88, height: 124)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(anime.title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                if !anime.meta.isEmpty {
+                    Text(anime.meta)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+                Spacer(minLength: 0)
+                Label("Ver episodios", systemImage: "play.circle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 124, alignment: .leading)
+        .padding(14)
+        .liquidGlassCard()
+    }
+}
+
+struct HistoryCard: View {
+    let entry: WatchHistoryEntry
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            PosterImage(imageURL: entry.imageUrl, width: 88, height: 124)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(entry.seriesTitle)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+                Text("Episodio \(entry.episode)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Label(formatTime(entry.positionSeconds), systemImage: "clock")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Label("Continuar", systemImage: "play.circle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 124, alignment: .leading)
+        .padding(14)
+        .liquidGlassCard()
+    }
+}
+
+struct PosterImage: View {
+    let imageURL: String?
+    let width: CGFloat
+    let height: CGFloat
+
+    init(imageURL: String?, width: CGFloat = 56, height: CGFloat = 80) {
+        self.imageURL = imageURL
+        self.width = width
+        self.height = height
+    }
+
+    var body: some View {
+        Group {
+            if let imageURL, let url = URL(string: imageURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().scaledToFill()
+                    case .failure:
+                        posterPlaceholder
+                    default:
+                        ZStack { posterPlaceholder; ProgressView() }
+                    }
+                }
+            } else {
+                posterPlaceholder
+            }
+        }
+        .frame(width: width, height: height)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var posterPlaceholder: some View {
+        Image(systemName: "film")
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct ContentPlaceholder: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text(title).font(.headline)
+            Text(detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+    }
+}
+
+struct ErrorNotice: View {
+    let message: String
+
+    var body: some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+            .foregroundStyle(.red)
+            .font(.footnote)
+    }
+}
+
+struct LoadingOverlay: View {
+    let message: String
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.24).ignoresSafeArea()
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.large)
+                Text(message.isEmpty ? "Preparando reproducción…" : message)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(24)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+            .padding(32)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(message.isEmpty ? "Preparando reproducción" : message)
+    }
+}
+
+struct LiquidGlassGroup<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 18) {
+                content
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    @ViewBuilder
+    func liquidGlassCard(cornerRadius: CGFloat = 22) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+        } else {
+            self.background(.thinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+    }
+}
+
+enum StreamKind: String, CaseIterable, Identifiable {
+    case sub
+    case dub
+
+    var id: String { rawValue }
+    var displayName: String { rawValue == Self.dub.rawValue ? "Dub" : "Sub" }
+}
+
+extension Server {
+    var kind: StreamKind { StreamKind(rawValue: type.lowercased()) ?? .sub }
 }
 
 private enum BridgeClient {
     static func get<T: Decodable>(base: String, path: String, query: [URLQueryItem] = []) async throws -> T {
-        var components = try components(base: base, path: path); components.queryItems = query
-        return try await request(URLRequest(url: components.url!))
+        var components = try components(base: base, path: path)
+        components.queryItems = query
+        guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
+        return try await request(URLRequest(url: url))
     }
+
     static func post<T: Decodable, Body: Encodable>(base: String, path: String, body: Body) async throws -> T {
-        let url = try components(base: base, path: path).url!
-        var request = URLRequest(url: url); request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let components = try components(base: base, path: path)
+        guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         return try await self.request(request)
     }
+
     private static func components(base: String, path: String) throws -> URLComponents {
-        guard var components = URLComponents(string: base), components.scheme == "http" || components.scheme == "https", components.host != nil else { throw URLError(.badURL) }
-        components.path = path; return components
+        let trimmedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmedBase),
+              components.scheme == "http" || components.scheme == "https",
+              components.host != nil else {
+            throw BridgeRequestError(message: "Escribe una dirección válida, por ejemplo http://192.168.1.20:8787.")
+        }
+        components.path = path
+        return components
     }
+
     private static func request<T: Decodable>(_ request: URLRequest) async throws -> T {
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try JSONDecoder().decode(T.self, from: data)
+        guard let http = response as? HTTPURLResponse else {
+            throw BridgeRequestError(message: "El bridge no respondió correctamente.")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let providerMessage = try? JSONDecoder().decode(BridgeErrorResponse.self, from: data).error
+            throw BridgeRequestError(message: providerMessage ?? "El bridge respondió HTTP \(http.statusCode).")
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw BridgeRequestError(message: "El bridge devolvió una respuesta que la app no pudo leer.")
+        }
     }
 }
 
+struct BridgeRequestError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
+struct BridgeErrorResponse: Decodable { let error: String? }
+struct HealthResponse: Decodable { let ok: Bool }
 struct SearchResponse: Decodable { let results: [Anime] }
-struct Anime: Codable, Hashable, Identifiable { let title: String; let watchUrl: String; let imageUrl: String?; let meta: String; var id: String { watchUrl } }
+struct Anime: Codable, Hashable, Identifiable {
+    let title: String
+    let watchUrl: String
+    let imageUrl: String?
+    let meta: String
+    var id: String { watchUrl }
+}
 struct WatchRequest: Encodable { let watchUrl: String }
 struct Series: Decodable { let seriesKey: String; let title: String; let episodes: [Episode] }
 struct Episode: Decodable, Identifiable { let number: Int; let title: String; var id: Int { number } }
@@ -266,6 +920,7 @@ struct PlaybackSession: Identifiable { let playback: Playback; let historyEntry:
 struct WatchHistoryEntry: Codable, Hashable, Identifiable {
     let seriesTitle: String
     let watchUrl: String
+    let imageUrl: String?
     let episode: Int
     let episodeTitle: String
     let serverName: String
@@ -304,10 +959,13 @@ private final class WatchHistoryStore: ObservableObject {
 
     private func upsert(_ entry: WatchHistoryEntry) {
         entries.removeAll { $0.id == entry.id }
-        var copy = entry; copy.updatedAt = Date()
+        var copy = entry
+        copy.updatedAt = Date()
         entries.insert(copy, at: 0)
         entries = Array(entries.prefix(50))
-        if let data = try? JSONEncoder().encode(entries) { defaults.set(data, forKey: key) }
+        if let data = try? JSONEncoder().encode(entries) {
+            defaults.set(data, forKey: key)
+        }
     }
 }
 

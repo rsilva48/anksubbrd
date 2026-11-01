@@ -43,15 +43,27 @@ curl http://127.0.0.1:8787/health
 
 Debe responder `{"ok":true}`.
 
+## Registros del bridge
+
+Al arrancar, es normal que sólo aparezca la línea de dirección: no hay actividad hasta que la app se conecte. Esta versión registra cada operación del catálogo, la carga de episodios, el conteo de servidores Sub/Dub, la resolución del reproductor y cualquier error, sin imprimir URLs temporales, tokens ni credenciales.
+
+Después de pulsar **Probar conexión** en la app, la consola debe mostrar como mínimo:
+
+```text
+[bridge] GET /health
+```
+
+Si no aparece esa línea, el iPhone/iPad no está llegando al equipo del bridge: revisa la IP configurada, que ambos equipos estén en la misma red y que el firewall de Windows permita conexiones entrantes TCP al puerto `8787`. Reinicia `node server.mjs` después de actualizar el código para aplicar los nuevos registros.
+
 ## Uso en la app
 
 1. Compila e instala la app iOS.
-2. Escribe una vez la dirección de tu bridge local.
-3. Busca por título.
-4. Elige una serie, episodio y una fuente `SUB` o `DUB`.
+2. Abre **Configuración**, escribe una vez la dirección de tu bridge local y usa **Probar conexión**. La dirección queda guardada en el dispositivo.
+3. En **Buscar**, busca por título y elige una serie y un episodio.
+4. Elige una fuente desde las pestañas `Sub` o `Dub`. La predeterminada se cambia en **Configuración** y es `Sub` inicialmente.
 5. Usa el botón AirPlay de los controles nativos. Las pistas que el reproductor publica como VTT se anuncian como subtítulos HLS.
 
-La app conserva localmente las últimas 50 reproducciones: serie, episodio, servidor, fecha y segundo actual. **Continuar viendo** aparece en la pantalla principal y el reproductor retoma desde el último segundo guardado. El historial se guarda sólo en `UserDefaults` del iPhone/iPad; no se transmite al bridge ni al sitio.
+La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. El historial se guarda sólo en `UserDefaults` del iPhone/iPad; no se transmite al bridge ni al sitio.
 
 La primera reproducción de un servidor puede tardar varios segundos: el bridge abre temporalmente el reproductor para descubrir la playlist y las pistas. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
 
