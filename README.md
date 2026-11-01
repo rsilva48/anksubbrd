@@ -66,6 +66,8 @@ Los resultados separan `PG Rating`, puntuación, tipo (`TV`, `Movie`, `ONA`, `OV
 
 La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. Si ejecutas el bridge con historial (configuración predeterminada), la app sincroniza de manera privada esas entradas entre tus dispositivos; no inicia sesión ni transmite credenciales al sitio de origen.
 
+En **Configuración → Perfil de historial**, asigna un identificador por lista. Por ejemplo, configura `trabajo` en los dos iPhone para que compartan una sola lista y `ipad-privado` en el iPad para mantener otra separada. Todos pueden usar el mismo `BRIDGE_ACCESS_TOKEN`; el bridge no enumera perfiles ni mezcla sus miniaturas o progreso. Usa letras minúsculas, números, guiones o guiones bajos, con un máximo de 40 caracteres.
+
 La primera reproducción de un servidor tarda sólo lo necesario para solicitar los metadatos públicos de la fuente. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
 
 ## API local
@@ -76,7 +78,7 @@ La app usa estas rutas locales; no necesitas llamarlas manualmente.
 - `POST /api/series` con `{ "watchUrl": "…" }`
 - `GET /api/series/:seriesKey/servers?episode=2`
 - `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`
-- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso
+- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso (el perfil viaja en `X-History-Profile`)
 
 Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch/...` del origen configurado para el catálogo y no expone un proxy genérico para otros dominios. El historial se guarda en `proxy/data/history.json` por defecto (o en la ruta definida por `HISTORY_STORE_PATH`); esa carpeta está excluida de Git.
 

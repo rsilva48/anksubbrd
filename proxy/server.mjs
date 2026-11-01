@@ -16,7 +16,7 @@ const playerUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/5
 const bridgeAccessToken = cleanText(process.env.BRIDGE_ACCESS_TOKEN);
 const historyStorePath = resolve(process.env.HISTORY_STORE_PATH ?? `${process.cwd()}/data/history.json`);
 const mediaUrlSigningKey = randomUUID();
-let historyEntries;
+let historyProfiles;
 let historyMutation = Promise.resolve();
 
 function json(response, status, body) {
@@ -197,6 +197,14 @@ function historyTimestamp(date) {
 function historyText(value, fallback = '', maximum = 500) {
   return cleanText(value).slice(0, maximum) || fallback;
 }
+function normalizedHistoryProfile(value) {
+  const profile = cleanText(value).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,39}$/.test(profile)) throw new Error('History profile must use 1-40 lowercase letters, numbers, hyphens, or underscores');
+  return profile;
+}
+function requestedHistoryProfile(request) {
+  return normalizedHistoryProfile(request.headers['x-history-profile'] ?? 'default');
+}
 function normalizeHistoryEntry(value) {
   const watchUrl = requireProviderUrl(historyText(value?.watchUrl, '', 2000)).toString();
   const episode = Number(value?.episode);
@@ -218,36 +226,47 @@ function serializeHistoryEntry(entry) {
   return { ...entry, updatedAt: historyTimestamp(entry.updatedAt) };
 }
 async function loadHistory() {
-  if (historyEntries) return historyEntries;
+  if (historyProfiles) return historyProfiles;
+  historyProfiles = new Map();
   try {
     const parsed = JSON.parse(await readFile(historyStorePath, 'utf8'));
-    const rawEntries = Array.isArray(parsed?.entries) ? parsed.entries : [];
-    historyEntries = rawEntries.map(normalizeHistoryEntry);
+    const rawProfiles = parsed?.profiles && typeof parsed.profiles === 'object'
+      ? parsed.profiles
+      : { default: Array.isArray(parsed?.entries) ? parsed.entries : [] };
+    for (const [profile, entries] of Object.entries(rawProfiles)) {
+      const normalizedProfile = normalizedHistoryProfile(profile);
+      if (!Array.isArray(entries)) continue;
+      const normalizedEntries = [];
+      for (const entry of entries) {
+        try { normalizedEntries.push(normalizeHistoryEntry(entry)); } catch { /* Ignore corrupted history rows. */ }
+      }
+      historyProfiles.set(normalizedProfile, normalizedEntries);
+    }
   } catch (error) {
     if (error?.code !== 'ENOENT') console.warn(`[bridge] History store could not be read: ${error.message}`);
-    historyEntries = [];
   }
-  return historyEntries;
+  return historyProfiles;
 }
-async function storedHistory() {
-  await historyMutation; const entries = await loadHistory();
-  return entries.map(serializeHistoryEntry);
+async function storedHistory(profile) {
+  await historyMutation; const profiles = await loadHistory();
+  return (profiles.get(profile) ?? []).map(serializeHistoryEntry);
 }
-async function mergeHistory(entries) {
+async function mergeHistory(profile, entries) {
   if (!Array.isArray(entries) || entries.length > 100) throw new Error('History payload is invalid');
   const incoming = entries.map(normalizeHistoryEntry);
   historyMutation = historyMutation.then(async () => {
-    const existing = await loadHistory(); const merged = new Map(existing.map((entry) => [historyKey(entry), entry]));
+    const profiles = await loadHistory(); const existing = profiles.get(profile) ?? []; const merged = new Map(existing.map((entry) => [historyKey(entry), entry]));
     for (const entry of incoming) {
       const previous = merged.get(historyKey(entry));
       if (!previous || new Date(entry.updatedAt) >= new Date(previous.updatedAt)) merged.set(historyKey(entry), entry);
     }
-    historyEntries = [...merged.values()].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)).slice(0, 100);
+    const mergedEntries = [...merged.values()].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)).slice(0, 100);
+    profiles.set(profile, mergedEntries);
     await mkdir(dirname(historyStorePath), { recursive: true });
     const temporaryPath = `${historyStorePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, JSON.stringify({ version: 1, entries: historyEntries }), 'utf8');
+    await writeFile(temporaryPath, JSON.stringify({ version: 2, profiles: Object.fromEntries(profiles) }), 'utf8');
     await rename(temporaryPath, historyStorePath);
-    return historyEntries;
+    return mergedEntries;
   });
   return (await historyMutation).map(serializeHistoryEntry);
 }
@@ -446,10 +465,14 @@ const server = http.createServer(async (request, response) => {
       console.info(`[bridge] Search returned ${results.length} result(s)`);
       return json(response, 200, { results });
     }
-    if (request.method === 'GET' && requestUrl.pathname === '/api/history') return json(response, 200, { entries: await storedHistory() });
+    if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
+      const profile = requestedHistoryProfile(request);
+      return json(response, 200, { entries: await storedHistory(profile) });
+    }
     if (request.method === 'PUT' && requestUrl.pathname === '/api/history') {
+      const profile = requestedHistoryProfile(request);
       const body = JSON.parse(await readBody(request));
-      return json(response, 200, { entries: await mergeHistory(body.entries) });
+      return json(response, 200, { entries: await mergeHistory(profile, body.entries) });
     }
     if (request.method === 'POST' && requestUrl.pathname === '/api/series') return json(response, 200, await getSeries(JSON.parse(await readBody(request)).watchUrl));
     const serversRoute = requestUrl.pathname.match(/^\/api\/series\/([\w-]+)\/servers$/);
