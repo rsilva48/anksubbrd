@@ -467,7 +467,7 @@ struct EpisodesScreen: View {
                         imageUrl: anime.imageUrl,
                         episode: episode,
                         episodeTitle: episodeTitle,
-                        serverName: server.name,
+                        serverName: resolved.serverName,
                         positionSeconds: history.position(for: anime.watchUrl, episode: episode),
                         updatedAt: Date()
                     )
@@ -934,7 +934,7 @@ struct ServerResponse: Decodable { let episode: Int; let servers: [Server] }
 struct Server: Decodable, Identifiable { let index: Int; let name: String; let type: String; var id: Int { index } }
 struct EpisodeServers: Identifiable { let episode: Int; let seriesKey: String; let servers: [Server]; var id: Int { episode } }
 struct PlayRequest: Encodable { let seriesKey: String; let episode: Int; let serverIndex: Int }
-struct Playback: Decodable, Identifiable { let playbackUrl: String; let subtitleTracks: Int; var id: String { playbackUrl } }
+struct Playback: Decodable, Identifiable { let playbackUrl: String; let subtitleTracks: Int; let serverName: String; var id: String { playbackUrl } }
 struct PlaybackSession: Identifiable { let playback: Playback; let historyEntry: WatchHistoryEntry; var id: String { playback.id } }
 
 struct WatchHistoryEntry: Codable, Hashable, Identifiable {

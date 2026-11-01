@@ -143,6 +143,23 @@ function collectMediaUrls(value, found) {
   if (!value || typeof value !== 'object') return;
   for (const child of Object.values(value)) collectMediaUrls(child, found);
 }
+async function waitForVideoFrame(page, timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const frame of page.frames()) {
+      const video = frame.locator('video');
+      if (await video.count().catch(() => 0)) return frame;
+    }
+    await page.waitForTimeout(300);
+  }
+  return null;
+}
+async function playerPageSummary(page) {
+  return page.evaluate(() => ({
+    title: document.title,
+    text: document.body?.innerText?.slice(0, 800) ?? '',
+  })).catch(() => ({ title: '', text: '' }));
+}
 async function resolveEmbed(embedUrl) {
   const browser = await getBrowser(); const page = await browser.newPage({ extraHTTPHeaders: { Referer: `${providerOrigin}/` } });
   const found = { hls: new Set(), loadedHls: new Set(), masterHls: new Set(), vtt: new Set(), requestHeaders: {} }; const pending = [];
@@ -167,22 +184,32 @@ async function resolveEmbed(embedUrl) {
   try {
     console.info('[bridge] Opening selected player');
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const summary = await playerPageSummary(page);
+    if (/error\s*-\s*megaplay/i.test(summary.title) || /error code:\s*410/i.test(summary.text)) {
+      const error = new Error('Selected player is unavailable (provider error 410)');
+      error.code = 'PLAYER_UNAVAILABLE';
+      throw error;
+    }
     console.info('[bridge] Player page opened; waiting for its video element');
-    await page.waitForSelector('video', { timeout: 12000 });
-    await page.locator('video').evaluate(async (video) => {
-      video.muted = true;
-      try { await video.play(); } catch { /* Source discovery can still continue without autoplay. */ }
-    });
-    console.info('[bridge] Video element found; discovering HLS and subtitle tracks');
+    const videoFrame = await waitForVideoFrame(page);
+    if (videoFrame) {
+      await videoFrame.locator('video').evaluate(async (video) => {
+        video.muted = true;
+        try { await video.play(); } catch { /* Source discovery can still continue without autoplay. */ }
+      });
+      console.info('[bridge] Video element found; discovering HLS and subtitle tracks');
+    } else {
+      console.info('[bridge] No video element found; checking player network requests before rejecting the source');
+    }
     await page.waitForTimeout(5000);
-    const domUrls = await page.evaluate(() => ({
+    const frameUrls = await Promise.all(page.frames().map((frame) => frame.evaluate(() => ({
       video: [...document.querySelectorAll('video')].map((node) => node.currentSrc || node.getAttribute('src') || ''),
       tracks: [...document.querySelectorAll('track')].map((node) => node.getAttribute('src') || ''),
       resources: performance.getEntriesByType('resource').map((entry) => entry.name),
-    }));
-    collectMediaUrls(domUrls, found);
+    })).catch(() => null)));
+    for (const domUrls of frameUrls) collectMediaUrls(domUrls, found);
     await Promise.race([Promise.allSettled(pending), page.waitForTimeout(2000)]);
-    await page.locator('video').evaluate((video) => video.pause());
+    if (videoFrame) await videoFrame.locator('video').evaluate((video) => video.pause()).catch(() => {});
   } catch (error) {
     await page.close(); throw error;
   }
@@ -211,14 +238,28 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, requestHost
   const series = cachedSeries(seriesKey);
   if (!series.lastServers || series.lastServers.episodeNumber !== Number(episodeNumber)) await getServers(seriesKey, episodeNumber);
   const server = series.lastServers.servers.find((candidate) => candidate.index === Number(serverIndex)); if (!server) throw new Error('Server was not found');
-  console.info(`[bridge] Resolving episode ${episodeNumber}, ${server.type.toUpperCase()} server ${server.name}`);
-  const reply = await providerJson(`/ajax/server?get=${encodeURIComponent(server.linkId)}`); if (!reply?.url) throw new Error('Player URL was not returned');
-  console.info('[bridge] Player URL returned; starting discovery');
-  const media = await resolveEmbed(reply.url); const id = randomUUID(); sources.set(id, media);
+  const candidates = [server, ...series.lastServers.servers.filter((candidate) => candidate.type === server.type && candidate.index !== server.index)];
+  let media; let resolvedServer; let lastError;
+  for (const candidate of candidates) {
+    try {
+      console.info(`[bridge] Resolving episode ${episodeNumber}, ${candidate.type.toUpperCase()} server ${candidate.name}`);
+      const reply = await providerJson(`/ajax/server?get=${encodeURIComponent(candidate.linkId)}`); if (!reply?.url) throw new Error('Player URL was not returned');
+      console.info('[bridge] Player URL returned; starting discovery');
+      media = await resolveEmbed(reply.url);
+      resolvedServer = candidate;
+      if (candidate.index !== server.index) console.info(`[bridge] Falling back from ${server.name} to ${candidate.name}`);
+      break;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[bridge] ${candidate.name} could not be resolved: ${error.message}`);
+    }
+  }
+  if (!media || !resolvedServer) throw new Error(`No ${server.type.toUpperCase()} server could be resolved: ${lastError?.message ?? 'unknown error'}`);
+  const id = randomUUID(); sources.set(id, media);
   const expiry = setTimeout(() => { const source = sources.get(id); sources.delete(id); source?.mediaPage?.close().catch(() => {}); }, 2 * 60 * 60 * 1000);
   expiry.unref();
   console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
-  return { playbackUrl: `http://${requestHost}/watch/${id}/master.m3u8`, subtitleTracks: media.subtitles.length };
+  return { playbackUrl: `http://${requestHost}/watch/${id}/master.m3u8`, subtitleTracks: media.subtitles.length, serverName: resolvedServer.name };
 }
 
 function rewriteUriLines(textValue, baseUrl, id) {
