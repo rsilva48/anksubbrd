@@ -462,17 +462,14 @@ struct HistoryScreen: View {
     }
 }
 
-/// Owns the list, EditButton, and the environment value that EditButton changes.
-/// Keeping them in this one navigation subtree is required for native List edit
-/// mode to drive the contextual toolbar actions on both iPhone and iPad.
 private struct NativeHistoryList: View {
     let bridgeBaseURL: String
     @EnvironmentObject private var history: WatchHistoryStore
-    @Environment(\.editMode) private var editMode
+    @State private var editMode: EditMode = .inactive
     @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
     @State private var showBulkDeleteConfirmation = false
 
-    private var isEditing: Bool { editMode?.wrappedValue.isEditing == true }
+    private var isEditing: Bool { editMode.isEditing }
 
     var body: some View {
         List(selection: $selectedEntryIDs) {
@@ -501,20 +498,34 @@ private struct NativeHistoryList: View {
                 }
             }
         }
+        .environment(\.editMode, $editMode)
         .listStyle(.insetGrouped)
         .navigationTitle("Continuar viendo")
         .modifier(AdaptableTabRootTitleStyle())
         .toolbar {
-            if isEditing {
-                ToolbarItem(placement: .topBarLeading) {
-                    selectAllButton
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(isEditing ? "Listo" : "Editar") {
+                    if isEditing {
+                        selectedEntryIDs.removeAll()
+                        editMode = .inactive
+                    } else {
+                        editMode = .active
+                    }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                .disabled(history.entries.isEmpty && !isEditing)
+                .accessibilityIdentifier("history.edit")
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isEditing {
+                HStack {
+                    selectAllButton
+                    Spacer(minLength: 12)
                     bulkDeleteButton
                 }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                EditButton()
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.bar)
             }
         }
         .confirmationDialog(
@@ -553,6 +564,7 @@ private struct NativeHistoryList: View {
         } label: {
             Label(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo", systemImage: allEntriesSelected ? "xmark.circle" : "checkmark.circle")
         }
+        .accessibilityIdentifier("history.selectAll")
         .disabled(history.entries.isEmpty)
     }
 
@@ -562,6 +574,8 @@ private struct NativeHistoryList: View {
         } label: {
             Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
         }
+        .tint(.red)
+        .accessibilityIdentifier("history.deleteSelected")
         .disabled(selectedEntryIDs.isEmpty)
     }
 
