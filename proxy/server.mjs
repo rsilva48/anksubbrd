@@ -161,33 +161,55 @@ function resolveStreamFile(sources) {
   return typeof sources?.file === 'string' ? sources.file : null;
 }
 function subtitleDetails(track, index) {
-  // The provider supplies human labels but not an HLS language tag.  Apple
-  // collapses every `und` track into one “Unknown language” item, so derive a
-  // BCP-47 tag from both the label and the VTT filename.
-  const label = cleanText(track?.label);
-  const value = `${label} ${track?.srclang ?? ''} ${track?.file ?? ''}`.toLowerCase();
-  const matches = (pattern) => pattern.test(value);
+  // The provider often labels tracks as “Unknown language”.  Derive both the
+  // user-facing name and BCP-47 tag from the label, srclang, and VTT filename.
+  // Apple otherwise folds all `und` tracks into a single Unknown entry.
+  const suppliedLabel = cleanText(track?.label);
+  const value = `${suppliedLabel} ${track?.srclang ?? ''} ${track?.file ?? ''}`.toLowerCase();
+  const hasText = (pattern) => pattern.test(value);
+  const hasToken = (...tokens) => tokens.some((token) => new RegExp(`(?:^|[\\s_./-])${token}(?=$|[\\s_./-])`, 'i').test(value));
+  const qualifiers = [];
+  if (hasText(/(?:^|[\s_./-])sdh(?=$|[\s_./-])|\bsdh\b/)) qualifiers.push('SDH');
+  else if (hasText(/(?:^|[\s_./-])cc(?=$|[\s_./-])|closed[\s_-]*captions?/)) qualifiers.push('CC');
+  const named = (name, language, extra = []) => {
+    const descriptors = [...extra, ...qualifiers];
+    return { name: descriptors.length ? `${name} (${descriptors.join(', ')})` : name, language };
+  };
 
-  if (matches(/chinese|(?:^|[-_/.])(?:chi|zho|cmn)(?:[-_/.]|$)/)) {
-    const traditional = matches(/traditional|hant|(?:^|[-_/.])chi-11(?:[-_/.]|$)/);
-    return { name: label || `Chinese (${traditional ? 'Traditional' : 'Simplified'})`, language: traditional ? 'zh-Hant' : 'zh-Hans' };
+  const chinese = hasText(/chinese|中文/) || hasToken('chi', 'zho', 'cmn', 'yue', 'zht', 'zhs', 'cht');
+  if (chinese) {
+    const traditional = hasText(/traditional|hant/) || hasToken('zht', 'cht');
+    return named('Chinese', traditional ? 'zh-Hant' : 'zh-Hans', [traditional ? 'Traditional' : 'Simplified']);
   }
-  if (matches(/english|(?:^|[-_/.])(?:eng|en)(?:[-_/.]|$)/)) return { name: label || 'English', language: 'en' };
-  if (matches(/spanish|espa[nñ]ol|(?:^|[-_/.])(?:spa|es)(?:[-_/.]|$)/)) return { name: label || 'Spanish', language: 'es' };
-  if (matches(/indonesian|(?:^|[-_/.])(?:ind|id)(?:[-_/.]|$)/)) return { name: label || 'Indonesian', language: 'id' };
-  if (matches(/japanese|(?:^|[-_/.])(?:jpn|ja)(?:[-_/.]|$)/)) return { name: label || 'Japanese', language: 'ja' };
-  if (matches(/korean|(?:^|[-_/.])(?:kor|ko)(?:[-_/.]|$)/)) return { name: label || 'Korean', language: 'ko' };
-  if (matches(/malay|(?:^|[-_/.])(?:may|msa|ms)(?:[-_/.]|$)/)) return { name: label || 'Malay', language: 'ms' };
-  if (matches(/thai|(?:^|[-_/.])(?:tha|th)(?:[-_/.]|$)/)) return { name: label || 'Thai', language: 'th' };
-  if (matches(/vietnamese|(?:^|[-_/.])(?:vie|vi)(?:[-_/.]|$)/)) return { name: label || 'Vietnamese', language: 'vi' };
-  if (matches(/french|fran[cç]ais|(?:^|[-_/.])(?:fre|fra|fr)(?:[-_/.]|$)/)) return { name: label || 'French', language: 'fr' };
-  if (matches(/german|deutsch|(?:^|[-_/.])(?:ger|deu|de)(?:[-_/.]|$)/)) return { name: label || 'German', language: 'de' };
-  if (matches(/italian|(?:^|[-_/.])(?:ita|it)(?:[-_/.]|$)/)) return { name: label || 'Italian', language: 'it' };
-  if (matches(/portuguese|portugu[eê]s|(?:^|[-_/.])(?:por|pt)(?:[-_/.]|$)/)) return { name: label || 'Portuguese', language: 'pt' };
-  if (matches(/russian|русский|(?:^|[-_/.])(?:rus|ru)(?:[-_/.]|$)/)) return { name: label || 'Russian', language: 'ru' };
-  if (matches(/arabic|(?:^|[-_/.])(?:ara|ar)(?:[-_/.]|$)/)) return { name: label || 'Arabic', language: 'ar' };
 
-  return { name: label || `Subtitles ${index + 1}`, language: 'und' };
+  const languages = [
+    ['English', 'en', ['english', 'eng', 'en']], ['Spanish', 'es', ['spanish', 'español', 'espanol', 'spa', 'es']],
+    ['French', 'fr', ['french', 'français', 'francais', 'fre', 'fra', 'fr']], ['German', 'de', ['german', 'deutsch', 'ger', 'deu', 'de']],
+    ['Italian', 'it', ['italian', 'ita', 'it']], ['Portuguese', 'pt', ['portuguese', 'português', 'portugues', 'por', 'pt']],
+    ['Polish', 'pl', ['polish', 'pol', 'pl']], ['Russian', 'ru', ['russian', 'русский', 'rus', 'ru']],
+    ['Ukrainian', 'uk', ['ukrainian', 'ukr', 'uk']], ['Arabic', 'ar', ['arabic', 'ara', 'ar']],
+    ['Indonesian', 'id', ['indonesian', 'ind', 'id']], ['Japanese', 'ja', ['japanese', 'jpn', 'ja']],
+    ['Korean', 'ko', ['korean', 'kor', 'ko']], ['Malay', 'ms', ['malay', 'may', 'msa', 'ms']],
+    ['Thai', 'th', ['thai', 'tha', 'th']], ['Vietnamese', 'vi', ['vietnamese', 'vie', 'vi']],
+    ['Chinese', 'zh-Hans', ['simplified', 'chi', 'zho']], ['Turkish', 'tr', ['turkish', 'tur', 'tr']],
+    ['Hindi', 'hi', ['hindi', 'hin', 'hi']], ['Bengali', 'bn', ['bengali', 'ben', 'bn']],
+    ['Dutch', 'nl', ['dutch', 'nederlands', 'dut', 'nld', 'nl']], ['Swedish', 'sv', ['swedish', 'swe', 'sv']],
+    ['Danish', 'da', ['danish', 'dan', 'da']], ['Finnish', 'fi', ['finnish', 'fin', 'fi']],
+    ['Norwegian', 'no', ['norwegian', 'nor', 'no']], ['Czech', 'cs', ['czech', 'ces', 'cze', 'cs']],
+    ['Romanian', 'ro', ['romanian', 'română', 'romana', 'ron', 'rum', 'ro']], ['Hungarian', 'hu', ['hungarian', 'hun', 'hu']],
+    ['Greek', 'el', ['greek', 'ell', 'gre', 'el']], ['Hebrew', 'he', ['hebrew', 'heb', 'he']],
+    ['Persian', 'fa', ['persian', 'farsi', 'fas', 'per', 'fa']], ['Filipino', 'fil', ['filipino', 'tagalog', 'fil', 'tgl']],
+    ['Tamil', 'ta', ['tamil', 'tam', 'ta']], ['Telugu', 'te', ['telugu', 'tel', 'te']], ['Urdu', 'ur', ['urdu', 'urd', 'ur']],
+  ];
+  for (const [name, language, aliases] of languages) {
+    if (aliases.some((alias) => hasText(new RegExp(`\\b${alias}\\b`, 'i')) || hasToken(alias))) {
+      const european = name === 'French' && hasText(/(?:^|[\s_./-])european(?=$|[\s_./-])/);
+      return named(name, european ? 'fr-FR' : language, european ? ['European'] : []);
+    }
+  }
+
+  const usableLabel = /^(?:unknown(?: language)?|subtitles?(?:\s+\d+)?)$/i.test(suppliedLabel) ? '' : suppliedLabel;
+  return { name: usableLabel || `Subtitles ${index + 1}`, language: 'und' };
 }
 async function resolvePlayerSource(embedUrl) {
   const page = await fetchWithTimeout(embedUrl, { headers: { Accept: 'text/html', Referer: `${providerOrigin}/`, 'User-Agent': playerUserAgent } }, 15000, 'Player page request');

@@ -57,7 +57,7 @@ Si no aparece esa línea, el iPhone/iPad no está llegando al equipo del bridge:
 ## Uso en la app
 
 1. Compila e instala la app iOS.
-2. Abre **Configuración**, escribe una vez la dirección de tu bridge local y usa **Probar conexión**. La dirección queda guardada en el dispositivo.
+2. Abre **Configuración**, escribe la dirección de tu bridge local o público HTTPS y usa **Probar conexión**. La URL queda normalizada y guardada en el dispositivo. Es obligatorio completar esa prueba antes de crear, restaurar o importar una identidad.
 3. En **Buscar**, busca por título y elige una serie y un episodio.
 4. Elige una fuente desde las pestañas `Sub` o `Dub`. La predeterminada se cambia en **Configuración** y es `Sub` inicialmente.
 5. Usa el botón AirPlay dentro de los controles nativos del vídeo, no **Duplicar pantalla** desde el Centro de control. La app configura la sesión como vídeo de larga duración para que el TV reciba vídeo, audio y pistas VTT como reproducción externa.
@@ -66,7 +66,11 @@ Los resultados separan `PG Rating`, puntuación, tipo (`TV`, `Movie`, `ONA`, `OV
 
 La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. Si ejecutas el bridge con historial (configuración predeterminada), la app sincroniza de manera privada esas entradas entre tus dispositivos; no inicia sesión ni transmite credenciales al sitio de origen.
 
-Cada token representa un usuario distinto en el bridge. Dos dispositivos con el mismo token comparten el historial; un dispositivo con otro token recibe un historial aislado. La app no envía un nombre de perfil que pueda cambiarse para consultar otra lista: el servidor deriva la identidad directamente del token y también impide que una sesión de vídeo de un usuario sea recuperada por otro. Los tokens de usuario se guardan en el Llavero de iOS y el bridge guarda únicamente sus huellas criptográficas.
+Cada token representa un usuario distinto en el bridge. Dos dispositivos con el mismo token comparten el historial; un dispositivo con otro token recibe un historial aislado. La app no envía un nombre de perfil que pueda cambiarse para consultar otra lista: el servidor deriva la identidad directamente del token y también impide que una sesión de vídeo de un usuario sea recuperada por otro.
+
+El token de usuario se guarda como un elemento sincronizable del **Llavero de iCloud**, asociado criptográficamente a la URL normalizada del bridge, no a una etiqueta o perfil visible. Con el mismo Apple ID y Llavero de iCloud activado, después de escribir y probar la misma URL en el segundo dispositivo puedes usar **Restaurar desde Llavero de iCloud**; como alternativa permanece la importación manual. La app no consulta ni restaura tokens de otra URL. La primera vez que abras esta versión y pruebes el bridge, migra de forma segura el token y el historial local de las versiones anteriores a esa URL. El bridge conserva únicamente hash y salt del token.
+
+En iPhone el historial se refresca al entrar en **Continuar viendo** y mediante gesto de deslizar hacia abajo. Durante la reproducción se conserva localmente aun cuando el bridge no tenga conexión.
 
 La primera reproducción de un servidor tarda sólo lo necesario para solicitar los metadatos públicos de la fuente. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
 
@@ -109,7 +113,7 @@ Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y
    ```
 
 4. Copia [`deploy/Caddyfile.example`](deploy/Caddyfile.example) a la configuración de Caddy, sustituye `bridge.example.com`, verifica que el DNS del dominio apunte al servidor y recarga Caddy. El servicio Node escucha sólo en `127.0.0.1`; Caddy publica HTTPS y conserva los encabezados necesarios para que las URL HLS apunten al dominio público.
-5. En el primer iPhone abre **Configuración → Crear identidad privada**, introduce una vez el token administrador, genera el token y respáldalo antes de guardarlo. En el segundo iPhone usa **Usar un token existente** e importa el mismo token para compartir la lista. En el iPad crea otra identidad con el token administrador; su token nuevo tendrá un historial completamente aislado. El token administrador no queda guardado en la app.
+5. En el primer iPhone abre **Configuración**, escribe y prueba `https://bridge.example.com`; sólo entonces abre **Crear identidad privada**, introduce una vez el token administrador, genera el token y respáldalo antes de guardarlo. Con el mismo Apple ID y Llavero de iCloud activado, en el segundo iPhone escribe y prueba exactamente esa misma URL y usa **Restaurar desde Llavero de iCloud** para compartir la lista. En el iPad crea otra identidad con el token administrador; su token nuevo tendrá un historial completamente aislado. Si no usas Llavero de iCloud, importa manualmente el token correspondiente. El token administrador no queda guardado en la app.
 
 No actives registros de acceso detallados para este host de Caddy: las URL temporales de reproducción llevan un token de acceso. El bridge no registra ese valor ni las URL HLS completas.
 

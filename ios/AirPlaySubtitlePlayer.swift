@@ -33,63 +33,141 @@ private func configureAirPlayVideoSession() {
 }
 
 private enum HistoryIdentity {
-    static func storageID(for token: String) -> String {
+    static func storageID(for token: String, bridgeBaseURL: String) -> String {
+        let value = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let endpoint = BridgeEndpoint.canonicalURL(bridgeBaseURL) ?? "unconfigured"
+        let material = "\(endpoint)\u{0}\(value.isEmpty ? "local" : value)"
+        return SHA256.hash(data: Data(material.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func legacyStorageID(for token: String) -> String {
         let value = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return "local" }
         return SHA256.hash(data: Data(value.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
     }
 }
 
-private enum SecureTokenStore {
-    private static let service = "com.personal.airplaysubtitleplayer"
-    private static let account = "bridge-access-token"
-    private static let legacyDefaultsKey = "anksubbrd.bridge-access-token"
-
-    static func currentToken() -> String {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-           let data = result as? Data,
-           let token = String(data: data, encoding: .utf8), !token.isEmpty {
-            return token
+private enum BridgeEndpoint {
+    static func canonicalURL(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host?.lowercased(), !host.isEmpty else {
+            return nil
         }
-        let legacyToken = UserDefaults.standard.string(forKey: legacyDefaultsKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !legacyToken.isEmpty {
-            do {
-                try save(legacyToken)
-                UserDefaults.standard.removeObject(forKey: legacyDefaultsKey)
-                return legacyToken
-            } catch {
-                return ""
-            }
+        components.scheme = scheme
+        components.host = host
+        components.user = nil
+        components.password = nil
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        if (scheme == "http" && components.port == 80) || (scheme == "https" && components.port == 443) {
+            components.port = nil
         }
-        return ""
+        return components.url?.absoluteString
     }
 
-    static func save(_ token: String) throws {
-        let data = Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
-        guard !data.isEmpty else { throw BridgeRequestError(message: "El token no puede estar vacío.") }
-        let attributes: [String: Any] = [kSecValueData as String: data]
+    static func isVerified(_ verifiedURL: String, currentURL: String) -> Bool {
+        guard let current = canonicalURL(currentURL) else { return false }
+        return verifiedURL == current
+    }
+
+    static func tokenAccount(for bridgeBaseURL: String) -> String? {
+        guard let endpoint = canonicalURL(bridgeBaseURL) else { return nil }
+        let digest = SHA256.hash(data: Data(endpoint.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "bridge-token.\(digest)"
+    }
+}
+
+private enum SecureTokenStore {
+    private static let service = "com.personal.airplaysubtitleplayer"
+    private static let legacyAccount = "bridge-access-token"
+    private static let legacyDefaultsKey = "anksubbrd.bridge-access-token"
+
+    static func currentToken(for bridgeBaseURL: String) -> String {
+        guard let account = BridgeEndpoint.tokenAccount(for: bridgeBaseURL) else { return "" }
+        return token(forAccount: account, synchronizable: kSecAttrSynchronizableAny) ?? ""
+    }
+
+    static func restoreFromICloud(for bridgeBaseURL: String) throws -> String {
+        guard let account = BridgeEndpoint.tokenAccount(for: bridgeBaseURL) else {
+            throw BridgeRequestError(message: "Primero escribe una URL válida del bridge.")
+        }
+        guard let token = token(forAccount: account, synchronizable: true) else {
+            throw BridgeRequestError(message: "No hay una identidad para esta URL en el Llavero de iCloud todavía.")
+        }
+        return token
+    }
+
+    static func migrateLegacyToken(to bridgeBaseURL: String) throws -> Bool {
+        guard currentToken(for: bridgeBaseURL).isEmpty else { return false }
+        let legacyToken = token(forAccount: legacyAccount, synchronizable: kSecAttrSynchronizableAny)
+            ?? UserDefaults.standard.string(forKey: legacyDefaultsKey)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let legacyToken, !legacyToken.isEmpty else { return false }
+        try save(legacyToken, for: bridgeBaseURL)
+        UserDefaults.standard.removeObject(forKey: legacyDefaultsKey)
+        deleteLegacyToken()
+        return true
+    }
+
+    static func save(_ token: String, for bridgeBaseURL: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
+            kSecAttrAccount as String: try account(for: bridgeBaseURL),
+            kSecAttrSynchronizable as String: true,
+        ]
+        let data = Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+        guard !data.isEmpty else { throw BridgeRequestError(message: "El token no puede estar vacío.") }
+        let attributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecSuccess { return }
         guard status == errSecItemNotFound else { throw BridgeRequestError(message: "No se pudo guardar el token en el Llavero.") }
         var add = query
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        attributes.forEach { add[$0.key] = $0.value }
         guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else {
             throw BridgeRequestError(message: "No se pudo guardar el token en el Llavero.")
         }
+    }
+
+    private static func account(for bridgeBaseURL: String) throws -> String {
+        guard let account = BridgeEndpoint.tokenAccount(for: bridgeBaseURL) else {
+            throw BridgeRequestError(message: "Primero escribe una URL válida del bridge.")
+        }
+        return account
+    }
+
+    private static func token(forAccount account: String, synchronizable: Any) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: synchronizable,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let token = String(data: data, encoding: .utf8), !token.isEmpty else {
+            return nil
+        }
+        return token
+    }
+
+    private static func deleteLegacyToken() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: legacyAccount,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }
 
@@ -103,28 +181,113 @@ private enum TokenGenerator {
     }
 }
 
+private enum AppDestination: String, CaseIterable, Hashable, Identifiable {
+    case search
+    case history
+    case settings
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .search: return "Buscar"
+        case .history: return "Continuar viendo"
+        case .settings: return "Configuración"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .search: return "magnifyingglass"
+        case .history: return "play.circle"
+        case .settings: return "gearshape"
+        }
+    }
+}
+
 struct MainTabScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
     @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
     @EnvironmentObject private var history: WatchHistoryStore
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var requestedLocalNetworkAccess = false
+    @State private var selectedDestination: AppDestination = .search
+    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
     var body: some View {
-        TabView {
-            SearchScreen(bridgeBaseURL: bridgeBaseURL)
-                .tabItem { Label("Buscar", systemImage: "magnifyingglass") }
-
-            HistoryScreen(bridgeBaseURL: bridgeBaseURL)
-                .tabItem { Label("Continuar viendo", systemImage: "play.circle") }
-
-            SettingsScreen()
-                .tabItem { Label("Configuración", systemImage: "gearshape") }
+        Group {
+            if horizontalSizeClass == .regular {
+                tabletNavigation
+            } else {
+                phoneTabs
+            }
         }
         .tint(.indigo)
         .task(id: "\(bridgeBaseURL)|\(bridgeTokenVersion)") {
-            history.activate(token: SecureTokenStore.currentToken())
+            history.activate(token: SecureTokenStore.currentToken(for: bridgeBaseURL), bridgeBaseURL: bridgeBaseURL)
             await requestLocalNetworkAccess()
             await history.sync(with: bridgeBaseURL, force: true)
+        }
+    }
+
+    private var phoneTabs: some View {
+        TabView(selection: $selectedDestination) {
+            destination(.search)
+                .tabItem { Label(AppDestination.search.title, systemImage: AppDestination.search.symbol) }
+                .tag(AppDestination.search)
+
+            destination(.history)
+                .tabItem { Label(AppDestination.history.title, systemImage: AppDestination.history.symbol) }
+                .tag(AppDestination.history)
+
+            destination(.settings)
+                .tabItem { Label(AppDestination.settings.title, systemImage: AppDestination.settings.symbol) }
+                .tag(AppDestination.settings)
+        }
+    }
+
+    private var tabletNavigation: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            List {
+                ForEach(AppDestination.allCases) { destination in
+                    Button {
+                        selectedDestination = destination
+                        columnVisibility = .detailOnly
+                    } label: {
+                        HStack {
+                            Label(destination.title, systemImage: destination.symbol)
+                            Spacer()
+                            if selectedDestination == destination {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.tint)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("AirPlay Subtitles")
+        } detail: {
+            destination(selectedDestination)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                } label: {
+                    Label("Mostrar u ocultar barra lateral", systemImage: "sidebar.left")
+                }
+                .accessibilityLabel("Mostrar u ocultar barra lateral")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func destination(_ destination: AppDestination) -> some View {
+        switch destination {
+        case .search:
+            SearchScreen(bridgeBaseURL: bridgeBaseURL)
+        case .history:
+            HistoryScreen(bridgeBaseURL: bridgeBaseURL)
+        case .settings:
+            SettingsScreen()
         }
     }
 
@@ -380,6 +543,9 @@ struct HistoryScreen: View {
                 }
             }
         }
+        .refreshable {
+            await history.sync(with: bridgeBaseURL, force: true)
+        }
     }
 
     private var tabletContent: some View {
@@ -408,6 +574,9 @@ struct HistoryScreen: View {
             .frame(maxWidth: 1120, alignment: .leading)
             .padding(24)
         }
+        .refreshable {
+            await history.sync(with: bridgeBaseURL, force: true)
+        }
     }
 
     private func episodeScreen(for entry: WatchHistoryEntry) -> EpisodesScreen {
@@ -419,18 +588,28 @@ struct HistoryScreen: View {
     }
 }
 
+private enum SettingsField: Hashable {
+    case bridgeURL
+}
+
 struct SettingsScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
+    @AppStorage("anksubbrd.verified-bridge-url") private var verifiedBridgeURL = ""
     @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
     @AppStorage("anksubbrd.default-track-type") private var defaultTrackType = StreamKind.sub.rawValue
     @State private var testingBridge = false
     @State private var testResult: String?
-    @State private var tokenConfigured = !SecureTokenStore.currentToken().isEmpty
+    @State private var tokenConfigured = false
     @State private var showProvisioning = false
     @State private var showImport = false
     @State private var showBackup = false
     @State private var showChangeWarning = false
     @State private var tokenError: String?
+    @FocusState private var focusedField: SettingsField?
+
+    private var bridgeIsVerified: Bool {
+        BridgeEndpoint.isVerified(verifiedBridgeURL, currentURL: bridgeBaseURL)
+    }
 
     var body: some View {
         NavigationStack {
@@ -440,7 +619,11 @@ struct SettingsScreen: View {
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
+                        .focused($focusedField, equals: .bridgeURL)
+                        .submitLabel(.done)
+                        .onSubmit { focusedField = nil }
                     Button {
+                        focusedField = nil
                         testBridge()
                     } label: {
                         if testingBridge {
@@ -476,9 +659,21 @@ struct SettingsScreen: View {
                     Text("Al abrir los servidores de un episodio podrás cambiar entre las pestañas Sub y Dub. Sub es la opción predeterminada.")
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Configuración")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Listo") { focusedField = nil }
+                }
+            }
         }
-        .onAppear { tokenConfigured = !SecureTokenStore.currentToken().isEmpty }
+        .onAppear { refreshTokenState() }
+        .onChange(of: bridgeBaseURL) { _ in
+            testResult = nil
+            tokenError = nil
+            refreshTokenState()
+        }
         .sheet(isPresented: $showChangeWarning) {
             IdentityChangeGuardSheet(
                 onBackup: { presentAfterChangeWarning(.backup) },
@@ -496,35 +691,65 @@ struct SettingsScreen: View {
             }
         }
         .sheet(isPresented: $showBackup) {
-            TokenBackupSheet(token: SecureTokenStore.currentToken())
+            TokenBackupSheet(token: SecureTokenStore.currentToken(for: bridgeBaseURL))
         }
     }
 
     @ViewBuilder
     private var privateIdentitySection: some View {
         Section {
-            if tokenConfigured {
+            if !bridgeIsVerified {
+                Label("Primero guarda y prueba esta URL del bridge", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Button("Crear identidad privada…") { showProvisioning = true }
+                    .disabled(true)
+                Button("Restaurar desde Llavero de iCloud…") { restoreFromICloud() }
+                    .disabled(true)
+                Button("Importar token manualmente…") { showImport = true }
+                    .disabled(true)
+            } else if tokenConfigured {
                 Label("Identidad privada configurada", systemImage: "lock.fill")
                     .foregroundStyle(.green)
                 Button("Respaldar token…") { showBackup = true }
                 Button("Cambiar identidad…", role: .destructive) { showChangeWarning = true }
             } else {
                 Button("Crear identidad privada…") { showProvisioning = true }
-                Button("Usar un token existente…") { showImport = true }
+                Button("Restaurar desde Llavero de iCloud…") { restoreFromICloud() }
+                Button("Importar token manualmente…") { showImport = true }
             }
             if let tokenError { ErrorNotice(message: tokenError) }
         } header: {
             Text("Identidad privada")
         } footer: {
-            Text("El token vive en el Llavero de este dispositivo y determina qué historial puede leer. Comparte el mismo token sólo con los dispositivos que deban compartir lista.")
+            Text("La URL debe probarse antes de crear, restaurar o importar. El token se sincroniza mediante Llavero de iCloud y sólo se consulta para esta URL. Comparte el mismo token sólo con los dispositivos que deban compartir lista.")
         }
     }
 
     private func install(token: String) throws {
-        try SecureTokenStore.save(token)
+        guard bridgeIsVerified else {
+            throw BridgeRequestError(message: "Primero prueba la conexión del bridge para esta URL.")
+        }
+        try SecureTokenStore.save(token, for: bridgeBaseURL)
         tokenConfigured = true
         tokenError = nil
         bridgeTokenVersion += 1
+    }
+
+    private func refreshTokenState() {
+        tokenConfigured = SecureTokenStore.currentToken(for: bridgeBaseURL).isEmpty == false
+    }
+
+    private func restoreFromICloud() {
+        guard bridgeIsVerified else {
+            tokenError = "Primero prueba la conexión del bridge para esta URL."
+            return
+        }
+        do {
+            try install(token: SecureTokenStore.restoreFromICloud(for: bridgeBaseURL))
+            testResult = "Identidad restaurada desde el Llavero de iCloud."
+        } catch {
+            tokenError = error.localizedDescription
+        }
     }
 
     private func presentAfterChangeWarning(_ action: IdentityChangeAction) {
@@ -548,7 +773,18 @@ struct SettingsScreen: View {
             defer { testingBridge = false }
             do {
                 let health: HealthResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/health")
-                testResult = health.ok ? "Conectado al bridge." : "El bridge respondió de forma inesperada."
+                guard health.ok, let canonicalURL = BridgeEndpoint.canonicalURL(bridgeBaseURL) else {
+                    testResult = "El bridge respondió de forma inesperada."
+                    return
+                }
+                bridgeBaseURL = canonicalURL
+                verifiedBridgeURL = canonicalURL
+                let migratedLegacyToken = try SecureTokenStore.migrateLegacyToken(to: canonicalURL)
+                refreshTokenState()
+                bridgeTokenVersion += 1
+                testResult = migratedLegacyToken
+                    ? "Conectado al bridge. Tu identidad anterior se movió al Llavero de iCloud para esta URL."
+                    : "Conectado al bridge. Ya puedes crear, restaurar o importar una identidad."
             } catch {
                 testResult = error.localizedDescription
             }
@@ -1430,7 +1666,7 @@ private enum BridgeClient {
         guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeoutInterval
-        authorize(&request)
+        authorize(&request, bridgeBaseURL: base)
         return try await self.request(request)
     }
 
@@ -1442,7 +1678,7 @@ private enum BridgeClient {
         request.timeoutInterval = path == "/api/play" ? 90 : 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        authorize(&request)
+        authorize(&request, bridgeBaseURL: base)
         return try await self.request(request)
     }
 
@@ -1454,7 +1690,7 @@ private enum BridgeClient {
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        authorize(&request)
+        authorize(&request, bridgeBaseURL: base)
         return try await self.request(request)
     }
 
@@ -1481,8 +1717,8 @@ private enum BridgeClient {
         return components
     }
 
-    private static func authorize(_ request: inout URLRequest) {
-        let token = SecureTokenStore.currentToken()
+    private static func authorize(_ request: inout URLRequest, bridgeBaseURL: String) {
+        let token = SecureTokenStore.currentToken(for: bridgeBaseURL)
         if !token.isEmpty {
             request.setValue(token, forHTTPHeaderField: "X-Bridge-Token")
         }
@@ -1576,7 +1812,7 @@ private final class WatchHistoryStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        activeIdentity = HistoryIdentity.storageID(for: SecureTokenStore.currentToken())
+        activeIdentity = "local"
         entries = []
         entries = loadEntries(for: activeIdentity)
     }
@@ -1597,12 +1833,20 @@ private final class WatchHistoryStore: ObservableObject {
         upsert(copy)
     }
 
-    func activate(token: String) {
-        let identity = HistoryIdentity.storageID(for: token)
+    func activate(token: String, bridgeBaseURL: String) {
+        let identity = HistoryIdentity.storageID(for: token, bridgeBaseURL: bridgeBaseURL)
         guard activeIdentity != identity else { return }
+        let localEntriesBeforeActivation = activeIdentity == "local" ? entries : []
         persist()
         activeIdentity = identity
-        entries = loadEntries(for: activeIdentity)
+        let scopedEntries = loadEntries(for: activeIdentity)
+        if scopedEntries.isEmpty {
+            let legacyEntries = loadEntries(for: HistoryIdentity.legacyStorageID(for: token))
+            entries = legacyEntries.isEmpty ? localEntriesBeforeActivation : legacyEntries
+            if !entries.isEmpty { persist() }
+        } else {
+            entries = scopedEntries
+        }
         lastSync = .distantPast
     }
 
