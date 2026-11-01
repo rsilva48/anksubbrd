@@ -7,16 +7,39 @@ on:
       - 'v*'
     paths:
       - 'ios/**'
+      - 'proxy/**'
       - '.github/workflows/ios-build.yml'
   pull_request:
     paths:
       - 'ios/**'
+      - 'proxy/**'
       - '.github/workflows/ios-build.yml'
 
 permissions:
   contents: read
 
 jobs:
+  proxy-check:
+    name: Verify bridge on Node 24
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: proxy/.nvmrc
+          cache: npm
+          cache-dependency-path: proxy/package-lock.json
+      - name: Install and check bridge
+        working-directory: proxy
+        run: |
+          npm ci --ignore-scripts
+          node --check server.mjs
+          npm audit --omit=dev
+
   build:
     name: Unsigned iOS build
     runs-on: macos-latest
@@ -81,7 +104,7 @@ jobs:
   release:
     name: Publish tagged release
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: build
+    needs: [build, proxy-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write

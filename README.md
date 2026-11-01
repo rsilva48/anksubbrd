@@ -19,7 +19,7 @@ Las URLs y tokens temporales del proveedor no se registran en disco y desaparece
 ## Requisitos del bridge
 
 - Un equipo en la misma red que iPhone/iPad y TV: Windows, Linux, Mac o NAS compatible.
-- Node.js 20 o posterior.
+- Node.js 24 LTS o posterior para el bridge. Instálalo en la máquina o servidor donde se ejecuta el proxy; actualizar este repositorio no actualiza Node automáticamente.
 - Acceso a Internet desde el bridge.
 
 ## Instalar y ejecutar
@@ -28,7 +28,7 @@ En el equipo que actuará como bridge:
 
 ```sh
 cd proxy
-npm install
+npm ci
 node server.mjs
 ```
 
@@ -101,7 +101,7 @@ El hook es local al clon y no afecta commits creados en la interfaz de GitHub u 
 
 Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y un token privado. No expongas el puerto `8787` al Internet público.
 
-1. En el servidor Linux, instala el proyecto en `/opt/airplay-subtitle-bridge` y ejecuta `npm install` dentro de `proxy`.
+1. En el servidor Linux, instala Node.js 24 LTS o posterior y verifica `node --version`. Instala el proyecto en `/opt/airplay-subtitle-bridge` y ejecuta `npm ci` dentro de `proxy`.
 2. Crea el usuario de servicio y el archivo privado de entorno. Sólo necesitas configurar una vez un **token administrador**: se usa desde la app para registrar identidades nuevas, no para reproducir ni para acceder al historial.
 
    ```sh
