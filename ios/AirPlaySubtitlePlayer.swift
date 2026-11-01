@@ -5,6 +5,7 @@ import CryptoKit
 import Foundation
 import Security
 import SwiftUI
+import UIKit
 
 @main
 struct AirPlaySubtitlePlayerApp: App {
@@ -184,7 +185,7 @@ private enum TokenGenerator {
 private struct NativeSidebarAdaptableTabStyle: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
+        if #available(iOS 18.0, *), UIDevice.current.userInterfaceIdiom == .pad {
             content.tabViewStyle(.sidebarAdaptable)
         } else {
             content
