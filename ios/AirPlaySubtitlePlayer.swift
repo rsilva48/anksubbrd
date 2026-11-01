@@ -451,27 +451,40 @@ struct SearchScreen: View {
 struct HistoryScreen: View {
     let bridgeBaseURL: String
     @EnvironmentObject private var history: WatchHistoryStore
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
+    @State private var editMode: EditMode = .inactive
 
     var body: some View {
         NavigationStack {
-            Group {
-                if horizontalSizeClass == .regular {
-                    tabletContent
-                } else {
-                    phoneContent
-                }
-            }
+            historyList
             .navigationTitle("Continuar viendo")
             .modifier(AdaptableTabRootTitleStyle())
+            .toolbar {
+                if editMode.isEditing && !selectedEntryIDs.isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(role: .destructive) {
+                            deleteSelected()
+                        } label: {
+                            Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
+                        }
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    EditButton()
+                }
+            }
         }
+        .environment(\.editMode, $editMode)
         .task(id: bridgeBaseURL) {
             await history.sync(with: bridgeBaseURL, force: true)
         }
+        .onChange(of: history.entries) { updatedEntries in
+            selectedEntryIDs.formIntersection(Set(updatedEntries.map(\.id)))
+        }
     }
 
-    private var phoneContent: some View {
-        List {
+    private var historyList: some View {
+        List(selection: $selectedEntryIDs) {
             if history.entries.isEmpty {
                 Section {
                     ContentPlaceholder(icon: "play.circle", title: "Nada para continuar", detail: "Las series que reproduzcas aparecerán aquí con el segundo en que las dejaste.")
@@ -484,42 +497,32 @@ struct HistoryScreen: View {
                         } label: {
                             HistoryRow(entry: entry)
                         }
-                    }
-                }
-            }
-        }
-        .refreshable {
-            await history.sync(with: bridgeBaseURL, force: true)
-        }
-    }
-
-    private var tabletContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if history.entries.isEmpty {
-                    ContentPlaceholder(icon: "play.circle", title: "Nada para continuar", detail: "Las series que reproduzcas aparecerán aquí con el segundo en que las dejaste.")
-                        .liquidGlassCard()
-                } else {
-                    Text("Reproducciones recientes")
-                        .font(.title2.bold())
-                    LiquidGlassGroup {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250, maximum: 360), spacing: 18)], spacing: 18) {
-                            ForEach(history.entries) { entry in
-                                NavigationLink {
-                                    episodeScreen(for: entry)
-                                } label: {
-                                    HistoryCard(entry: entry)
-                                }
-                                .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                delete([entry])
+                            } label: {
+                                Label("Borrar", systemImage: "trash")
                             }
                         }
                     }
                 }
             }
-            .frame(maxWidth: 1120, alignment: .leading)
-            .padding(24)
         }
+        .listStyle(.insetGrouped)
         .refreshable {
+            await history.sync(with: bridgeBaseURL, force: true)
+        }
+    }
+
+    private func deleteSelected() {
+        delete(history.entries.filter { selectedEntryIDs.contains($0.id) })
+    }
+
+    private func delete(_ entries: [WatchHistoryEntry]) {
+        guard !entries.isEmpty else { return }
+        history.remove(entries)
+        selectedEntryIDs.subtract(Set(entries.map(\.id)))
+        Task {
             await history.sync(with: bridgeBaseURL, force: true)
         }
     }
@@ -1729,8 +1732,14 @@ struct PlayRequest: Encodable { let seriesKey: String; let episode: Int; let ser
 struct Playback: Decodable, Identifiable { let playbackUrl: String; let subtitleTracks: Int; let serverName: String; let serverKind: String?; var id: String { playbackUrl } }
 struct PlaybackSession: Identifiable { let playback: Playback; let historyEntry: WatchHistoryEntry; var id: String { playback.id } }
 struct QueuedAutoPlay { let episode: Episode; let seriesKey: String; let serverName: String; let serverKind: String? }
-struct HistoryResponse: Decodable { let entries: [WatchHistoryEntry] }
-struct HistoryPayload: Encodable { let entries: [WatchHistoryEntry] }
+struct HistoryResponse: Decodable {
+    let entries: [WatchHistoryEntry]
+    let deletions: [HistoryDeletion]?
+}
+struct HistoryPayload: Encodable {
+    let entries: [WatchHistoryEntry]
+    let deletions: [HistoryDeletion]
+}
 struct AdminUserRequest: Encodable { let token: String; let label: String }
 struct AdminUserResponse: Decodable { let userId: String; let createdAt: String }
 
@@ -1746,6 +1755,17 @@ struct WatchHistoryEntry: Codable, Hashable, Identifiable {
     var id: String { "\(watchUrl)#\(episode)" }
 }
 
+struct HistoryDeletion: Codable, Hashable, Identifiable {
+    let watchUrl: String
+    let updatedAt: Date
+    var id: String { watchUrl }
+}
+
+private struct HistorySnapshot {
+    let entries: [WatchHistoryEntry]
+    let deletions: [HistoryDeletion]
+}
+
 @MainActor
 private final class WatchHistoryStore: ObservableObject {
     @Published private(set) var entries: [WatchHistoryEntry]
@@ -1753,6 +1773,7 @@ private final class WatchHistoryStore: ObservableObject {
     private let profileMigrationKey = "anksubbrd.watch-history.v2.default"
     private let defaults: UserDefaults
     private var activeIdentity: String
+    private var deletions: [HistoryDeletion]
     private var lastSync = Date.distantPast
     private var syncing = false
 
@@ -1760,7 +1781,10 @@ private final class WatchHistoryStore: ObservableObject {
         self.defaults = defaults
         activeIdentity = "local"
         entries = []
+        deletions = []
         entries = loadEntries(for: activeIdentity)
+        deletions = loadDeletions(for: activeIdentity)
+        replace(with: resolvedHistory(entries: entries, deletions: deletions))
     }
 
     func position(for watchUrl: String, episode: Int) -> Double {
@@ -1786,13 +1810,17 @@ private final class WatchHistoryStore: ObservableObject {
         persist()
         activeIdentity = identity
         let scopedEntries = loadEntries(for: activeIdentity)
-        if scopedEntries.isEmpty {
+        let scopedDeletions = loadDeletions(for: activeIdentity)
+        if scopedEntries.isEmpty && scopedDeletions.isEmpty {
             let legacyEntries = loadEntries(for: HistoryIdentity.legacyStorageID(for: token))
             entries = legacyEntries.isEmpty ? localEntriesBeforeActivation : legacyEntries
+            deletions = []
             if !entries.isEmpty { persist() }
         } else {
             entries = scopedEntries
+            deletions = scopedDeletions
         }
+        replace(with: resolvedHistory(entries: entries, deletions: deletions))
         lastSync = .distantPast
     }
 
@@ -1802,9 +1830,9 @@ private final class WatchHistoryStore: ObservableObject {
         defer { syncing = false; lastSync = Date() }
         do {
             let remote: HistoryResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/history")
-            replace(with: merged(local: entries, remote: remote.entries))
-            let saved: HistoryResponse = try await BridgeClient.put(base: bridgeBaseURL, path: "/api/history", body: HistoryPayload(entries: entries))
-            replace(with: merged(local: entries, remote: saved.entries))
+            replace(with: merged(localEntries: entries, localDeletions: deletions, remoteEntries: remote.entries, remoteDeletions: remote.deletions ?? []))
+            let saved: HistoryResponse = try await BridgeClient.put(base: bridgeBaseURL, path: "/api/history", body: HistoryPayload(entries: entries, deletions: deletions))
+            replace(with: merged(localEntries: entries, localDeletions: deletions, remoteEntries: saved.entries, remoteDeletions: saved.deletions ?? []))
         } catch {
             // The local history remains usable while the private bridge is
             // offline or the user has not enabled server-side sync yet.
@@ -1812,25 +1840,55 @@ private final class WatchHistoryStore: ObservableObject {
     }
 
     private func upsert(_ entry: WatchHistoryEntry) {
-        entries.removeAll { $0.id == entry.id }
         var copy = entry
         copy.updatedAt = Date()
-        entries.insert(copy, at: 0)
-        entries = Array(entries.prefix(50))
-        persist()
+        replace(with: resolvedHistory(
+            entries: entries.filter { $0.watchUrl != copy.watchUrl } + [copy],
+            deletions: deletions.filter { $0.watchUrl != copy.watchUrl }
+        ))
     }
 
-    private func merged(local: [WatchHistoryEntry], remote: [WatchHistoryEntry]) -> [WatchHistoryEntry] {
-        var latest: [String: WatchHistoryEntry] = [:]
-        for entry in local + remote {
-            if let existing = latest[entry.id], existing.updatedAt > entry.updatedAt { continue }
-            latest[entry.id] = entry
+    func remove(_ entriesToRemove: [WatchHistoryEntry]) {
+        let watchURLs = Set(entriesToRemove.map(\.watchUrl))
+        guard !watchURLs.isEmpty else { return }
+        let now = Date()
+        replace(with: resolvedHistory(
+            entries: entries.filter { !watchURLs.contains($0.watchUrl) },
+            deletions: deletions.filter { !watchURLs.contains($0.watchUrl) } + watchURLs.map { HistoryDeletion(watchUrl: $0, updatedAt: now) }
+        ))
+    }
+
+    private func merged(localEntries: [WatchHistoryEntry], localDeletions: [HistoryDeletion], remoteEntries: [WatchHistoryEntry], remoteDeletions: [HistoryDeletion]) -> HistorySnapshot {
+        resolvedHistory(entries: localEntries + remoteEntries, deletions: localDeletions + remoteDeletions)
+    }
+
+    private func resolvedHistory(entries: [WatchHistoryEntry], deletions: [HistoryDeletion]) -> HistorySnapshot {
+        var latestEntries: [String: WatchHistoryEntry] = [:]
+        var latestDeletions: [String: HistoryDeletion] = [:]
+        for entry in entries {
+            if let existing = latestEntries[entry.watchUrl], existing.updatedAt > entry.updatedAt { continue }
+            latestEntries[entry.watchUrl] = entry
         }
-        return Array(latest.values).sorted { $0.updatedAt > $1.updatedAt }.prefix(50).map { $0 }
+        for deletion in deletions {
+            if let existing = latestDeletions[deletion.watchUrl], existing.updatedAt > deletion.updatedAt { continue }
+            latestDeletions[deletion.watchUrl] = deletion
+        }
+        for (watchURL, deletion) in latestDeletions {
+            if let entry = latestEntries[watchURL], entry.updatedAt > deletion.updatedAt {
+                latestDeletions.removeValue(forKey: watchURL)
+            } else {
+                latestEntries.removeValue(forKey: watchURL)
+            }
+        }
+        return HistorySnapshot(
+            entries: Array(latestEntries.values).sorted { $0.updatedAt > $1.updatedAt }.prefix(50).map { $0 },
+            deletions: Array(latestDeletions.values).sorted { $0.updatedAt > $1.updatedAt }.prefix(500).map { $0 }
+        )
     }
 
-    private func replace(with updatedEntries: [WatchHistoryEntry]) {
-        entries = updatedEntries
+    private func replace(with snapshot: HistorySnapshot) {
+        entries = snapshot.entries
+        deletions = snapshot.deletions
         persist()
     }
 
@@ -1838,17 +1896,28 @@ private final class WatchHistoryStore: ObservableObject {
         "anksubbrd.watch-history.v3.\(identity)"
     }
 
+    private func deletionStorageKey(for identity: String) -> String {
+        "anksubbrd.watch-history.v4.deletions.\(identity)"
+    }
+
     private func loadEntries(for identity: String) -> [WatchHistoryEntry] {
         let data = defaults.data(forKey: storageKey(for: identity))
             ?? (identity == "local" ? defaults.data(forKey: profileMigrationKey) ?? defaults.data(forKey: legacyKey) : nil)
             ?? Data()
         return ((try? JSONDecoder().decode([WatchHistoryEntry].self, from: data)) ?? [])
-            .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func loadDeletions(for identity: String) -> [HistoryDeletion] {
+        let data = defaults.data(forKey: deletionStorageKey(for: identity)) ?? Data()
+        return (try? JSONDecoder().decode([HistoryDeletion].self, from: data)) ?? []
     }
 
     private func persist() {
         if let data = try? JSONEncoder().encode(entries) {
             defaults.set(data, forKey: storageKey(for: activeIdentity))
+        }
+        if let data = try? JSONEncoder().encode(deletions) {
+            defaults.set(data, forKey: deletionStorageKey(for: activeIdentity))
         }
     }
 }

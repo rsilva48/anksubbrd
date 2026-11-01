@@ -325,9 +325,41 @@ function normalizeHistoryEntry(value) {
     updatedAt: historyDate(value?.updatedAt).toISOString(),
   };
 }
-function historyKey(entry) { return `${entry.watchUrl}#${entry.episode}`; }
+function normalizeHistoryDeletion(value) {
+  return {
+    watchUrl: requireProviderUrl(historyText(value?.watchUrl, '', 2000)).toString(),
+    updatedAt: historyDate(value?.updatedAt).toISOString(),
+  };
+}
+function historyKey(entry) { return entry.watchUrl; }
 function serializeHistoryEntry(entry) {
   return { ...entry, updatedAt: historyTimestamp(entry.updatedAt) };
+}
+function serializeHistoryDeletion(deletion) {
+  return { ...deletion, updatedAt: historyTimestamp(deletion.updatedAt) };
+}
+function historyState(entries = [], deletions = []) {
+  const latestEntries = new Map(); const latestDeletions = new Map();
+  for (const entry of entries) {
+    const previous = latestEntries.get(historyKey(entry));
+    if (!previous || new Date(entry.updatedAt) >= new Date(previous.updatedAt)) latestEntries.set(historyKey(entry), entry);
+  }
+  for (const deletion of deletions) {
+    const previous = latestDeletions.get(deletion.watchUrl);
+    if (!previous || new Date(deletion.updatedAt) >= new Date(previous.updatedAt)) latestDeletions.set(deletion.watchUrl, deletion);
+  }
+  for (const [watchUrl, deletion] of latestDeletions) {
+    const entry = latestEntries.get(watchUrl);
+    if (entry && new Date(entry.updatedAt) > new Date(deletion.updatedAt)) latestDeletions.delete(watchUrl);
+    else latestEntries.delete(watchUrl);
+  }
+  return {
+    entries: [...latestEntries.values()].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)).slice(0, 100),
+    deletions: [...latestDeletions.values()].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)).slice(0, 500),
+  };
+}
+function serializeHistoryState(state) {
+  return { entries: state.entries.map(serializeHistoryEntry), deletions: state.deletions.map(serializeHistoryDeletion) };
 }
 async function loadHistory() {
   if (historyUsers) return historyUsers;
@@ -339,14 +371,19 @@ async function loadHistory() {
       : parsed?.profiles && typeof parsed.profiles === 'object'
         ? parsed.profiles
       : { default: Array.isArray(parsed?.entries) ? parsed.entries : [] };
-    for (const [userId, entries] of Object.entries(rawUsers)) {
+    for (const [userId, value] of Object.entries(rawUsers)) {
       const normalizedUser = normalizedUserId(userId);
-      if (!Array.isArray(entries)) continue;
-      const normalizedEntries = [];
-      for (const entry of entries) {
+      const rawEntries = Array.isArray(value) ? value : value?.entries;
+      const rawDeletions = Array.isArray(value) ? [] : value?.deletions;
+      if (!Array.isArray(rawEntries)) continue;
+      const normalizedEntries = []; const normalizedDeletions = [];
+      for (const entry of rawEntries) {
         try { normalizedEntries.push(normalizeHistoryEntry(entry)); } catch { /* Ignore corrupted history rows. */ }
       }
-      historyUsers.set(normalizedUser, normalizedEntries);
+      for (const deletion of Array.isArray(rawDeletions) ? rawDeletions : []) {
+        try { normalizedDeletions.push(normalizeHistoryDeletion(deletion)); } catch { /* Ignore corrupted deletion rows. */ }
+      }
+      historyUsers.set(normalizedUser, historyState(normalizedEntries, normalizedDeletions));
     }
   } catch (error) {
     if (error?.code !== 'ENOENT') console.warn(`[bridge] History store could not be read: ${error.message}`);
@@ -355,26 +392,25 @@ async function loadHistory() {
 }
 async function storedHistory(userId) {
   await historyMutation; const users = await loadHistory();
-  return (users.get(userId) ?? []).map(serializeHistoryEntry);
+  return serializeHistoryState(users.get(userId) ?? historyState());
 }
-async function mergeHistory(userId, entries) {
-  if (!Array.isArray(entries) || entries.length > 100) throw new Error('History payload is invalid');
-  const incoming = entries.map(normalizeHistoryEntry);
+async function mergeHistory(userId, payload) {
+  if (!Array.isArray(payload?.entries) || payload.entries.length > 100 || (payload.deletions && (!Array.isArray(payload.deletions) || payload.deletions.length > 500))) {
+    throw new Error('History payload is invalid');
+  }
+  const incomingEntries = payload.entries.map(normalizeHistoryEntry);
+  const incomingDeletions = (payload.deletions ?? []).map(normalizeHistoryDeletion);
   historyMutation = historyMutation.then(async () => {
-    const users = await loadHistory(); const existing = users.get(userId) ?? []; const merged = new Map(existing.map((entry) => [historyKey(entry), entry]));
-    for (const entry of incoming) {
-      const previous = merged.get(historyKey(entry));
-      if (!previous || new Date(entry.updatedAt) >= new Date(previous.updatedAt)) merged.set(historyKey(entry), entry);
-    }
-    const mergedEntries = [...merged.values()].sort((left, right) => new Date(right.updatedAt) - new Date(left.updatedAt)).slice(0, 100);
-    users.set(userId, mergedEntries);
+    const users = await loadHistory(); const existing = users.get(userId) ?? historyState();
+    const merged = historyState([...existing.entries, ...incomingEntries], [...existing.deletions, ...incomingDeletions]);
+    users.set(userId, merged);
     await mkdir(dirname(historyStorePath), { recursive: true });
     const temporaryPath = `${historyStorePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, JSON.stringify({ version: 3, users: Object.fromEntries(users) }), 'utf8');
+    await writeFile(temporaryPath, JSON.stringify({ version: 4, users: Object.fromEntries(users) }), 'utf8');
     await rename(temporaryPath, historyStorePath);
-    return mergedEntries;
+    return merged;
   });
-  return (await historyMutation).map(serializeHistoryEntry);
+  return serializeHistoryState(await historyMutation);
 }
 
 function parseSearch(html) {
@@ -584,11 +620,11 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { results });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
-      return json(response, 200, { entries: await storedHistory(user.userId) });
+      return json(response, 200, await storedHistory(user.userId));
     }
     if (request.method === 'PUT' && requestUrl.pathname === '/api/history') {
       const body = JSON.parse(await readBody(request));
-      return json(response, 200, { entries: await mergeHistory(user.userId, body.entries) });
+      return json(response, 200, await mergeHistory(user.userId, body));
     }
     if (request.method === 'POST' && requestUrl.pathname === '/api/series') return json(response, 200, await getSeries(JSON.parse(await readBody(request)).watchUrl));
     const serversRoute = requestUrl.pathname.match(/^\/api\/series\/([\w-]+)\/servers$/);

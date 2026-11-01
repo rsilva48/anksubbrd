@@ -82,7 +82,7 @@ La app usa estas rutas locales; no necesitas llamarlas manualmente.
 - `POST /api/series` con `{ "watchUrl": "…" }`
 - `GET /api/series/:seriesKey/servers?episode=2`
 - `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`
-- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso; el usuario se deriva del token de acceso
+- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso; el usuario se deriva del token de acceso. Se conserva solamente el capítulo más reciente de cada serie y los borrados se sincronizan entre dispositivos.
 
 Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch/...` del origen configurado para el catálogo y no expone un proxy genérico para otros dominios. El historial se guarda en `proxy/data/history.json` por defecto (o en la ruta definida por `HISTORY_STORE_PATH`); esa carpeta está excluida de Git.
 
