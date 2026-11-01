@@ -479,11 +479,11 @@ struct SettingsScreen: View {
             .navigationTitle("Configuración")
         }
         .onAppear { tokenConfigured = !SecureTokenStore.currentToken().isEmpty }
-        .confirmationDialog("¿Cambiar identidad privada?", isPresented: $showChangeWarning, titleVisibility: .visible) {
-            Button("Crear una identidad nueva", role: .destructive) { showProvisioning = true }
-            Button("Usar un token existente", role: .destructive) { showImport = true }
-        } message: {
-            Text("Cambiar el token cambia de usuario. Tu historial actual no se borra del servidor, pero dejará de ser visible en este dispositivo hasta que restaures el token anterior. Respalda el token antes de continuar.")
+        .sheet(isPresented: $showChangeWarning) {
+            IdentityChangeGuardSheet(
+                onBackup: { presentAfterChangeWarning(.backup) },
+                onChoose: { action in presentAfterChangeWarning(action) }
+            )
         }
         .sheet(isPresented: $showProvisioning) {
             TokenProvisioningSheet(bridgeBaseURL: bridgeBaseURL) { token in
@@ -527,6 +527,20 @@ struct SettingsScreen: View {
         bridgeTokenVersion += 1
     }
 
+    private func presentAfterChangeWarning(_ action: IdentityChangeAction) {
+        showChangeWarning = false
+        DispatchQueue.main.async {
+            switch action {
+            case .backup:
+                showBackup = true
+            case .create:
+                showProvisioning = true
+            case .importExisting:
+                showImport = true
+            }
+        }
+    }
+
     private func testBridge() {
         Task { @MainActor in
             testingBridge = true
@@ -537,6 +551,55 @@ struct SettingsScreen: View {
                 testResult = health.ok ? "Conectado al bridge." : "El bridge respondió de forma inesperada."
             } catch {
                 testResult = error.localizedDescription
+            }
+        }
+    }
+}
+
+private enum IdentityChangeAction {
+    case backup
+    case create
+    case importExisting
+}
+
+private struct IdentityChangeGuardSheet: View {
+    let onBackup: () -> Void
+    let onChoose: (IdentityChangeAction) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var acknowledgedCurrentToken = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Cambiar el token te convierte en otro usuario. El historial actual seguirá en el servidor, pero este iPhone o iPad no podrá abrirlo de nuevo sin el token actual.")
+                    Toggle("Ya guardé el token actual de forma segura", isOn: $acknowledgedCurrentToken)
+                    Button("Respaldar token actual…") {
+                        onBackup()
+                    }
+                } header: {
+                    Text("Antes de cambiar")
+                } footer: {
+                    Text("No continúes si no tienes el token guardado: no existe recuperación de cuenta ni un listado de otros usuarios.")
+                }
+
+                Section {
+                    Button("Crear una identidad nueva", role: .destructive) {
+                        onChoose(.create)
+                    }
+                    Button("Usar un token existente", role: .destructive) {
+                        onChoose(.importExisting)
+                    }
+                } footer: {
+                    Text("Estas acciones permanecen bloqueadas hasta que confirmes que resguardaste el token actual.")
+                }
+                .disabled(!acknowledgedCurrentToken)
+            }
+            .navigationTitle("Cambiar identidad")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancelar") { dismiss() }
+                }
             }
         }
     }
@@ -557,11 +620,13 @@ struct TokenProvisioningSheet: View {
         NavigationStack {
             Form {
                 if generatedToken.isEmpty {
-                    Section("Aprovisionamiento") {
+                    Section {
                         SecureField("Token administrador del bridge", text: $administratorToken)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                         TextField("Etiqueta opcional, por ejemplo iPad privado", text: $label)
+                    } header: {
+                        Text("Aprovisionamiento")
                     } footer: {
                         Text("El token administrador se usa una sola vez para registrar esta identidad; no se guarda en el dispositivo.")
                     }
@@ -638,7 +703,7 @@ struct TokenImportSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Token existente") {
+                Section {
                     SecureField("Token de 64 caracteres", text: $token)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -656,6 +721,8 @@ struct TokenImportSheet: View {
                         }
                     }
                     .disabled(!confirmedBackup || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } header: {
+                    Text("Token existente")
                 } footer: {
                     Text("Importa el token de otro dispositivo sólo si quieres acceder exactamente al mismo historial.")
                 }
