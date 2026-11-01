@@ -554,7 +554,7 @@ struct HistoryScreen: View {
             Label(allEntriesSelected ? "Ninguno" : "Todos", systemImage: allEntriesSelected ? "xmark.circle" : "checkmark.circle")
         }
         .accessibilityLabel(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo")
-        .disabled(history.entries.isEmpty)
+        .disabled(!editMode.isEditing || history.entries.isEmpty)
     }
 
     private var bulkDeleteButton: some View {
@@ -563,7 +563,7 @@ struct HistoryScreen: View {
         } label: {
             Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
         }
-        .disabled(selectedEntryIDs.isEmpty)
+        .disabled(!editMode.isEditing || selectedEntryIDs.isEmpty)
     }
 
     private func deleteSelected() {
