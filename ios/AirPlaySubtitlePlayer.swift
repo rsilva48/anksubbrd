@@ -402,7 +402,7 @@ private struct CatalogFilterSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Catálogo") {
+                Section {
                     Picker("Estación", selection: $season) {
                         Text("Todas").tag(""); Text("Invierno").tag("winter"); Text("Primavera").tag("spring"); Text("Verano").tag("summer"); Text("Otoño").tag("fall")
                     }
@@ -425,6 +425,8 @@ private struct CatalogFilterSheet: View {
                         Text("Cualquiera").tag(0)
                         ForEach([5, 6, 7, 8, 9], id: \.self) { Text("\($0).0+").tag($0) }
                     }
+                } header: {
+                    Text("Catálogo")
                 } footer: {
                     Text("La puntuación se filtra en los resultados de la página actual.")
                 }
