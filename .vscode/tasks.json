@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "windows": { "options": { "shell": { "executable": "powershell.exe", "args": ["-NoProfile", "-Command"] } } },
+  "tasks": [
+    { "label": "Bridge: instalar dependencias", "type": "shell", "command": "npm ci", "options": { "cwd": "${workspaceFolder}/proxy" }, "problemMatcher": [] },
+    { "label": "Bridge: ejecutar", "type": "shell", "command": "npm start", "options": { "cwd": "${workspaceFolder}/proxy" }, "problemMatcher": [] },
+    { "label": "Bridge: auditar dependencias", "type": "shell", "command": "npm audit --omit=dev", "options": { "cwd": "${workspaceFolder}/proxy" }, "problemMatcher": [] },
+    { "label": "Git: probar versionamiento", "type": "shell", "command": "node scripts/test-versioning.mjs", "problemMatcher": [] },
+    { "label": "Git: activar hook de version", "type": "shell", "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File '${workspaceFolder}/scripts/install-hooks.ps1'", "problemMatcher": [] },
+    { "label": "Git: publicar commits y releases", "type": "shell", "command": "git push --follow-tags origin HEAD", "problemMatcher": [] }
+  ]
+}

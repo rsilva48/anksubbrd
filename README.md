@@ -87,6 +87,16 @@ La app usa estas rutas locales; no necesitas llamarlas manualmente.
 
 Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch/...` del origen configurado para el catálogo y no expone un proxy genérico para otros dominios. El historial se guarda en `proxy/data/history.json` por defecto (o en la ruta definida por `HISTORY_STORE_PATH`); esa carpeta está excluida de Git.
 
+## Versiones y releases
+
+En VS Code abre la carpeta del proyecto y ejecuta la tarea **Git: activar hook de version** una vez por clon. Instala el hook `post-commit` sin modificar el commit: crea una etiqueta anotada `vMAJOR.MINOR.PATCH` sobre el commit recién creado, incrementando el parche a partir de la etiqueta más alta (o desde `0.1.0` si aún no hay etiquetas). Requiere Git y Node.js en el PATH. Las tareas de Windows usan PowerShell sin cargar perfiles.
+
+Usa mensajes de [Conventional Commits](https://www.conventionalcommits.org/) (por ejemplo `fix: corregir reproducción` o `feat: añadir filtros`). Cada commit genera un parche; para incrementar MAJOR o MINOR, crea deliberadamente una etiqueta semántica para el commit antes de publicar y evita duplicar la etiqueta. El hook no modifica el commit ni sube nada a GitHub. Para publicar el commit y sus etiquetas anotadas usa la tarea **Git: publicar commits y releases** o `git push --follow-tags origin main`. La instalación habilita `push.followTags` en ese clon. Antes de trabajar en otro clon ejecuta `git fetch --tags`; si dos clones crean la misma versión en commits distintos, Git rechazará la etiqueta y deberás resolver la colisión sin sobrescribir la release existente.
+
+Al subir una etiqueta semántica, GitHub Actions compila un IPA sin firmar cuya versión corresponde a la etiqueta, y publica una GitHub Release con el IPA directamente descargable y los mensajes de commit desde la etiqueta anterior. En el primer release se incluye el historial previo. Una compilación de rama sin etiqueta conserva una versión de desarrollo; no publica una release. La Release solo se crea después de una compilación exitosa. Abre la página Releases desde el iPhone/iPad, descarga el IPA e impórtalo desde LiveContainer. La firma/compatibilidad efectiva depende de la instalación de LiveContainer y de sus certificados; este flujo no firma el IPA.
+
+El hook es local al clon y no afecta commits creados en la interfaz de GitHub u otros clones sin instalarlo. No cambia `core.hooksPath` si ya está configurado ni sustituye un `post-commit` existente. Las releases usan permisos de escritura únicamente en el job de publicación.
+
 ## Usarlo fuera de casa con Caddy
 
 Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y un token privado. No expongas el puerto `8787` al Internet público.

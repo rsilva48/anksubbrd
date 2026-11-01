@@ -1,0 +1,4 @@
+#!/bin/sh
+# A tag points at the completed commit; no files or existing commits are changed.
+node "$(git rev-parse --show-toplevel)/scripts/post-commit-version.mjs" || \
+  printf '%s\n' 'No se pudo generar la etiqueta de versión. Revisa scripts/post-commit-version.mjs.' >&2
