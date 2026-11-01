@@ -42,7 +42,7 @@ struct MainTabScreen: View {
         // A foreground request to the configured private address makes iOS show
         // its Local Network consent alert before the user starts a catalog action.
         // The result is deliberately ignored: this is only a permission warm-up.
-        _ = try? await BridgeClient.get(base: bridgeBaseURL, path: "/health", timeoutInterval: 5)
+        let _: HealthResponse? = try? await BridgeClient.get(base: bridgeBaseURL, path: "/health", timeoutInterval: 5)
     }
 }
 
