@@ -169,8 +169,15 @@ function subtitleDetails(track, index) {
   const hasText = (pattern) => pattern.test(value);
   const hasToken = (...tokens) => tokens.some((token) => new RegExp(`(?:^|[\\s_./-])${token}(?=$|[\\s_./-])`, 'i').test(value));
   const qualifiers = [];
-  if (hasText(/(?:^|[\s_./-])sdh(?=$|[\s_./-])|\bsdh\b/)) qualifiers.push('SDH');
-  else if (hasText(/(?:^|[\s_./-])cc(?=$|[\s_./-])|closed[\s_-]*captions?/)) qualifiers.push('CC');
+  const addQualifier = (name, pattern) => { if (hasText(pattern) && !qualifiers.includes(name)) qualifiers.push(name); };
+  addQualifier('Latin American', /latin[\s_-]*american/);
+  addQualifier('European', /(?:^|[\s_./-])european(?=$|[\s_./-])/);
+  addQualifier('Brazilian', /(?:^|[\s_./-])brazilian(?=$|[\s_./-])/);
+  if (!qualifiers.includes('Latin American')) addQualifier('Latin', /(?:^|[\s_./-])latin(?=$|[\s_./-])/);
+  addQualifier('Forced', /(?:^|[\s_./-])forced(?=$|[\s_./-])/);
+  addQualifier('Dubtitle', /(?:^|[\s_./-])dubtitle(?=$|[\s_./-])/);
+  addQualifier('SDH', /(?:^|[\s_./-])sdh(?=$|[\s_./-])/);
+  addQualifier('CC', /(?:^|[\s_./-])cc(?=$|[\s_./-])|closed[\s_-]*captions?/);
   const named = (name, language, extra = []) => {
     const descriptors = [...extra, ...qualifiers];
     return { name: descriptors.length ? `${name} (${descriptors.join(', ')})` : name, language };
@@ -195,16 +202,28 @@ function subtitleDetails(track, index) {
     ['Hindi', 'hi', ['hindi', 'hin', 'hi']], ['Bengali', 'bn', ['bengali', 'ben', 'bn']],
     ['Dutch', 'nl', ['dutch', 'nederlands', 'dut', 'nld', 'nl']], ['Swedish', 'sv', ['swedish', 'swe', 'sv']],
     ['Danish', 'da', ['danish', 'dan', 'da']], ['Finnish', 'fi', ['finnish', 'fin', 'fi']],
-    ['Norwegian', 'no', ['norwegian', 'nor', 'no']], ['Czech', 'cs', ['czech', 'ces', 'cze', 'cs']],
+    ['Norwegian', 'no', ['norwegian', 'nor', 'no']], ['Norwegian (Bokmål)', 'nb', ['nob', 'nb']], ['Czech', 'cs', ['czech', 'ces', 'cze', 'cs']],
     ['Romanian', 'ro', ['romanian', 'română', 'romana', 'ron', 'rum', 'ro']], ['Hungarian', 'hu', ['hungarian', 'hun', 'hu']],
     ['Greek', 'el', ['greek', 'ell', 'gre', 'el']], ['Hebrew', 'he', ['hebrew', 'heb', 'he']],
     ['Persian', 'fa', ['persian', 'farsi', 'fas', 'per', 'fa']], ['Filipino', 'fil', ['filipino', 'tagalog', 'fil', 'tgl']],
     ['Tamil', 'ta', ['tamil', 'tam', 'ta']], ['Telugu', 'te', ['telugu', 'tel', 'te']], ['Urdu', 'ur', ['urdu', 'urd', 'ur']],
+    ['Catalan', 'ca', ['catalan', 'cat', 'ca']], ['Basque', 'eu', ['basque', 'euskara', 'baq', 'eus', 'eu']],
+    ['Galician', 'gl', ['galician', 'glg', 'gl']], ['Croatian', 'hr', ['croatian', 'hrv', 'hr']],
+    ['Bulgarian', 'bg', ['bulgarian', 'bul', 'bg']], ['Serbian', 'sr', ['serbian', 'srp', 'sr']],
+    ['Slovak', 'sk', ['slovak', 'slk', 'slo', 'sk']], ['Slovenian', 'sl', ['slovenian', 'slv', 'sl']],
+    ['Lithuanian', 'lt', ['lithuanian', 'lit', 'lt']], ['Latvian', 'lv', ['latvian', 'lav', 'lv']],
+    ['Estonian', 'et', ['estonian', 'est', 'et']], ['Icelandic', 'is', ['icelandic', 'isl', 'ice', 'is']],
+    ['Welsh', 'cy', ['welsh', 'cym', 'wel', 'cy']],
   ];
   for (const [name, language, aliases] of languages) {
     if (aliases.some((alias) => hasText(new RegExp(`\\b${alias}\\b`, 'i')) || hasToken(alias))) {
-      const european = name === 'French' && hasText(/(?:^|[\s_./-])european(?=$|[\s_./-])/);
-      return named(name, european ? 'fr-FR' : language, european ? ['European'] : []);
+      const latinAmerican = qualifiers.includes('Latin American'); const european = qualifiers.includes('European'); const brazilian = qualifiers.includes('Brazilian');
+      const regionalLanguage = name === 'Spanish' && latinAmerican ? 'es-419'
+        : name === 'Spanish' && european ? 'es-ES'
+          : name === 'French' && european ? 'fr-FR'
+            : name === 'Portuguese' && brazilian ? 'pt-BR'
+              : name === 'Portuguese' && european ? 'pt-PT' : language;
+      return named(name, regionalLanguage);
     }
   }
 
