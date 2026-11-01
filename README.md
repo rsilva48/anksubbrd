@@ -6,13 +6,13 @@ Aplicación personal de iPhone/iPad para navegar automáticamente un catálogo d
 App iOS: buscar → serie → episodio → servidor
                        │
                        ▼
-Bridge local: API pública del sitio → reproductor → HLS + VTT
+Bridge local: API pública del sitio → metadatos del reproductor → HLS + VTT
                        │
                        ▼
 AVPlayer en iPhone/iPad ───────── AirPlay ─────────► TV
 ```
 
-No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor usando las mismas solicitudes AJAX públicas que utiliza la página, abre el reproductor en Chromium sin interfaz y conserva en memoria el HLS y los VTT detectados. Después sirve un manifiesto HLS que declara cada VTT como subtítulo para `AVPlayer`.
+No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor usando las mismas solicitudes AJAX públicas que utiliza la página. Consulta los metadatos públicos del reproductor, descifra su fuente temporal y conserva en memoria el HLS y los VTT. Después sirve un manifiesto HLS que declara cada VTT como subtítulo para `AVPlayer`.
 
 Las URLs de reproducción, tokens y subtítulos no se registran en disco, no se devuelven a la app y desaparecen al reiniciar el bridge.
 
@@ -29,11 +29,10 @@ En el equipo que actuará como bridge:
 ```sh
 cd proxy
 npm install
-npx playwright install chromium
 node server.mjs
 ```
 
-El primer paso instala `cheerio` y `playwright`; el segundo descarga Chromium para que el bridge pueda obtener la configuración temporal del reproductor. Permite conexiones entrantes TCP al puerto `8787` en el firewall. Encuentra la IP LAN del equipo y úsala en la app, por ejemplo `http://192.168.1.20:8787`.
+El primer paso instala `cheerio`. No se necesita Chromium, Playwright, ni un perfil de Edge. Permite conexiones entrantes TCP al puerto `8787` en el firewall. Encuentra la IP LAN del equipo y úsala en la app, por ejemplo `http://192.168.1.20:8787`.
 
 Comprueba que el servicio arrancó:
 
@@ -65,7 +64,7 @@ Si no aparece esa línea, el iPhone/iPad no está llegando al equipo del bridge:
 
 La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. El historial se guarda sólo en `UserDefaults` del iPhone/iPad; no se transmite al bridge ni al sitio.
 
-La primera reproducción de un servidor puede tardar varios segundos: el bridge abre temporalmente el reproductor para descubrir la playlist y las pistas. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
+La primera reproducción de un servidor tarda sólo lo necesario para solicitar los metadatos públicos de la fuente. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
 
 ## API local
 

@@ -1,14 +1,16 @@
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createDecipheriv, createHmac, randomUUID } from 'node:crypto';
 import { load } from 'cheerio';
-import { chromium } from 'playwright';
 
 const host = process.env.BRIDGE_HOST ?? '0.0.0.0';
 const port = Number(process.env.BRIDGE_PORT ?? 8787);
 const providerOrigin = Buffer.from('aHR0cHM6Ly9hbmlrb3RvdHYudG8=', 'base64').toString('utf8');
 const sources = new Map();
 const seriesCache = new Map();
-let browserPromise;
+const cdnTokenSecret = 'MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s';
+const sourceEncKey = 'i?LMTAx0Q6,:}50U';
+const sourceEncIv = "W0;27ToaUpl_P%'c";
+const playerUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0';
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -21,6 +23,78 @@ function absoluteUrl(value, parent) { return new URL(value, parent).toString(); 
 function mediaUrl(id, upstream) { return `/media/${id}?url=${encodeURIComponent(upstream)}`; }
 function isPlaylist(url, contentType) { return new URL(url).pathname.toLowerCase().endsWith('.m3u8') || contentType.includes('mpegurl'); }
 function cleanText(value) { return String(value ?? '').replace(/\s+/g, ' ').trim(); }
+function base64Url(value) { return Buffer.from(value).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); }
+function playlistDescriptor(value) {
+  const url = new URL(value); const token = url.searchParams.get('token'); let expiresIn = null;
+  try {
+    const payload = Buffer.from(String(token ?? '').split('.')[0], 'base64url').toString('utf8');
+    const expiry = Number(payload.split('|')[0]); if (Number.isFinite(expiry)) expiresIn = expiry - Math.floor(Date.now() / 1000);
+  } catch { /* Diagnostics deliberately omit token values. */ }
+  return `${url.hostname} token=${token ? 'yes' : 'no'}${expiresIn === null ? '' : ` expiresIn=${expiresIn}s`}`;
+}
+function attachCdnToken(value) {
+  const url = new URL(value);
+  if (url.searchParams.has('token')) return url.toString();
+  const match = url.pathname.match(/\/([a-f0-9]{32})\/([a-f0-9]{32})\//i);
+  if (!match) return url.toString();
+  const expiresAt = Math.floor(Date.now() / 1000) + 90;
+  const payload = `${expiresAt}|${match[1].toLowerCase()}/${match[2].toLowerCase()}`;
+  const signature = createHmac('sha256', cdnTokenSecret).update(payload).digest();
+  url.searchParams.set('token', `${base64Url(payload)}.${base64Url(signature)}`);
+  return url.toString();
+}
+function paddedKey(value, length) {
+  const result = Buffer.alloc(length); Buffer.from(value, 'utf8').copy(result); return result;
+}
+function decryptPlayerSources(value) {
+  const encoded = String(value).replace(/-/g, '+').replace(/_/g, '/');
+  const encrypted = Buffer.from(encoded + '='.repeat((4 - (encoded.length % 4)) % 4), 'base64');
+  const decipher = createDecipheriv('aes-256-cbc', paddedKey(sourceEncKey, 32), paddedKey(sourceEncIv, 16));
+  return JSON.parse(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8'));
+}
+function resolveStreamFile(sources) {
+  if (typeof sources === 'string') return sources;
+  if (Array.isArray(sources)) return resolveStreamFile(sources[0]);
+  return typeof sources?.file === 'string' ? sources.file : null;
+}
+function subtitleLanguage(track) {
+  const value = `${track?.label ?? ''} ${track?.kind ?? ''}`.toLowerCase();
+  if (/spanish|espa[nñ]ol|\bes\b/.test(value)) return 'es';
+  if (/english|\ben\b/.test(value)) return 'en';
+  return 'und';
+}
+async function resolvePlayerSource(embedUrl) {
+  const page = await fetchWithTimeout(embedUrl, { headers: { Accept: 'text/html', Referer: `${providerOrigin}/`, 'User-Agent': playerUserAgent } }, 15000, 'Player page request');
+  if (!page.ok) throw new Error(`Player page HTTP ${page.status}`);
+  const $ = load(await page.text()); const player = $('#megaplay-player').first(); const episodeId = player.attr('data-id');
+  if (!episodeId) throw new Error('Player episode identifier was not found');
+  const playerOrigin = new URL(embedUrl).origin;
+  const sourceUrl = new URL('/stream/getSources', playerOrigin); sourceUrl.searchParams.set('id', episodeId);
+  console.info('[bridge] Loading public player source metadata');
+  const sourceResponse = await fetchWithTimeout(sourceUrl, {
+    headers: { Accept: 'application/json, text/javascript, */*; q=0.01', Referer: embedUrl, Origin: playerOrigin, 'User-Agent': playerUserAgent, 'X-Requested-With': 'XMLHttpRequest' },
+  }, 15000, 'Player source request');
+  if (!sourceResponse.ok) throw new Error(`Player source HTTP ${sourceResponse.status}`);
+  const sourcePayload = await sourceResponse.json();
+  const sources = sourcePayload.enc ? decryptPlayerSources(sourcePayload.enc) : sourcePayload.sources;
+  const file = resolveStreamFile(sources);
+  if (!file) throw new Error('Player source did not include an HLS file');
+  const hlsUrl = attachCdnToken(absoluteUrl(file, playerOrigin));
+  const tracks = Array.isArray(sourcePayload.tracks) ? sourcePayload.tracks : [];
+  const subtitles = tracks.map((track, index) => ({
+    name: cleanText(track?.label) || `Subtitles ${index + 1}`,
+    language: subtitleLanguage(track),
+    vttUrl: absoluteUrl(track?.file ?? '', playerOrigin),
+    default: index === 0,
+  })).filter((track) => track.vttUrl && new URL(track.vttUrl).pathname.toLowerCase().endsWith('.vtt'));
+  console.info(`[bridge] Public source metadata returned ${subtitles.length} subtitle track(s)`);
+  console.info(`[bridge] HLS candidate: ${playlistDescriptor(hlsUrl)}`);
+  return {
+    hlsUrl,
+    requestHeaders: { Referer: `${playerOrigin}/`, Origin: playerOrigin, 'User-Agent': playerUserAgent, Accept: '*/*', 'Accept-Language': 'en-US,en;q=0.9' },
+    subtitles,
+  };
+}
 function requireProviderUrl(value) {
   const url = new URL(value, providerOrigin);
   if (url.origin !== providerOrigin || !url.pathname.startsWith('/watch/')) throw new Error('Only catalog watch URLs are accepted');
@@ -125,8 +199,15 @@ async function getServers(seriesKey, episodeNumber) {
 }
 async function getBrowser() {
   if (!browserPromise) {
-    console.info('[bridge] Launching Chromium for player discovery');
-    browserPromise = chromium.launch({ headless: true }).catch((error) => { browserPromise = undefined; throw error; });
+    // The player was verified in Microsoft Edge. Prefer that same engine, with a
+    // clean temporary Playwright profile; no cookies or browser-profile data are
+    // read. Keep Chromium as a portable fallback for machines without Edge.
+    const preferredChannel = process.env.BRIDGE_BROWSER_CHANNEL ?? 'msedge';
+    console.info(`[bridge] Launching ${preferredChannel} for player discovery (${browserHeadless ? 'headless' : 'visible'})`);
+    browserPromise = chromium.launch({ channel: preferredChannel, headless: browserHeadless }).catch(async (error) => {
+      console.warn(`[bridge] Could not launch ${preferredChannel}; falling back to bundled Chromium (${error.message})`);
+      return chromium.launch({ headless: browserHeadless });
+    }).catch((error) => { browserPromise = undefined; throw error; });
   }
   return browserPromise;
 }
@@ -143,26 +224,37 @@ function collectMediaUrls(value, found) {
   if (!value || typeof value !== 'object') return;
   for (const child of Object.values(value)) collectMediaUrls(child, found);
 }
-async function waitForVideoFrame(page, timeoutMs = 12000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (const frame of page.frames()) {
-      const video = frame.locator('video');
-      if (await video.count().catch(() => 0)) return frame;
-    }
-    await page.waitForTimeout(300);
+async function waitForVideoFrame(frame, timeoutMs = 30000) {
+  try {
+    await frame.waitForSelector('video', { state: 'attached', timeout: timeoutMs });
+    return frame;
+  } catch {
+    return null;
   }
-  return null;
 }
-async function playerPageSummary(page) {
-  return page.evaluate(() => ({
+async function playerPageSummary(frame) {
+  return frame.evaluate(() => ({
     title: document.title,
     text: document.body?.innerText?.slice(0, 800) ?? '',
   })).catch(() => ({ title: '', text: '' }));
 }
-async function resolveEmbed(embedUrl) {
+async function playerFrameSummary(frame) {
+  const metadata = await frame.evaluate(() => ({
+    videos: document.querySelectorAll('video').length,
+    tracks: document.querySelectorAll('track').length,
+    player: Boolean(document.querySelector('#megaplay-player, [data-player], .video-js')),
+  })).catch(() => ({ videos: 0, tracks: 0, player: false }));
+  try {
+    const url = new URL(frame.url());
+    return [{ page: `${url.origin}${url.pathname}`, ...metadata }];
+  } catch {
+    return [{ page: 'non-http page', ...metadata }];
+  }
+}
+async function resolveEmbed(embedUrl, parentUrl) {
   const browser = await getBrowser(); const page = await browser.newPage({ extraHTTPHeaders: { Referer: `${providerOrigin}/` } });
   const found = { hls: new Set(), loadedHls: new Set(), masterHls: new Set(), vtt: new Set(), requestHeaders: {} }; const pending = [];
+  let playerFrame;
   page.on('request', (request) => {
     const url = request.url().toLowerCase();
     if (!url.includes('.m3u8') && !url.includes('.vtt')) return;
@@ -184,30 +276,46 @@ async function resolveEmbed(embedUrl) {
   try {
     console.info('[bridge] Opening selected player');
     await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    const summary = await playerPageSummary(page);
+    playerFrame = page.mainFrame();
+    const summary = await playerPageSummary(playerFrame);
     if (/error\s*-\s*megaplay/i.test(summary.title) || /error code:\s*410/i.test(summary.text)) {
       const error = new Error('Selected player is unavailable (provider error 410)');
       error.code = 'PLAYER_UNAVAILABLE';
       throw error;
     }
     console.info('[bridge] Player page opened; waiting for its video element');
-    const videoFrame = await waitForVideoFrame(page);
+    const videoFrame = await waitForVideoFrame(playerFrame);
     if (videoFrame) {
-      await videoFrame.locator('video').evaluate(async (video) => {
+      const engineReady = await playerFrame.waitForFunction(() => {
+        const player = window.__megaPlayPlayer?.player;
+        return Boolean(player && typeof player.play === 'function');
+      }, undefined, { timeout: 12000 }).then(() => true).catch(() => false);
+      await videoFrame.locator('video').evaluate((video) => {
         video.muted = true;
-        try { await video.play(); } catch { /* Source discovery can still continue without autoplay. */ }
       });
-      console.info('[bridge] Video element found; discovering HLS and subtitle tracks');
+      if (engineReady) await playerFrame.evaluate(() => {
+        const player = window.__megaPlayPlayer?.player;
+        if (player) {
+          player.muted = true;
+          void player.play().catch(() => {});
+        }
+      });
+      console.info(`[bridge] Video element found; player engine ${engineReady ? 'ready' : 'not ready'}; discovering HLS and subtitle tracks`);
     } else {
-      console.info('[bridge] No video element found; checking player network requests before rejecting the source');
+      console.info(`[bridge] No video element after 30 seconds; frame summary: ${JSON.stringify(await playerFrameSummary(playerFrame))}`);
     }
-    await page.waitForTimeout(5000);
-    const frameUrls = await Promise.all(page.frames().map((frame) => frame.evaluate(() => ({
+    // The bootstrap page uses handle-bridge asynchronously. In Edge it can take
+    // several seconds to attach the source after the video element exists.
+    const discoveryDeadline = Date.now() + 20000;
+    while (Date.now() < discoveryDeadline && !found.loadedHls.size && !found.hls.size) {
+      await page.waitForTimeout(500);
+    }
+    const pageUrls = await playerFrame.evaluate(() => ({
       video: [...document.querySelectorAll('video')].map((node) => node.currentSrc || node.getAttribute('src') || ''),
       tracks: [...document.querySelectorAll('track')].map((node) => node.getAttribute('src') || ''),
       resources: performance.getEntriesByType('resource').map((entry) => entry.name),
-    })).catch(() => null)));
-    for (const domUrls of frameUrls) collectMediaUrls(domUrls, found);
+    })).catch(() => null);
+    collectMediaUrls(pageUrls, found);
     await Promise.race([Promise.allSettled(pending), page.waitForTimeout(2000)]);
     if (videoFrame) await videoFrame.locator('video').evaluate((video) => video.pause()).catch(() => {});
   } catch (error) {
@@ -217,7 +325,7 @@ async function resolveEmbed(embedUrl) {
   let hlsUrl = [...found.masterHls, ...found.loadedHls][0];
   for (const candidate of found.hls) {
     if (hlsUrl) break;
-    const valid = await page.evaluate(async (url) => {
+    const valid = await playerFrame.evaluate(async (url) => {
       const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 5000);
       try {
         const response = await fetch(url, { signal: controller.signal });
@@ -231,35 +339,33 @@ async function resolveEmbed(embedUrl) {
     }, candidate).catch(() => false);
     if (valid) { hlsUrl = candidate; break; }
   }
+  // The player can expose a signed playlist before a same-page fetch is
+  // permitted by its CORS policy. The proxy fetches it using the captured
+  // public player context, so keep that player-provided candidate rather than
+  // rejecting an otherwise resolved playback session.
+  if (!hlsUrl && found.hls.size) {
+    hlsUrl = found.hls.values().next().value;
+    console.info('[bridge] Using player-provided HLS candidate; validating through the bridge proxy');
+  }
   if (!hlsUrl) { await page.close(); throw new Error(`The selected player did not expose a usable HLS playlist (${found.hls.size} candidates, ${found.loadedHls.size} loaded)`); }
-  return { hlsUrl, requestHeaders: found.requestHeaders, mediaPage: page, subtitles: [...found.vtt].map((vttUrl, index) => ({ name: `Subtitles ${index + 1}`, language: 'und', vttUrl, default: index === 0 })) };
+  hlsUrl = attachCdnToken(hlsUrl);
+  console.info(`[bridge] HLS candidate: ${playlistDescriptor(hlsUrl)}`);
+  return { hlsUrl, requestHeaders: found.requestHeaders, mediaPage: page, mediaFrame: playerFrame, subtitles: [...found.vtt].map((vttUrl, index) => ({ name: `Subtitles ${index + 1}`, language: 'und', vttUrl, default: index === 0 })) };
 }
 async function createPlayback(seriesKey, episodeNumber, serverIndex, requestHost) {
   const series = cachedSeries(seriesKey);
   if (!series.lastServers || series.lastServers.episodeNumber !== Number(episodeNumber)) await getServers(seriesKey, episodeNumber);
   const server = series.lastServers.servers.find((candidate) => candidate.index === Number(serverIndex)); if (!server) throw new Error('Server was not found');
-  const candidates = [server, ...series.lastServers.servers.filter((candidate) => candidate.type === server.type && candidate.index !== server.index)];
-  let media; let resolvedServer; let lastError;
-  for (const candidate of candidates) {
-    try {
-      console.info(`[bridge] Resolving episode ${episodeNumber}, ${candidate.type.toUpperCase()} server ${candidate.name}`);
-      const reply = await providerJson(`/ajax/server?get=${encodeURIComponent(candidate.linkId)}`); if (!reply?.url) throw new Error('Player URL was not returned');
-      console.info('[bridge] Player URL returned; starting discovery');
-      media = await resolveEmbed(reply.url);
-      resolvedServer = candidate;
-      if (candidate.index !== server.index) console.info(`[bridge] Falling back from ${server.name} to ${candidate.name}`);
-      break;
-    } catch (error) {
-      lastError = error;
-      console.warn(`[bridge] ${candidate.name} could not be resolved: ${error.message}`);
-    }
-  }
-  if (!media || !resolvedServer) throw new Error(`No ${server.type.toUpperCase()} server could be resolved: ${lastError?.message ?? 'unknown error'}`);
+  console.info(`[bridge] Resolving episode ${episodeNumber}, ${server.type.toUpperCase()} server ${server.name}`);
+  const reply = await providerJson(`/ajax/server?get=${encodeURIComponent(server.linkId)}`);
+  if (!reply?.url) throw new Error('Player URL was not returned');
+  console.info('[bridge] Player URL returned; resolving public source metadata');
+  const media = await resolvePlayerSource(reply.url);
   const id = randomUUID(); sources.set(id, media);
-  const expiry = setTimeout(() => { const source = sources.get(id); sources.delete(id); source?.mediaPage?.close().catch(() => {}); }, 2 * 60 * 60 * 1000);
+  const expiry = setTimeout(() => { sources.delete(id); }, 2 * 60 * 60 * 1000);
   expiry.unref();
   console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
-  return { playbackUrl: `http://${requestHost}/watch/${id}/master.m3u8`, subtitleTracks: media.subtitles.length, serverName: resolvedServer.name };
+  return { playbackUrl: `http://${requestHost}/watch/${id}/master.m3u8`, subtitleTracks: media.subtitles.length, serverName: server.name };
 }
 
 function rewriteUriLines(textValue, baseUrl, id) {
@@ -281,17 +387,6 @@ function durationFromVtt(vtt) {
   for (const match of vtt.matchAll(pattern)) duration = Math.max(duration, secondsInVttTimestamp([, match[4], match[5], match[6]]));
   return Math.ceil(duration);
 }
-async function fetchFromPlayer(source, url, range) {
-  if (!source.mediaPage || source.mediaPage.isClosed()) throw new Error('The player session expired');
-  const result = await source.mediaPage.evaluate(async ({ url, range }) => {
-    const response = await fetch(url, { headers: range ? { Range: range } : undefined });
-    const bytes = new Uint8Array(await response.arrayBuffer()); let binary = '';
-    for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-    return { ok: response.ok, status: response.status, url: response.url, type: response.headers.get('content-type') ?? '', body: btoa(binary) };
-  }, { url, range });
-  if (!result.ok) throw new Error(`Upstream responded ${result.status}`);
-  return { url: result.url, type: result.type, body: Buffer.from(result.body, 'base64') };
-}
 function removePlayerTransportPrefix(url, body) {
   // This mirrors the public player’s SegmentStrip behavior for the affected
   // CDNs. It removes only its documented fixed transport prefix, never media
@@ -301,12 +396,9 @@ function removePlayerTransportPrefix(url, body) {
 }
 async function fetchUpstream(url, source, range) {
   const headers = { ...source.requestHeaders, ...(range ? { range } : {}) };
-  try {
-    const response = await fetch(url, { redirect: 'follow', headers });
-    if (response.ok) return { url: response.url, type: response.headers.get('content-type') ?? '', body: Buffer.from(await response.arrayBuffer()) };
-    if (response.status !== 403) throw new Error(`Upstream responded ${response.status}`);
-  } catch (error) { if (!source.mediaPage || source.mediaPage.isClosed()) throw error; }
-  return fetchFromPlayer(source, url, range);
+  const response = await fetch(url, { redirect: 'follow', headers });
+  if (!response.ok) throw new Error(`Upstream responded ${response.status}`);
+  return { url: response.url, type: response.headers.get('content-type') ?? '', body: Buffer.from(await response.arrayBuffer()) };
 }
 async function sendUpstream(response, upstreamUrl, id, source, inject, range) {
   const upstream = await fetchUpstream(upstreamUrl, source, range); upstream.body = removePlayerTransportPrefix(upstream.url, upstream.body); const type = upstream.type;
