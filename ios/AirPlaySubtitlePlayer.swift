@@ -464,8 +464,10 @@ struct HistoryScreen: View {
                     // Keep these items registered. TabView's adaptable
                     // navigation bar does not reliably insert a ToolbarItem
                     // that first appears after EditButton changes state.
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItem(placement: .topBarTrailing) {
                         selectAllButton
+                            .frame(width: editMode.isEditing ? nil : 0)
+                            .clipped()
                             .opacity(editMode.isEditing ? 1 : 0)
                             .allowsHitTesting(editMode.isEditing)
                             .accessibilityHidden(!editMode.isEditing)
@@ -542,13 +544,16 @@ struct HistoryScreen: View {
     }
 
     private var selectAllButton: some View {
-        Button(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo") {
+        Button {
             if allEntriesSelected {
                 selectedEntryIDs.removeAll()
             } else {
                 selectedEntryIDs = Set(history.entries.map(\.id))
             }
+        } label: {
+            Label(allEntriesSelected ? "Ninguno" : "Todos", systemImage: allEntriesSelected ? "xmark.circle" : "checkmark.circle")
         }
+        .accessibilityLabel(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo")
         .disabled(history.entries.isEmpty)
     }
 
