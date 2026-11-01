@@ -447,12 +447,14 @@ function parseSearch(html) {
 async function latestUpdated(params) {
   const page = Math.max(1, Math.min(10000, Number.parseInt(params.get('page') || '1', 10) || 1));
   const season = params.get('season') || '', status = params.get('status') || '';
+  const keyword = cleanText(params.get('q')).slice(0, 200);
   if (season && !['winter', 'spring', 'summer', 'fall'].includes(season)) throw new Error('Invalid season');
   if (status && !['finished-airing', 'currently-airing', 'not-yet-aired'].includes(status)) throw new Error('Invalid status');
-  const url = new URL(season || status ? '/filter' : '/latest-updated', providerOrigin);
+  const url = new URL(season || status || keyword ? '/filter' : '/latest-updated', providerOrigin);
   url.searchParams.set('page', String(page));
-  if (season || status) {
-    url.searchParams.set('sort', 'latest-updated');
+  if (season || status || keyword) {
+    url.searchParams.set('sort', keyword ? 'default' : 'latest-updated');
+    if (keyword) url.searchParams.set('keyword', keyword);
     if (season) url.searchParams.append('season[]', season);
     if (status) url.searchParams.append('status[]', status);
   }
@@ -466,7 +468,8 @@ async function latestUpdated(params) {
     const watch = requireProviderUrl(href); const episode = Number(watch.pathname.match(/\/ep-(\d+)\/?$/)?.[1]) || null;
     watch.pathname = watch.pathname.replace(/\/ep-\d+\/?$/, ''); watch.search = '';
     const src = $(node).find('img').first().attr('src');
-    results.push({ title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: watch.toString(), imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta: cleanText(card.find('.info .meta').text()), rating: null, score: null, mediaType: cleanText($(node).find('.right').text()) || null, year: null, episode });
+    const scoreValue = Number(cleanText(card.find('.info .meta .rated span').first().text()));
+    results.push({ title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: watch.toString(), imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta: cleanText(card.find('.info .meta').text()), rating: null, score: scoreValue > 0 ? scoreValue : null, mediaType: cleanText($(node).find('.right').text()) || null, year: null, episode });
   });
   return { results, page, hasNext: $('a[rel=next]').length > 0 };
 }

@@ -79,6 +79,7 @@ La primera reproducción de un servidor tarda sólo lo necesario para solicitar 
 La app usa estas rutas locales; no necesitas llamarlas manualmente.
 
 - `GET /api/search?q=titulo`
+- `GET /api/latest?page=1&season=winter&status=currently-airing` para novedades y filtros paginados; opcionalmente `q` busca por título.
 - `POST /api/series` con `{ "watchUrl": "…" }`
 - `GET /api/series/:seriesKey/servers?episode=2`
 - `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`

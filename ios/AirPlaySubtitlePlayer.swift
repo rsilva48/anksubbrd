@@ -336,6 +336,10 @@ struct SearchScreen: View {
     @State private var minimumScore = 0
     @State private var mediaTypeFilter = "Todos"
     @State private var yearFilter = "Todos"
+    @State private var seasonFilter = ""
+    @State private var statusFilter = ""
+    @State private var filterPage = 1
+    @State private var filterHasNext = false
     @State private var loading = false
     @State private var errorMessage: String?
 
@@ -390,10 +394,9 @@ struct SearchScreen: View {
                 Section { ErrorNotice(message: errorMessage) }
             }
 
+            Section("Filtros") { filterControls }
+
             if !results.isEmpty {
-                Section("Filtros") {
-                    filterControls
-                }
                 Section("Resultados (\(filteredResults.count))") {
                     ForEach(filteredResults) { anime in
                         NavigationLink {
@@ -410,6 +413,9 @@ struct SearchScreen: View {
                 Section {
                     ContentPlaceholder(icon: "sparkle.magnifyingglass", title: "Busca una serie", detail: "Escribe un título para consultar el catálogo desde tu bridge.")
                 }
+            }
+            if !seasonFilter.isEmpty || !statusFilter.isEmpty {
+                Section { pageControls }
             }
         }
     }
@@ -446,12 +452,12 @@ struct SearchScreen: View {
                         .liquidGlassCard()
                 }
 
+                Text("Filtros")
+                    .font(.title2.bold())
+                filterControls
+                    .padding(18)
+                    .liquidGlassCard()
                 if !results.isEmpty {
-                    Text("Filtros")
-                        .font(.title2.bold())
-                    filterControls
-                        .padding(18)
-                        .liquidGlassCard()
                     Text("Resultados (\(filteredResults.count))")
                         .font(.title2.bold())
                     LiquidGlassGroup {
@@ -474,6 +480,7 @@ struct SearchScreen: View {
                     ContentPlaceholder(icon: "sparkle.magnifyingglass", title: "Busca una serie", detail: "Escribe un título para consultar el catálogo desde tu bridge.")
                         .liquidGlassCard()
                 }
+                if !seasonFilter.isEmpty || !statusFilter.isEmpty { pageControls }
             }
             .frame(maxWidth: 1120, alignment: .leading)
             .padding(24)
@@ -482,6 +489,14 @@ struct SearchScreen: View {
 
     private var filterControls: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Picker("Estación", selection: $seasonFilter) {
+                Text("Todas").tag(""); Text("Invierno").tag("winter"); Text("Primavera").tag("spring"); Text("Verano").tag("summer"); Text("Otoño").tag("fall")
+            }
+            Picker("Estado", selection: $statusFilter) {
+                Text("Todos").tag(""); Text("En emisión").tag("currently-airing"); Text("Finalizado").tag("finished-airing"); Text("Próximamente").tag("not-yet-aired")
+            }
+            Button("Aplicar filtros de estación y estado") { filterPage = 1; search() }
+                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loading)
             Picker("PG Rating", selection: $ratingFilter) {
                 ForEach(ratingOptions, id: \.self) { Text($0).tag($0) }
             }
@@ -509,6 +524,16 @@ struct SearchScreen: View {
         }
     }
 
+    private var pageControls: some View {
+        HStack {
+            Button("Anterior") { filterPage -= 1; search() }.disabled(filterPage <= 1 || loading)
+            Spacer()
+            Text("Página \(filterPage)")
+            Spacer()
+            Button("Siguiente") { filterPage += 1; search() }.disabled(!filterHasNext || loading)
+        }
+    }
+
     private func search() {
         let searchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !searchQuery.isEmpty else { return }
@@ -517,12 +542,15 @@ struct SearchScreen: View {
             errorMessage = nil
             defer { loading = false }
             do {
-                let reply: SearchResponse = try await BridgeClient.get(
-                    base: bridgeBaseURL,
-                    path: "/api/search",
-                    query: [URLQueryItem(name: "q", value: searchQuery)]
-                )
-                results = reply.results
+                if seasonFilter.isEmpty && statusFilter.isEmpty {
+                    let reply: SearchResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/search", query: [URLQueryItem(name: "q", value: searchQuery)])
+                    results = reply.results
+                    filterHasNext = false
+                } else {
+                    let reply: LatestResponse = try await BridgeClient.get(base: bridgeBaseURL, path: "/api/latest", query: [URLQueryItem(name: "q", value: searchQuery), URLQueryItem(name: "page", value: String(filterPage)), URLQueryItem(name: "season", value: seasonFilter), URLQueryItem(name: "status", value: statusFilter)])
+                    results = reply.results
+                    filterHasNext = reply.hasNext
+                }
                 ratingFilter = "Todos"; minimumScore = 0; mediaTypeFilter = "Todos"; yearFilter = "Todos"
             } catch {
                 errorMessage = error.localizedDescription
