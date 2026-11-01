@@ -461,7 +461,21 @@ struct HistoryScreen: View {
                 .navigationTitle("Continuar viendo")
                 .modifier(AdaptableTabRootTitleStyle())
                 .toolbar {
-                    historyEditingToolbar
+                    // Keep these items registered. TabView's adaptable
+                    // navigation bar does not reliably insert a ToolbarItem
+                    // that first appears after EditButton changes state.
+                    ToolbarItem(placement: .topBarLeading) {
+                        selectAllButton
+                            .opacity(editMode.isEditing ? 1 : 0)
+                            .allowsHitTesting(editMode.isEditing)
+                            .accessibilityHidden(!editMode.isEditing)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        bulkDeleteButton
+                            .opacity(editMode.isEditing ? 1 : 0)
+                            .allowsHitTesting(editMode.isEditing)
+                            .accessibilityHidden(!editMode.isEditing)
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         EditButton()
                     }
@@ -525,38 +539,6 @@ struct HistoryScreen: View {
 
     private var allEntriesSelected: Bool {
         !history.entries.isEmpty && selectedEntryIDs.count == history.entries.count
-    }
-
-    @ToolbarContentBuilder
-    private var historyEditingToolbar: some ToolbarContent {
-        if #available(iOS 26.0, *) {
-            ToolbarItem(placement: .topBarLeading) {
-                selectAllButton
-            }
-            .hidden(!editMode.isEditing)
-
-            ToolbarItem(placement: .topBarTrailing) {
-                bulkDeleteButton
-            }
-            .hidden(!editMode.isEditing)
-        } else {
-            // On older systems ToolbarContent.hidden(_:) is unavailable. The
-            // items remain in place but are visually and interactively absent
-            // until the native EditButton activates the shared edit mode.
-            ToolbarItem(placement: .topBarLeading) {
-                selectAllButton
-                    .opacity(editMode.isEditing ? 1 : 0)
-                    .allowsHitTesting(editMode.isEditing)
-                    .accessibilityHidden(!editMode.isEditing)
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                bulkDeleteButton
-                    .opacity(editMode.isEditing ? 1 : 0)
-                    .allowsHitTesting(editMode.isEditing)
-                    .accessibilityHidden(!editMode.isEditing)
-            }
-        }
     }
 
     private var selectAllButton: some View {
