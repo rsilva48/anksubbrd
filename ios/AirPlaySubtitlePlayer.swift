@@ -259,7 +259,7 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Bridge local") {
+                Section {
                     TextField("http://IP-DEL-BRIDGE:8787", text: $bridgeBaseURL)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
@@ -280,16 +280,20 @@ struct SettingsScreen: View {
                             .font(.footnote)
                             .foregroundStyle(testResult.hasPrefix("Conectado") ? .green : .red)
                     }
+                } header: {
+                    Text("Bridge local")
                 } footer: {
                     Text("La dirección se guarda en este iPhone o iPad. Usa la IP LAN del equipo donde ejecutas el bridge.")
                 }
 
-                Section("Audio y subtítulos") {
+                Section {
                     Picker("Mostrar servidores por defecto", selection: $defaultTrackType) {
                         ForEach(StreamKind.allCases) { kind in
                             Text(kind.displayName).tag(kind.rawValue)
                         }
                     }
+                } header: {
+                    Text("Audio y subtítulos")
                 } footer: {
                     Text("Al abrir los servidores de un episodio podrás cambiar entre las pestañas Sub y Dub. Sub es la opción predeterminada.")
                 }
