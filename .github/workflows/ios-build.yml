@@ -40,6 +40,13 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           ditto "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/AirPlaySubtitlePlayer.app" "$RUNNER_TEMP/ipa/Payload/AirPlaySubtitlePlayer.app"
+          app="$RUNNER_TEMP/ipa/Payload/AirPlaySubtitlePlayer.app"
+          plutil -lint "$app/Info.plist"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist"
+          test -n "$executable"
+          test -f "$app/$executable"
           cd "$RUNNER_TEMP/ipa"
           zip -qry "$RUNNER_TEMP/AirPlaySubtitlePlayer-unsigned.ipa" Payload
       - name: Upload unsigned IPA
