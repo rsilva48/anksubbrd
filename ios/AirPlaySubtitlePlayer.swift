@@ -461,29 +461,19 @@ struct HistoryScreen: View {
             .modifier(AdaptableTabRootTitleStyle())
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    EditButton()
-                }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    if editMode.isEditing {
-                        Button("Seleccionar todo") {
-                            selectedEntryIDs = Set(history.entries.map(\.id))
-                        }
-                        .disabled(history.entries.isEmpty || selectedEntryIDs.count == history.entries.count)
-
-                        Button("Deseleccionar todo") {
+                    Button(editMode.isEditing ? "Listo" : "Editar") {
+                        if editMode.isEditing {
                             selectedEntryIDs.removeAll()
+                            editMode = .inactive
+                        } else {
+                            editMode = .active
                         }
-                        .disabled(selectedEntryIDs.isEmpty)
-
-                        Spacer()
-
-                        Button(role: .destructive) {
-                            deleteSelected()
-                        } label: {
-                            Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
-                        }
-                        .disabled(selectedEntryIDs.isEmpty)
                     }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if editMode.isEditing {
+                    bulkActions
                 }
             }
         }
@@ -526,6 +516,63 @@ struct HistoryScreen: View {
         .refreshable {
             await history.sync(with: bridgeBaseURL, force: true)
         }
+    }
+
+    private var bulkActions: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                Button("Seleccionar todo") {
+                    selectedEntryIDs = Set(history.entries.map(\.id))
+                }
+                .disabled(history.entries.isEmpty || selectedEntryIDs.count == history.entries.count)
+
+                Button("Deseleccionar todo") {
+                    selectedEntryIDs.removeAll()
+                }
+                .disabled(selectedEntryIDs.isEmpty)
+
+                Divider()
+                    .frame(height: 22)
+
+                deleteSelectedButton
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    selectedEntryIDs = Set(history.entries.map(\.id))
+                } label: {
+                    Label("Todos", systemImage: "checkmark.circle")
+                }
+                .accessibilityLabel("Seleccionar todo")
+                .disabled(history.entries.isEmpty || selectedEntryIDs.count == history.entries.count)
+
+                Button {
+                    selectedEntryIDs.removeAll()
+                } label: {
+                    Label("Ninguno", systemImage: "circle")
+                }
+                .accessibilityLabel("Deseleccionar todo")
+                .disabled(selectedEntryIDs.isEmpty)
+
+                deleteSelectedButton
+            }
+        }
+        .font(.subheadline.weight(.semibold))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var deleteSelectedButton: some View {
+        Button(role: .destructive) {
+            deleteSelected()
+        } label: {
+            Label("Borrar (\(selectedEntryIDs.count))", systemImage: "trash")
+        }
+        .tint(.red)
+        .disabled(selectedEntryIDs.isEmpty)
     }
 
     private func deleteSelected() {
