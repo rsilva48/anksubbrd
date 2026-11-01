@@ -11,6 +11,7 @@ WorkingDirectory=/opt/airplay-subtitle-bridge/proxy
 Environment=BRIDGE_HOST=127.0.0.1
 Environment=BRIDGE_PORT=8787
 Environment=HISTORY_STORE_PATH=/var/lib/airplay-subtitle-bridge/history.json
+Environment=BRIDGE_USER_STORE_PATH=/var/lib/airplay-subtitle-bridge/users.json
 EnvironmentFile=/etc/airplay-subtitle-bridge.env
 ExecStart=/usr/bin/node server.mjs
 Restart=on-failure

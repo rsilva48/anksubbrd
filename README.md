@@ -66,7 +66,7 @@ Los resultados separan `PG Rating`, puntuación, tipo (`TV`, `Movie`, `ONA`, `OV
 
 La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. Si ejecutas el bridge con historial (configuración predeterminada), la app sincroniza de manera privada esas entradas entre tus dispositivos; no inicia sesión ni transmite credenciales al sitio de origen.
 
-Cada token representa un usuario distinto en el bridge. Dos dispositivos con el mismo token comparten el historial; un dispositivo con otro token recibe un historial aislado. La app no envía un nombre de perfil que pueda cambiarse para consultar otra lista: el servidor deriva la identidad directamente del token y también impide que una sesión de vídeo de un usuario sea recuperada por otro.
+Cada token representa un usuario distinto en el bridge. Dos dispositivos con el mismo token comparten el historial; un dispositivo con otro token recibe un historial aislado. La app no envía un nombre de perfil que pueda cambiarse para consultar otra lista: el servidor deriva la identidad directamente del token y también impide que una sesión de vídeo de un usuario sea recuperada por otro. Los tokens de usuario se guardan en el Llavero de iOS y el bridge guarda únicamente sus huellas criptográficas.
 
 La primera reproducción de un servidor tarda sólo lo necesario para solicitar los metadatos públicos de la fuente. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
 
@@ -87,19 +87,18 @@ Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch
 Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y un token privado. No expongas el puerto `8787` al Internet público.
 
 1. En el servidor Linux, instala el proyecto en `/opt/airplay-subtitle-bridge` y ejecuta `npm install` dentro de `proxy`.
-2. Crea el usuario de servicio y el archivo privado de entorno. Genera un token por usuario: por ejemplo, usa el mismo token de `trabajo` en ambos iPhone y un token diferente para el iPad privado.
+2. Crea el usuario de servicio y el archivo privado de entorno. Sólo necesitas configurar una vez un **token administrador**: se usa desde la app para registrar identidades nuevas, no para reproducir ni para acceder al historial.
 
    ```sh
    sudo useradd --system --home /var/lib/airplay-subtitle-bridge --shell /usr/sbin/nologin airplaybridge
    sudo install -m 600 -o root -g airplaybridge /dev/null /etc/airplay-subtitle-bridge.env
-   openssl rand -hex 32 # token para trabajo
-   openssl rand -hex 32 # token para ipad-privado
+   openssl rand -hex 32 # token administrador
    ```
 
-   Edita `/etc/airplay-subtitle-bridge.env` y guarda los dos valores sin espacios adicionales:
+   Edita `/etc/airplay-subtitle-bridge.env` y guarda ese valor sin espacios adicionales:
 
    ```ini
-   BRIDGE_USER_TOKENS={"trabajo":"TOKEN_DE_TRABAJO","ipad-privado":"TOKEN_DEL_IPAD"}
+   BRIDGE_ADMIN_TOKEN=TOKEN_ADMINISTRADOR
    ```
 
 3. Copia [`deploy/airplay-subtitle-bridge.service.example`](deploy/airplay-subtitle-bridge.service.example) a `/etc/systemd/system/airplay-subtitle-bridge.service`, revísalo si la ruta de Node no es `/usr/bin/node`, y actívalo:
@@ -110,7 +109,7 @@ Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y
    ```
 
 4. Copia [`deploy/Caddyfile.example`](deploy/Caddyfile.example) a la configuración de Caddy, sustituye `bridge.example.com`, verifica que el DNS del dominio apunte al servidor y recarga Caddy. El servicio Node escucha sólo en `127.0.0.1`; Caddy publica HTTPS y conserva los encabezados necesarios para que las URL HLS apunten al dominio público.
-5. En cada iPhone/iPad configura `https://bridge.example.com` y pega su token en **Configuración → Acceso privado**. Pon `TOKEN_DE_TRABAJO` en los dos iPhone y `TOKEN_DEL_IPAD` sólo en el iPad. El token se agrega a las peticiones de la API; las URL temporales de vídeo lo propagan internamente para que el Apple TV pueda obtener el vídeo y los VTT del mismo usuario.
+5. En el primer iPhone abre **Configuración → Crear identidad privada**, introduce una vez el token administrador, genera el token y respáldalo antes de guardarlo. En el segundo iPhone usa **Usar un token existente** e importa el mismo token para compartir la lista. En el iPad crea otra identidad con el token administrador; su token nuevo tendrá un historial completamente aislado. El token administrador no queda guardado en la app.
 
 No actives registros de acceso detallados para este host de Caddy: las URL temporales de reproducción llevan un token de acceso. El bridge no registra ese valor ni las URL HLS completas.
 

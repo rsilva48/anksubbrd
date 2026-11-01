@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { createDecipheriv, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createDecipheriv, createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { load } from 'cheerio';
@@ -14,10 +14,14 @@ const sourceEncKey = 'i?LMTAx0Q6,:}50U';
 const sourceEncIv = "W0;27ToaUpl_P%'c";
 const playerUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0';
 const bridgeUsers = configuredBridgeUsers();
+const bridgeAdminToken = cleanText(process.env.BRIDGE_ADMIN_TOKEN);
 const historyStorePath = resolve(process.env.HISTORY_STORE_PATH ?? `${process.cwd()}/data/history.json`);
+const userStorePath = resolve(process.env.BRIDGE_USER_STORE_PATH ?? `${process.cwd()}/data/users.json`);
 const mediaUrlSigningKey = randomUUID();
 let historyUsers;
 let historyMutation = Promise.resolve();
+let persistedUsers;
+let userMutation = Promise.resolve();
 
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -62,10 +66,57 @@ function requestedAccessToken(request, requestUrl) {
   const bearer = authorization.match(/^Bearer\s+(.+)$/i)?.[1];
   return cleanText(request.headers['x-bridge-token'] ?? bearer ?? requestUrl.searchParams.get('access_token'));
 }
-function authenticatedUser(request, requestUrl) {
-  if (!bridgeUsers.length) return { userId: 'local', token: '' };
+function tokenHash(token, salt) { return createHash('sha256').update(`${salt}:${token}`).digest('hex'); }
+function requestedAdminToken(request) { return cleanText(request.headers['x-bridge-admin-token']); }
+function isAdministrator(request) { return Boolean(bridgeAdminToken) && sameSecret(requestedAdminToken(request), bridgeAdminToken); }
+async function loadPersistedUsers() {
+  if (persistedUsers) return persistedUsers;
+  persistedUsers = [];
+  try {
+    const parsed = JSON.parse(await readFile(userStorePath, 'utf8'));
+    const users = Array.isArray(parsed?.users) ? parsed.users : [];
+    persistedUsers = users.flatMap((user) => {
+      try {
+        const userId = normalizedUserId(user?.userId);
+        const salt = cleanText(user?.salt); const hash = cleanText(user?.tokenHash);
+        if (!/^[a-f0-9]{32}$/i.test(salt) || !/^[a-f0-9]{64}$/i.test(hash)) return [];
+        return [{ userId, salt, tokenHash: hash, label: historyText(user?.label, 'Private user', 80), createdAt: cleanText(user?.createdAt) }];
+      } catch { return []; }
+    });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') console.warn(`[bridge] User store could not be read: ${error.message}`);
+  }
+  return persistedUsers;
+}
+function validUserToken(value) { return /^[a-f0-9]{64}$/i.test(value); }
+async function registerUser(token, label) {
+  if (!validUserToken(token)) throw new Error('User token must be a 64-character hexadecimal value');
+  await loadPersistedUsers();
+  userMutation = userMutation.then(async () => {
+    const users = await loadPersistedUsers();
+    if (bridgeUsers.some((user) => sameSecret(token, user.token))) throw new Error('This token is reserved by bridge configuration');
+    const existing = users.find((user) => sameSecret(user.tokenHash, tokenHash(token, user.salt)));
+    if (existing) return existing;
+    if (users.length >= 1000) throw new Error('User limit reached');
+    const user = { userId: randomUUID(), salt: randomBytes(16).toString('hex'), tokenHash: '', label: historyText(label, 'Private user', 80), createdAt: new Date().toISOString() };
+    user.tokenHash = tokenHash(token, user.salt);
+    users.push(user);
+    await mkdir(dirname(userStorePath), { recursive: true });
+    const temporaryPath = `${userStorePath}.${process.pid}.${randomUUID()}.tmp`;
+    await writeFile(temporaryPath, JSON.stringify({ version: 1, users }), 'utf8');
+    await rename(temporaryPath, userStorePath);
+    return user;
+  });
+  return userMutation;
+}
+async function authenticatedUser(request, requestUrl) {
   const token = requestedAccessToken(request, requestUrl);
-  return bridgeUsers.find((user) => sameSecret(token, user.token)) ?? null;
+  const configuredUser = bridgeUsers.find((user) => sameSecret(token, user.token));
+  if (configuredUser) return configuredUser;
+  const users = await loadPersistedUsers();
+  const storedUser = users.find((user) => sameSecret(user.tokenHash, tokenHash(token, user.salt)));
+  if (storedUser) return { userId: storedUser.userId, token };
+  return !bridgeUsers.length && !users.length && !bridgeAdminToken ? { userId: 'local', token: '' } : null;
 }
 function forwardedValue(request, name) { return cleanText(request.headers[name]).split(',')[0].trim(); }
 function requestOrigin(request) {
@@ -472,9 +523,20 @@ const server = http.createServer(async (request, response) => {
     if (requestUrl.pathname === '/health' || requestUrl.pathname.startsWith('/api/')) {
       console.info(`[bridge] ${request.method} ${requestUrl.pathname}`);
     }
-    const user = authenticatedUser(request, requestUrl);
-    if (!user) return json(response, 401, { error: 'A valid bridge access token is required' });
     if (request.method === 'GET' && requestUrl.pathname === '/health') return json(response, 200, { ok: true });
+    if (request.method === 'POST' && requestUrl.pathname === '/api/admin/users') {
+      if (!bridgeAdminToken) return json(response, 503, { error: 'BRIDGE_ADMIN_TOKEN is not configured' });
+      if (!isAdministrator(request)) return json(response, 401, { error: 'A valid bridge administrator token is required' });
+      const body = JSON.parse(await readBody(request));
+      try {
+        const registered = await registerUser(cleanText(body.token), body.label);
+        return json(response, 201, { userId: registered.userId, createdAt: registered.createdAt });
+      } catch (error) {
+        return json(response, /already registered/.test(error.message) ? 409 : 400, { error: error.message });
+      }
+    }
+    const user = await authenticatedUser(request, requestUrl);
+    if (!user) return json(response, 401, { error: 'A valid bridge access token is required' });
     if (request.method === 'GET' && requestUrl.pathname === '/api/search') {
       const results = parseSearch((await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(requestUrl.searchParams.get('q') ?? '')}`)).html ?? '');
       console.info(`[bridge] Search returned ${results.length} result(s)`);

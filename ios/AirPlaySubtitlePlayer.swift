@@ -3,6 +3,7 @@ import AVFAudio
 import CoreMedia
 import CryptoKit
 import Foundation
+import Security
 import SwiftUI
 
 @main
@@ -39,9 +40,72 @@ private enum HistoryIdentity {
     }
 }
 
+private enum SecureTokenStore {
+    private static let service = "com.personal.airplaysubtitleplayer"
+    private static let account = "bridge-access-token"
+    private static let legacyDefaultsKey = "anksubbrd.bridge-access-token"
+
+    static func currentToken() -> String {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+           let data = result as? Data,
+           let token = String(data: data, encoding: .utf8), !token.isEmpty {
+            return token
+        }
+        let legacyToken = UserDefaults.standard.string(forKey: legacyDefaultsKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !legacyToken.isEmpty {
+            do {
+                try save(legacyToken)
+                UserDefaults.standard.removeObject(forKey: legacyDefaultsKey)
+                return legacyToken
+            } catch {
+                return ""
+            }
+        }
+        return ""
+    }
+
+    static func save(_ token: String) throws {
+        let data = Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+        guard !data.isEmpty else { throw BridgeRequestError(message: "El token no puede estar vacío.") }
+        let attributes: [String: Any] = [kSecValueData as String: data]
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess { return }
+        guard status == errSecItemNotFound else { throw BridgeRequestError(message: "No se pudo guardar el token en el Llavero.") }
+        var add = query
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else {
+            throw BridgeRequestError(message: "No se pudo guardar el token en el Llavero.")
+        }
+    }
+}
+
+private enum TokenGenerator {
+    static func make() throws -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw BridgeRequestError(message: "No se pudo generar un token seguro.")
+        }
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
 struct MainTabScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
-    @AppStorage("anksubbrd.bridge-access-token") private var bridgeAccessToken = ""
+    @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
     @EnvironmentObject private var history: WatchHistoryStore
     @State private var requestedLocalNetworkAccess = false
 
@@ -57,8 +121,8 @@ struct MainTabScreen: View {
                 .tabItem { Label("Configuración", systemImage: "gearshape") }
         }
         .tint(.indigo)
-        .task(id: "\(bridgeBaseURL)|\(bridgeAccessToken)") {
-            history.activate(token: bridgeAccessToken)
+        .task(id: "\(bridgeBaseURL)|\(bridgeTokenVersion)") {
+            history.activate(token: SecureTokenStore.currentToken())
             await requestLocalNetworkAccess()
             await history.sync(with: bridgeBaseURL, force: true)
         }
@@ -357,10 +421,16 @@ struct HistoryScreen: View {
 
 struct SettingsScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
-    @AppStorage("anksubbrd.bridge-access-token") private var bridgeAccessToken = ""
+    @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
     @AppStorage("anksubbrd.default-track-type") private var defaultTrackType = StreamKind.sub.rawValue
     @State private var testingBridge = false
     @State private var testResult: String?
+    @State private var tokenConfigured = !SecureTokenStore.currentToken().isEmpty
+    @State private var showProvisioning = false
+    @State private var showImport = false
+    @State private var showBackup = false
+    @State private var showChangeWarning = false
+    @State private var tokenError: String?
 
     var body: some View {
         NavigationStack {
@@ -392,15 +462,7 @@ struct SettingsScreen: View {
                     Text("La dirección se guarda en este iPhone o iPad. Puede ser tu IP LAN o una dirección HTTPS pública detrás de Caddy.")
                 }
 
-                Section {
-                    SecureField("Token del bridge", text: $bridgeAccessToken)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } header: {
-                    Text("Acceso privado")
-                } footer: {
-                    Text("El token identifica tu historial en el bridge. Usa el mismo token en dispositivos que deban compartir lista y otro token para una lista aislada. Déjalo vacío sólo en una red local de confianza.")
-                }
+                privateIdentitySection
 
                 Section {
                     Picker("Mostrar servidores por defecto", selection: $defaultTrackType) {
@@ -416,6 +478,53 @@ struct SettingsScreen: View {
             }
             .navigationTitle("Configuración")
         }
+        .onAppear { tokenConfigured = !SecureTokenStore.currentToken().isEmpty }
+        .confirmationDialog("¿Cambiar identidad privada?", isPresented: $showChangeWarning, titleVisibility: .visible) {
+            Button("Crear una identidad nueva", role: .destructive) { showProvisioning = true }
+            Button("Usar un token existente", role: .destructive) { showImport = true }
+        } message: {
+            Text("Cambiar el token cambia de usuario. Tu historial actual no se borra del servidor, pero dejará de ser visible en este dispositivo hasta que restaures el token anterior. Respalda el token antes de continuar.")
+        }
+        .sheet(isPresented: $showProvisioning) {
+            TokenProvisioningSheet(bridgeBaseURL: bridgeBaseURL) { token in
+                try install(token: token)
+            }
+        }
+        .sheet(isPresented: $showImport) {
+            TokenImportSheet { token in
+                try install(token: token)
+            }
+        }
+        .sheet(isPresented: $showBackup) {
+            TokenBackupSheet(token: SecureTokenStore.currentToken())
+        }
+    }
+
+    @ViewBuilder
+    private var privateIdentitySection: some View {
+        Section {
+            if tokenConfigured {
+                Label("Identidad privada configurada", systemImage: "lock.fill")
+                    .foregroundStyle(.green)
+                Button("Respaldar token…") { showBackup = true }
+                Button("Cambiar identidad…", role: .destructive) { showChangeWarning = true }
+            } else {
+                Button("Crear identidad privada…") { showProvisioning = true }
+                Button("Usar un token existente…") { showImport = true }
+            }
+            if let tokenError { ErrorNotice(message: tokenError) }
+        } header: {
+            Text("Identidad privada")
+        } footer: {
+            Text("El token vive en el Llavero de este dispositivo y determina qué historial puede leer. Comparte el mismo token sólo con los dispositivos que deban compartir lista.")
+        }
+    }
+
+    private func install(token: String) throws {
+        try SecureTokenStore.save(token)
+        tokenConfigured = true
+        tokenError = nil
+        bridgeTokenVersion += 1
     }
 
     private func testBridge() {
@@ -429,6 +538,160 @@ struct SettingsScreen: View {
             } catch {
                 testResult = error.localizedDescription
             }
+        }
+    }
+}
+
+struct TokenProvisioningSheet: View {
+    let bridgeBaseURL: String
+    let onSaved: (String) throws -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var administratorToken = ""
+    @State private var label = ""
+    @State private var generatedToken = ""
+    @State private var confirmedBackup = false
+    @State private var registering = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if generatedToken.isEmpty {
+                    Section("Aprovisionamiento") {
+                        SecureField("Token administrador del bridge", text: $administratorToken)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        TextField("Etiqueta opcional, por ejemplo iPad privado", text: $label)
+                    } footer: {
+                        Text("El token administrador se usa una sola vez para registrar esta identidad; no se guarda en el dispositivo.")
+                    }
+                    Section {
+                        Button("Generar token seguro") {
+                            do { generatedToken = try TokenGenerator.make() } catch { errorMessage = error.localizedDescription }
+                        }
+                        .disabled(administratorToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } footer: {
+                        Text("Este paso crea un secreto de 256 bits. No podrás recuperar el token si lo pierdes.")
+                    }
+                } else {
+                    Section("Respalda este token antes de continuar") {
+                        Text(generatedToken)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
+                        ShareLink(item: generatedToken) {
+                            Label("Copiar o compartir de forma segura", systemImage: "square.and.arrow.up")
+                        }
+                        Toggle("Ya guardé este token en un lugar seguro", isOn: $confirmedBackup)
+                    } footer: {
+                        Text("Será la única credencial para acceder a este historial. Puedes usarlo después en otro dispositivo para compartir la misma lista.")
+                    }
+                    Section {
+                        Button {
+                            registerAndSave()
+                        } label: {
+                            if registering {
+                                HStack { ProgressView(); Text("Registrando…") }
+                            } else {
+                                Label("Registrar y usar este token", systemImage: "lock.badge.checkmark")
+                            }
+                        }
+                        .disabled(!confirmedBackup || registering)
+                    }
+                }
+
+                if let errorMessage {
+                    Section { ErrorNotice(message: errorMessage) }
+                }
+            }
+            .navigationTitle("Nueva identidad")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() }.disabled(registering) } }
+        }
+    }
+
+    private func registerAndSave() {
+        Task { @MainActor in
+            registering = true
+            errorMessage = nil
+            defer { registering = false }
+            do {
+                let _: AdminUserResponse = try await BridgeClient.provisionUser(
+                    base: bridgeBaseURL,
+                    administratorToken: administratorToken,
+                    body: AdminUserRequest(token: generatedToken, label: label)
+                )
+                try onSaved(generatedToken)
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+struct TokenImportSheet: View {
+    let onSaved: (String) throws -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var token = ""
+    @State private var confirmedBackup = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Token existente") {
+                    SecureField("Token de 64 caracteres", text: $token)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Toggle("Entiendo que esto reemplaza la identidad actual", isOn: $confirmedBackup)
+                    Button("Guardar y cambiar identidad", role: .destructive) {
+                        let candidate = token.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard candidate.range(of: "^[A-Fa-f0-9]{64}$", options: .regularExpression) != nil else {
+                            errorMessage = "El token debe contener 64 caracteres hexadecimales."; return
+                        }
+                        do {
+                            try onSaved(candidate)
+                            dismiss()
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
+                    }
+                    .disabled(!confirmedBackup || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } footer: {
+                    Text("Importa el token de otro dispositivo sólo si quieres acceder exactamente al mismo historial.")
+                }
+                if let errorMessage { Section { ErrorNotice(message: errorMessage) } }
+            }
+            .navigationTitle("Importar token")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } } }
+        }
+    }
+}
+
+struct TokenBackupSheet: View {
+    let token: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var acknowledgedRisk = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Advertencia") {
+                    Text("Quien tenga este token puede acceder al historial asociado. No lo envíes por mensajes, correo ni capturas sin protección.")
+                    Toggle("Entiendo el riesgo", isOn: $acknowledgedRisk)
+                }
+                if acknowledgedRisk {
+                    Section("Token") {
+                        Text(token)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textSelection(.enabled)
+                        ShareLink(item: token) {
+                            Label("Copiar o compartir de forma segura", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Respaldar token")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cerrar") { dismiss() } } }
         }
     }
 }
@@ -1126,6 +1389,18 @@ private enum BridgeClient {
         return try await self.request(request)
     }
 
+    static func provisionUser<T: Decodable, Body: Encodable>(base: String, administratorToken: String, body: Body) async throws -> T {
+        let components = try components(base: base, path: "/api/admin/users")
+        guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(administratorToken.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "X-Bridge-Admin-Token")
+        request.httpBody = try JSONEncoder().encode(body)
+        return try await self.request(request)
+    }
+
     private static func components(base: String, path: String) throws -> URLComponents {
         let trimmedBase = base.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmedBase),
@@ -1138,7 +1413,7 @@ private enum BridgeClient {
     }
 
     private static func authorize(_ request: inout URLRequest) {
-        let token = UserDefaults.standard.string(forKey: "anksubbrd.bridge-access-token")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let token = SecureTokenStore.currentToken()
         if !token.isEmpty {
             request.setValue(token, forHTTPHeaderField: "X-Bridge-Token")
         }
@@ -1205,6 +1480,8 @@ struct PlaybackSession: Identifiable { let playback: Playback; let historyEntry:
 struct QueuedAutoPlay { let episode: Episode; let seriesKey: String; let serverName: String; let serverKind: String? }
 struct HistoryResponse: Decodable { let entries: [WatchHistoryEntry] }
 struct HistoryPayload: Encodable { let entries: [WatchHistoryEntry] }
+struct AdminUserRequest: Encodable { let token: String; let label: String }
+struct AdminUserResponse: Decodable { let userId: String; let createdAt: String }
 
 struct WatchHistoryEntry: Codable, Hashable, Identifiable {
     let seriesTitle: String
@@ -1230,7 +1507,7 @@ private final class WatchHistoryStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        activeIdentity = HistoryIdentity.storageID(for: defaults.string(forKey: "anksubbrd.bridge-access-token") ?? "")
+        activeIdentity = HistoryIdentity.storageID(for: SecureTokenStore.currentToken())
         entries = []
         entries = loadEntries(for: activeIdentity)
     }
