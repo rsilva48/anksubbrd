@@ -863,6 +863,7 @@ private enum BridgeClient {
         guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = path == "/api/play" ? 90 : 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
         return try await self.request(request)

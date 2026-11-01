@@ -27,8 +27,20 @@ function requireProviderUrl(value) {
   return url;
 }
 function providerUrl(path) { return new URL(path, providerOrigin).toString(); }
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000, label = 'Request') {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`${label} timed out after ${Math.ceil(timeoutMs / 1000)} seconds`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 async function providerJson(path) {
-  const response = await fetch(providerUrl(path), { headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+  const response = await fetchWithTimeout(providerUrl(path), { headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } }, 15000, 'Provider request');
   if (!response.ok) throw new Error(`Provider HTTP ${response.status}`);
   const payload = await response.json();
   if (Number(payload.status) !== 200) throw new Error(payload.message || 'Provider did not return a successful result');
@@ -87,7 +99,7 @@ function parseServers(html) {
   return servers;
 }
 async function getSeries(watchUrl) {
-  const url = requireProviderUrl(watchUrl); const page = await fetch(url, { headers: { Accept: 'text/html' } });
+  const url = requireProviderUrl(watchUrl); const page = await fetchWithTimeout(url, { headers: { Accept: 'text/html' } }, 15000, 'Provider page request');
   if (!page.ok) throw new Error(`Provider page HTTP ${page.status}`);
   const series = parseSeriesPage(await page.text(), url.toString());
   const episodeMarkup = await providerJson(`/ajax/episode/list/${series.animeId}`); const episodes = parseEpisodes(episodeMarkup);
@@ -111,7 +123,13 @@ async function getServers(seriesKey, episodeNumber) {
   series.lastServers = { episodeNumber: episode.number, servers };
   return { episode: episode.number, servers: servers.map(({ index, name, type }) => ({ index, name, type })) };
 }
-async function getBrowser() { browserPromise ??= chromium.launch({ headless: true }); return browserPromise; }
+async function getBrowser() {
+  if (!browserPromise) {
+    console.info('[bridge] Launching Chromium for player discovery');
+    browserPromise = chromium.launch({ headless: true }).catch((error) => { browserPromise = undefined; throw error; });
+  }
+  return browserPromise;
+}
 function classifyUrl(value, found) {
   try {
     const url = new URL(value); const path = url.pathname.toLowerCase();
@@ -127,7 +145,7 @@ function collectMediaUrls(value, found) {
 }
 async function resolveEmbed(embedUrl) {
   const browser = await getBrowser(); const page = await browser.newPage({ extraHTTPHeaders: { Referer: `${providerOrigin}/` } });
-  const found = { hls: new Set(), loadedHls: new Set(), vtt: new Set(), requestHeaders: {} }; const pending = [];
+  const found = { hls: new Set(), loadedHls: new Set(), masterHls: new Set(), vtt: new Set(), requestHeaders: {} }; const pending = [];
   page.on('request', (request) => {
     const url = request.url().toLowerCase();
     if (!url.includes('.m3u8') && !url.includes('.vtt')) return;
@@ -138,32 +156,51 @@ async function resolveEmbed(embedUrl) {
   });
   page.on('response', (response) => {
     classifyUrl(response.url(), found); const type = response.headers()['content-type'] ?? '';
-    if (response.ok() && new URL(response.url()).pathname.toLowerCase().endsWith('.m3u8')) found.loadedHls.add(response.url());
+    if (response.ok() && new URL(response.url()).pathname.toLowerCase().endsWith('.m3u8')) {
+      found.loadedHls.add(response.url());
+      pending.push(response.text().then((body) => {
+        if (body.includes('#EXT-X-STREAM-INF')) found.masterHls.add(response.url());
+      }).catch(() => {}));
+    }
     if (type.includes('json') || /getSources/i.test(response.url())) pending.push(response.json().then((body) => collectMediaUrls(body, found)).catch(() => {}));
   });
   try {
-    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    await page.waitForSelector('video', { timeout: 15000 });
+    console.info('[bridge] Opening selected player');
+    await page.goto(embedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    console.info('[bridge] Player page opened; waiting for its video element');
+    await page.waitForSelector('video', { timeout: 12000 });
     await page.locator('video').evaluate(async (video) => {
       video.muted = true;
       try { await video.play(); } catch { /* Source discovery can still continue without autoplay. */ }
     });
-    await page.waitForTimeout(8000);
+    console.info('[bridge] Video element found; discovering HLS and subtitle tracks');
+    await page.waitForTimeout(5000);
     const domUrls = await page.evaluate(() => ({
       video: [...document.querySelectorAll('video')].map((node) => node.currentSrc || node.getAttribute('src') || ''),
       tracks: [...document.querySelectorAll('track')].map((node) => node.getAttribute('src') || ''),
       resources: performance.getEntriesByType('resource').map((entry) => entry.name),
     }));
-    collectMediaUrls(domUrls, found); await Promise.allSettled(pending);
+    collectMediaUrls(domUrls, found);
+    await Promise.race([Promise.allSettled(pending), page.waitForTimeout(2000)]);
     await page.locator('video').evaluate((video) => video.pause());
   } catch (error) {
     await page.close(); throw error;
   }
-  let hlsUrl;
-  for (const candidate of [...found.loadedHls, ...found.hls]) {
+  console.info(`[bridge] Player discovery found ${found.hls.size} HLS candidate(s), ${found.loadedHls.size} loaded, ${found.vtt.size} subtitle track(s)`);
+  let hlsUrl = [...found.masterHls, ...found.loadedHls][0];
+  for (const candidate of found.hls) {
+    if (hlsUrl) break;
     const valid = await page.evaluate(async (url) => {
-      const response = await fetch(url); if (!response.ok) return false;
-      return (await response.text()).includes('#EXTM3U');
+      const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 5000);
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) return false;
+        return (await response.text()).includes('#EXTM3U');
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(timeout);
+      }
     }, candidate).catch(() => false);
     if (valid) { hlsUrl = candidate; break; }
   }
@@ -176,6 +213,7 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, requestHost
   const server = series.lastServers.servers.find((candidate) => candidate.index === Number(serverIndex)); if (!server) throw new Error('Server was not found');
   console.info(`[bridge] Resolving episode ${episodeNumber}, ${server.type.toUpperCase()} server ${server.name}`);
   const reply = await providerJson(`/ajax/server?get=${encodeURIComponent(server.linkId)}`); if (!reply?.url) throw new Error('Player URL was not returned');
+  console.info('[bridge] Player URL returned; starting discovery');
   const media = await resolveEmbed(reply.url); const id = randomUUID(); sources.set(id, media);
   const expiry = setTimeout(() => { const source = sources.get(id); sources.delete(id); source?.mediaPage?.close().catch(() => {}); }, 2 * 60 * 60 * 1000);
   expiry.unref();
