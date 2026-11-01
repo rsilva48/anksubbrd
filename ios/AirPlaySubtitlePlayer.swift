@@ -181,24 +181,13 @@ private enum TokenGenerator {
     }
 }
 
-private enum AppDestination: String, CaseIterable, Hashable, Identifiable {
-    case search
-    case history
-    case settings
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .search: return "Buscar"
-        case .history: return "Continuar viendo"
-        case .settings: return "Configuración"
-        }
-    }
-    var symbol: String {
-        switch self {
-        case .search: return "magnifyingglass"
-        case .history: return "play.circle"
-        case .settings: return "gearshape"
+private struct NativeSidebarAdaptableTabStyle: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.tabViewStyle(.sidebarAdaptable)
+        } else {
+            content
         }
     }
 }
@@ -207,87 +196,25 @@ struct MainTabScreen: View {
     @AppStorage("anksubbrd.bridge-base-url") private var bridgeBaseURL = "http://192.168.1.20:8787"
     @AppStorage("anksubbrd.bridge-token-version") private var bridgeTokenVersion = 0
     @EnvironmentObject private var history: WatchHistoryStore
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var requestedLocalNetworkAccess = false
-    @State private var selectedDestination: AppDestination = .search
-    @State private var columnVisibility: NavigationSplitViewVisibility = .detailOnly
 
     var body: some View {
-        Group {
-            if horizontalSizeClass == .regular {
-                tabletNavigation
-            } else {
-                phoneTabs
-            }
+        TabView {
+            SearchScreen(bridgeBaseURL: bridgeBaseURL)
+                .tabItem { Label("Buscar", systemImage: "magnifyingglass") }
+
+            HistoryScreen(bridgeBaseURL: bridgeBaseURL)
+                .tabItem { Label("Continuar viendo", systemImage: "play.circle") }
+
+            SettingsScreen()
+                .tabItem { Label("Configuración", systemImage: "gearshape") }
         }
+        .modifier(NativeSidebarAdaptableTabStyle())
         .tint(.indigo)
         .task(id: "\(bridgeBaseURL)|\(bridgeTokenVersion)") {
             history.activate(token: SecureTokenStore.currentToken(for: bridgeBaseURL), bridgeBaseURL: bridgeBaseURL)
             await requestLocalNetworkAccess()
             await history.sync(with: bridgeBaseURL, force: true)
-        }
-    }
-
-    private var phoneTabs: some View {
-        TabView(selection: $selectedDestination) {
-            destination(.search)
-                .tabItem { Label(AppDestination.search.title, systemImage: AppDestination.search.symbol) }
-                .tag(AppDestination.search)
-
-            destination(.history)
-                .tabItem { Label(AppDestination.history.title, systemImage: AppDestination.history.symbol) }
-                .tag(AppDestination.history)
-
-            destination(.settings)
-                .tabItem { Label(AppDestination.settings.title, systemImage: AppDestination.settings.symbol) }
-                .tag(AppDestination.settings)
-        }
-    }
-
-    private var tabletNavigation: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            List {
-                ForEach(AppDestination.allCases) { destination in
-                    Button {
-                        selectedDestination = destination
-                        columnVisibility = .detailOnly
-                    } label: {
-                        HStack {
-                            Label(destination.title, systemImage: destination.symbol)
-                            Spacer()
-                            if selectedDestination == destination {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.tint)
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("AirPlay Subtitles")
-        } detail: {
-            destination(selectedDestination)
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                } label: {
-                    Label("Mostrar u ocultar barra lateral", systemImage: "sidebar.left")
-                }
-                .accessibilityLabel("Mostrar u ocultar barra lateral")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func destination(_ destination: AppDestination) -> some View {
-        switch destination {
-        case .search:
-            SearchScreen(bridgeBaseURL: bridgeBaseURL)
-        case .history:
-            HistoryScreen(bridgeBaseURL: bridgeBaseURL)
-        case .settings:
-            SettingsScreen()
         }
     }
 
