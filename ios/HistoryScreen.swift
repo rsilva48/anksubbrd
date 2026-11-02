@@ -9,6 +9,10 @@ struct HistoryScreen: View {
         }
         .task(id: profile.scope) {
             await profile.sync(force: true)
+            // Posters of the series in Continue stay available offline.
+            for entry in profile.entries {
+                await PosterCache.prefetch(entry.imageUrl)
+            }
         }
     }
 }

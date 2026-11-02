@@ -13,6 +13,10 @@ struct AirPlaySubtitlePlayerApp: App {
 
     init() {
         AudioSession.configure()
+        Task.detached(priority: .background) {
+            PosterCache.prune()
+            SeriesCache.prune()
+        }
     }
 
     var body: some Scene {
@@ -94,7 +98,10 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             // Reschedules with the latest schedule and history on every return.
             if phase == .active {
-                Task { await notifier.refresh(profile: profile) }
+                Task {
+                    await profile.sync(force: true)
+                    await notifier.refresh(profile: profile)
+                }
             }
         }
         .sheet(item: $notifier.openedSeries) { anime in

@@ -36,11 +36,34 @@ struct DownloadRecord: Codable, Identifiable {
     /// saved by 0.2.7 do not have it).
     var triedServers: [String]? = nil
 
+    /// The package on disk. A system process writes it into the app's real
+    /// container, while LiveContainer (and an app update) can change the home
+    /// directory the app sees, so it is also looked up by its `Library/…`
+    /// part under every root that may be the container.
     var fileURL: URL? {
         guard let storedPath else { return nil }
-        return storedPath.hasPrefix("/")
-            ? URL(fileURLWithPath: storedPath)
-            : URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(storedPath)
+        let candidates = Self.packageCandidates(for: storedPath)
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) } ?? candidates.first
+    }
+
+    static func packageCandidates(for storedPath: String) -> [URL] {
+        let home = NSHomeDirectory()
+        var urls = [storedPath.hasPrefix("/") ? URL(fileURLWithPath: storedPath) : URL(fileURLWithPath: home).appendingPathComponent(storedPath)]
+        guard let library = storedPath.range(of: "Library/") else { return urls }
+        let suffix = String(storedPath[library.lowerBound...])
+        var roots = [home]
+        // LiveContainer keeps guest apps and their data inside its own
+        // Documents folder; the container root is what precedes it.
+        for path in [Bundle.main.bundlePath, home] {
+            if let documents = path.range(of: "/Documents/") {
+                roots.append(String(path[..<documents.lowerBound]))
+            }
+        }
+        for root in roots {
+            let url = URL(fileURLWithPath: root).appendingPathComponent(suffix)
+            if !urls.contains(url) { urls.append(url) }
+        }
+        return urls
     }
 
     var episodeLabel: String {
@@ -206,6 +229,7 @@ final class DownloadStore {
             triedServers: triedServers
         ))
         persist()
+        Task { await PosterCache.prefetch(entry.imageUrl) }
         do {
             guard let url = URL(string: playbackSession.playback.playbackUrl), let session else {
                 throw BridgeRequestError(message: "La URL de reproducción no es válida.")
@@ -246,6 +270,66 @@ final class DownloadStore {
         }
         records.removeAll { $0.id == record.id }
         persist()
+    }
+
+    /// Saves the posters of the downloads (older ones did not keep them).
+    func prefetchPosters() async {
+        for record in records {
+            await PosterCache.prefetch(record.imageUrl)
+        }
+    }
+
+    /// Why a completed download cannot be played, if it cannot. The paths
+    /// help diagnose a package that moved.
+    func playbackProblem(for record: DownloadRecord) -> String? {
+        guard let url = record.fileURL, FileManager.default.fileExists(atPath: url.path) else {
+            return "No se encontró el archivo de esta descarga. Bórrala y descárgala de nuevo. (Guardado en: \(record.storedPath ?? "sin ruta"); inicio: \(NSHomeDirectory()))"
+        }
+        return nil
+    }
+
+    /// Downloads marked as failed whose package is on disk and complete (for
+    /// instance when it was not found where it was recorded) become playable.
+    func revalidate() {
+        for record in records where record.state == .failed && tasks[record.id] == nil {
+            guard let url = record.fileURL, FileManager.default.fileExists(atPath: url.path),
+                  AVURLAsset(url: url).assetCache?.isPlayableOffline == true else { continue }
+            let size = Self.size(of: url)
+            update(record.id) {
+                $0.state = .completed
+                $0.progress = 1
+                $0.bytes = size
+                $0.errorMessage = nil
+            }
+        }
+    }
+
+    /// Every downloaded episode of a series (both kinds), for the series
+    /// screen when the bridge cannot be reached and nothing was cached.
+    func offlineSeries(watchUrl: String) -> Series? {
+        let path = catalogPath(of: watchUrl)
+        let stored = records.filter { catalogPath(of: $0.watchUrl) == path && $0.state == .completed }
+        guard let first = stored.first else { return nil }
+        let episodes = Dictionary(grouping: stored, by: \.episode)
+            .map { number, copies in
+                Episode(number: number, title: copies[0].episodeTitle, sub: copies.contains { $0.kind == .sub }, dub: copies.contains { $0.kind == .dub })
+            }
+            .sorted { $0.number < $1.number }
+        return Series(
+            seriesKey: "",
+            title: first.seriesTitle,
+            titleJp: first.titleJp,
+            episodes: episodes,
+            seasons: [],
+            synopsis: nil,
+            rating: nil,
+            adult: nil,
+            status: nil,
+            mediaType: nil,
+            score: nil,
+            totalEpisodes: first.totalEpisodes,
+            imageUrl: first.imageUrl
+        )
     }
 
     func removeAll() {
@@ -311,13 +395,11 @@ final class DownloadStore {
         records[index].progress = min(max(value, 0), 1)
     }
 
+    /// Recorded as reported (absolute); `fileURL` finds it again if the
+    /// container root moves.
     fileprivate func packageLocation(_ location: URL, id: String?) {
         guard let id else { return }
-        let home = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath().path
-        let path = location.resolvingSymlinksInPath().path
-        update(id) {
-            $0.storedPath = path.hasPrefix(home + "/") ? String(path.dropFirst(home.count + 1)) : path
-        }
+        update(id) { $0.storedPath = location.path }
     }
 
     fileprivate func taskFinished(id: String?, error: Error?) {
@@ -334,6 +416,8 @@ final class DownloadStore {
             }
             Task { await retryWithAnotherServer(id) }
         } else if let url = record.fileURL, FileManager.default.fileExists(atPath: url.path) {
+            // Stores where the package was actually found.
+            if url.path != record.storedPath { update(id) { $0.storedPath = url.path } }
             let size = Self.size(of: url)
             update(id) {
                 $0.state = .completed
@@ -344,7 +428,7 @@ final class DownloadStore {
         } else {
             update(id) {
                 $0.state = .failed
-                $0.errorMessage = "La descarga terminó sin archivo."
+                $0.errorMessage = "La descarga terminó, pero no se encontró el archivo (\(record.storedPath ?? "sin ruta"))."
             }
             Task { await retryWithAnotherServer(id) }
         }
@@ -471,7 +555,11 @@ struct DownloadsScreen: View {
                     }
                 }
             }
-            .task { downloads.cleanUpWatched(profile: profile) }
+            .task {
+                downloads.revalidate()
+                downloads.cleanUpWatched(profile: profile)
+                await downloads.prefetchPosters()
+            }
             .fullScreenCover(item: $activePlayer, onDismiss: { downloads.cleanUpWatched(profile: profile) }) { model in
                 PlayerScreen(model: model)
             }
@@ -505,7 +593,9 @@ struct DownloadsScreen: View {
     }
 
     private func play(_ record: DownloadRecord) {
-        guard activePlayer == nil,
+        guard activePlayer == nil else { return }
+        errorMessage = downloads.playbackProblem(for: record)
+        guard errorMessage == nil,
               let session = downloads.localSession(for: record, position: profile.position(for: record.watchUrl, episode: record.episode)) else { return }
         let resolver = PlaybackResolver(series: downloads.offlineSeries(for: record), anime: record.anime, profile: profile)
         activePlayer = PlayerModel(session: session, resolver: resolver, profile: profile)

@@ -113,6 +113,8 @@ struct EpisodesScreen: View {
     @State private var downloadRequest: DownloadRequest?
     /// Episodes of the last batch that used another server or were skipped.
     @State private var downloadNotice: String?
+    /// The bridge could not be reached: saved series data and downloads only.
+    @State private var isOffline = false
     @State private var pendingServer: (episode: Episode, server: Server)?
     @State private var activePlayer: PlayerModel?
     @State private var busyMessage: String?
@@ -148,6 +150,14 @@ struct EpisodesScreen: View {
                     Label(downloadNotice, systemImage: "info.circle")
                         .font(.footnote)
                     Button("Entendido") { self.downloadNotice = nil }
+                        .font(.footnote)
+                }
+            }
+            if isOffline {
+                Section {
+                    Label("Sin conexión con el bridge. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados.", systemImage: "wifi.slash")
+                        .font(.footnote)
+                    Button("Reintentar") { Task { await loadSeries() } }
                         .font(.footnote)
                 }
             }
@@ -199,7 +209,7 @@ struct EpisodesScreen: View {
             PlayerScreen(model: model)
         }
         .toolbar {
-            if let series {
+            if let series, !isOffline {
                 ToolbarItem(placement: .topBarTrailing) {
                     downloadMenu(series)
                 }
@@ -332,6 +342,7 @@ struct EpisodesScreen: View {
             ForEach(series.episodes) { episode in
                 // Two independent controls in the row: non-default button
                 // styles keep a tap on one from triggering the other.
+                let playable = !isOffline || downloads.record(watchUrl: current.watchUrl, episode: episode.number)?.state == .completed
                 HStack(spacing: 10) {
                     Button {
                         open(episode)
@@ -345,6 +356,9 @@ struct EpisodesScreen: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    // Offline, only downloaded episodes can play.
+                    .disabled(!playable)
+                    .opacity(playable ? 1 : 0.45)
                     downloadControl(for: episode, kind: kind)
                 }
                 .contextMenu {
@@ -392,14 +406,24 @@ struct EpisodesScreen: View {
         do {
             let loaded: Series = try await BridgeClient.post(base: profile.bridgeURL, path: "/api/series", body: WatchRequest(watchUrl: watchUrl))
             guard watchUrl == current.watchUrl else { return }
+            isOffline = false
             series = loaded
             seasons = loaded.seasons
             resolver = PlaybackResolver(series: loaded, anime: current, profile: profile)
+            SeriesCache.store(loaded, for: watchUrl)
         } catch is CancellationError {
             return
         } catch {
             guard watchUrl == current.watchUrl else { return }
-            errorMessage = error.localizedDescription
+            // Offline: the last saved copy of the series, or its downloads.
+            if let saved = SeriesCache.load(watchUrl) ?? downloads.offlineSeries(watchUrl: watchUrl) {
+                isOffline = true
+                series = saved
+                seasons = saved.seasons
+                resolver = PlaybackResolver(series: saved, anime: current, profile: profile)
+            } else {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 

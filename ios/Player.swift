@@ -295,7 +295,13 @@ final class PlayerModel: Identifiable {
         }
         profile.open(session.historyEntry)
         let resumeAt = profile.position(for: session.historyEntry.watchUrl, episode: session.historyEntry.episode)
-        let item = AVPlayerItem(url: url)
+        let asset = AVURLAsset(url: url)
+        // A download plays from its package; an incomplete one would need the
+        // bridge source it came from, which has expired by now.
+        if session.downloadID != nil, let cache = asset.assetCache, !cache.isPlayableOffline {
+            errorMessage = "Esta descarga no se completó y no puede verse sin conexión. Bórrala y descárgala de nuevo."
+        }
+        let item = AVPlayerItem(asset: asset)
         player.replaceCurrentItem(with: item)
         if resumeAt > 3 {
             currentTime = resumeAt
@@ -309,7 +315,9 @@ final class PlayerModel: Identifiable {
             guard !Task.isCancelled, let self, !self.closed, self.player.currentItem === item,
                   item.status != .readyToPlay, self.errorMessage == nil else { return }
             self.failureReported = true
-            self.fail("El servidor no respondió a tiempo. Reintenta o elige otro servidor.")
+            self.fail(self.session.downloadID == nil
+                ? "El servidor no respondió a tiempo. Reintenta o elige otro servidor."
+                : "No se pudo abrir la descarga. Bórrala y descárgala de nuevo.")
         }
         updateNowPlaying()
         player.defaultRate = speed.rawValue
@@ -425,6 +433,11 @@ final class PlayerModel: Identifiable {
         audibleGroup = audible
         legibleOptions = legible.map { AVMediaSelectionGroup.mediaSelectionOptions(from: $0.options, withoutMediaCharacteristics: [.containsOnlyForcedSubtitles]) } ?? []
         audibleOptions = audible?.options ?? []
+        // Offline, only the subtitles stored in the download can play.
+        if session.downloadID != nil, let legible, let cache = (item.asset as? AVURLAsset)?.assetCache {
+            let stored = Set(cache.mediaSelectionOptions(in: legible))
+            legibleOptions = legibleOptions.filter { stored.contains($0) }
+        }
         applySubtitleChoice(to: item)
         refreshSelection()
         hasLoadedMediaOptions = true

@@ -53,7 +53,10 @@ Cada episodio de la ficha tiene su botón de descarga (también al mantenerlo pu
 - Si una descarga falla a mitad de camino, se reinicia sola con el siguiente servidor del mismo tipo que aún no se probó, hasta agotarlos.
 - La pestaña **Descargas** funciona sin red y sin bridge configurado. Al reproducir desde ahí, el siguiente episodio es la siguiente descarga de la misma serie y tipo.
 - En la ficha de la serie, un episodio descargado se reproduce desde el dispositivo. **Elegir servidor en línea** fuerza el streaming.
-- El progreso se guarda en **Continuar viendo** y se sincroniza al volver a tener conexión.
+- Las portadas se guardan en el dispositivo (las de **Continuar viendo**, las de las descargas y las que ves en el catálogo), así que se muestran en modo avión. Las que no se usan en 60 días se borran solas.
+- La ficha de cada serie que abres se guarda (sinopsis, episodios y temporadas). Sin conexión, al abrir una serie desde **Continuar viendo** se muestra esa copia y sólo se pueden reproducir los episodios descargados; si nunca se guardó, se listan sólo los descargados.
+- Al abrir **Descargas**, una descarga que terminó mientras la app estaba cerrada (y quedó marcada como interrumpida) se recupera si el paquete está completo. Si el archivo de una descarga no aparece o quedó incompleto, la app lo indica, con la ruta, en lugar de no hacer nada.
+- El progreso visto sin conexión se guarda en el dispositivo (también si cierras la app) y se envía al bridge en cuanto vuelve la conexión, o al abrir la app con red.
 - Con **Configuración → Este dispositivo → Borrar descargas ya vistas** (activado por defecto), una descarga se elimina al terminar ese episodio o al avanzar a uno posterior, también si lo ves desde otro dispositivo con la misma identidad. La limpieza ocurre al cerrar el reproductor y al abrir la app o la pestaña.
 - El bridge debe responder mientras se descarga: cada episodio se resuelve en línea y el bridge conserva la fuente durante dos horas. Una descarga fallida se reintenta deslizando a la derecha en **Descargas**.
 - El CDN limita las peticiones por IP. El bridge las envía a un ritmo fijo (`UPSTREAM_RATE`) y, si aun así recibe un 429, pausa todo el tráfico durante el `Retry-After` antes de reintentar. Un episodio tarda alrededor de un minuto en descargarse; varios a la vez se reparten ese ritmo.

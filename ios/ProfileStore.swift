@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 
 /// Everything that belongs to the active identity: the tested bridge URL, the
@@ -32,6 +33,8 @@ final class ProfileStore {
     @ObservationIgnored private var deletions: [HistoryDeletion] = []
     @ObservationIgnored private var lastSync = Date.distantPast
     @ObservationIgnored private var syncing = false
+    @ObservationIgnored private let pathMonitor = NWPathMonitor()
+    @ObservationIgnored private var isOnline = true
     private let defaults: UserDefaults
 
     var isBridgeConfigured: Bool { !bridgeURL.isEmpty }
@@ -43,6 +46,29 @@ final class ProfileStore {
         self.defaults = defaults
         bridgeURL = defaults.string(forKey: Keys.activeBridge).flatMap(BridgeEndpoint.canonicalURL) ?? ""
         reloadIdentity()
+        monitorConnectivity()
+    }
+
+    /// History and preferences are always saved on the device first; progress
+    /// made offline (in this launch or an earlier one) reaches the bridge as
+    /// soon as the connection returns.
+    private func monitorConnectivity() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let online = path.status == .satisfied
+            let store = self
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { store?.connectivityChanged(online: online) }
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "anksubbrd.connectivity"))
+    }
+
+    private func connectivityChanged(online: Bool) {
+        let reconnected = online && !isOnline
+        isOnline = online
+        if reconnected {
+            Task { await sync(force: true) }
+        }
     }
 
     func useBridge(_ url: String) {

@@ -103,7 +103,8 @@ struct Anime: Codable, Hashable, Identifiable {
     }
 }
 
-struct Series: Decodable {
+/// Codable so the series screen can be cached for offline use.
+struct Series: Codable {
     let seriesKey: String
     let title: String
     let titleJp: String?
@@ -147,7 +148,7 @@ struct Series: Decodable {
     }
 }
 
-struct Season: Decodable, Identifiable, Hashable {
+struct Season: Codable, Identifiable, Hashable {
     let title: String
     let titleJp: String?
     let watchUrl: String
@@ -182,7 +183,7 @@ struct Season: Decodable, Identifiable, Hashable {
     }
 }
 
-struct Episode: Decodable, Identifiable, Hashable {
+struct Episode: Codable, Identifiable, Hashable {
     let number: Int
     let title: String
     /// Whether the catalog has Sub/Dub sources; nil on older bridges.
