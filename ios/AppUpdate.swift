@@ -6,6 +6,7 @@ struct GitHubRelease: Decodable, Identifiable {
     struct Asset: Decodable {
         let name: String
         let state: String
+        let browserDownloadUrl: URL?
     }
 
     let tagName: String
@@ -26,6 +27,11 @@ struct AvailableUpdate: Identifiable {
     let releases: [GitHubRelease]
     var latest: GitHubRelease { releases[0] }
     var id: String { latest.tagName }
+
+    /// OTA manifest published next to the IPA (releases from 0.2.4 on).
+    var manifestURL: URL? {
+        latest.assets.first { $0.name == "manifest.plist" && $0.state == "uploaded" }?.browserDownloadUrl
+    }
 }
 
 /// Checks GitHub Releases for a newer IPA. Bridge-only releases have no IPA
@@ -43,13 +49,26 @@ final class AppUpdateCenter {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
-    /// `livecontainer://install?url=…` asks LiveContainer to download and install the IPA.
-    static var liveContainerInstallURL: URL? {
-        var components = URLComponents()
-        components.scheme = "livecontainer"
-        components.host = "install"
-        components.queryItems = [URLQueryItem(name: "url", value: latestIPA.absoluteString)]
-        return components.url
+    /// LiveContainer refuses `livecontainer://install` while one of its apps is
+    /// running ("restart LiveContainer to install apps"), which is always the
+    /// case when this app asks. `open-web-page` instead offers to go back to
+    /// LiveContainer, relaunches it and opens the page there; an
+    /// `itms-services` manifest page is then installed by LiveContainer itself.
+    /// Without a manifest (older releases) the direct install link is used.
+    static func liveContainerInstallURL(manifest: URL?) -> URL? {
+        guard let manifest else {
+            var components = URLComponents()
+            components.scheme = "livecontainer"
+            components.host = "install"
+            components.queryItems = [URLQueryItem(name: "url", value: latestIPA.absoluteString)]
+            return components.url
+        }
+        let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        guard let encodedManifest = manifest.absoluteString.addingPercentEncoding(withAllowedCharacters: unreserved) else { return nil }
+        let itms = "itms-services://?action=download-manifest&url=\(encodedManifest)"
+        // LiveContainer reads the page URL as Base64 from the `url` query item.
+        guard let payload = Data(itms.utf8).base64EncodedString().addingPercentEncoding(withAllowedCharacters: unreserved) else { return nil }
+        return URL(string: "livecontainer://open-web-page?url=\(payload)")
     }
 
     /// Nonisolated because `GitHubRelease` (a plain struct) uses it synchronously.
@@ -173,6 +192,12 @@ struct UpdateSheet: View {
                 }
                 .buttonStyle(.glassProminent)
                 .controlSize(.large)
+                if update.manifestURL != nil {
+                    Text("LiveContainer te pedirá volver a su pantalla principal; acepta y elige reemplazar la app existente para conservar tus datos.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
                 Button {
                     openURL(update.latest.htmlUrl)
                 } label: {
@@ -194,7 +219,7 @@ struct UpdateSheet: View {
     }
 
     private func installWithLiveContainer() {
-        guard let url = AppUpdateCenter.liveContainerInstallURL else { return }
+        guard let url = AppUpdateCenter.liveContainerInstallURL(manifest: update.manifestURL) else { return }
         openURL(url) { accepted in
             if accepted {
                 dismiss()
@@ -206,7 +231,8 @@ struct UpdateSheet: View {
 }
 
 /// Renders the release notes produced by the workflow: `##`/`###` headings,
-/// `-` bullets and inline Markdown such as `code`.
+/// `-` bullets and inline Markdown such as `code`. The "Instalar" section is
+/// for the GitHub page; the sheet has its own install button.
 private struct ReleaseNotesView: View {
     private struct Line: Identifiable {
         enum Kind { case heading, bullet, text }
@@ -218,17 +244,24 @@ private struct ReleaseNotesView: View {
     let markdown: String
 
     private var lines: [Line] {
-        markdown.split(whereSeparator: \.isNewline).enumerated().compactMap { index, raw in
+        var result: [Line] = []
+        var skippingInstallSection = false
+        for (index, raw) in markdown.split(whereSeparator: \.isNewline).enumerated() {
             let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line == "## Cambios" { return nil }
             if line.hasPrefix("#") {
-                return Line(id: index, kind: .heading, text: line.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces))
+                let title = line.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+                skippingInstallSection = title == "Instalar"
+                if skippingInstallSection || title == "Cambios" { continue }
+                result.append(Line(id: index, kind: .heading, text: title))
+            } else if line.isEmpty || skippingInstallSection {
+                continue
+            } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                result.append(Line(id: index, kind: .bullet, text: String(line.dropFirst(2))))
+            } else {
+                result.append(Line(id: index, kind: .text, text: line))
             }
-            if line.hasPrefix("- ") || line.hasPrefix("* ") {
-                return Line(id: index, kind: .bullet, text: String(line.dropFirst(2)))
-            }
-            return Line(id: index, kind: .text, text: line)
         }
+        return result
     }
 
     var body: some View {

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Instalar AirPlay Subtitles</title>
+  <style>
+    :root { --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --accent: #4b49d6; --accent-text: #ffffff; --line: #d1d1d6; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #000000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989d; --accent: #7d7aff; --accent-text: #000000; --line: #38383a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 34rem; margin: 0 auto; padding: 2.5rem 1rem 3rem; }
+    h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+    .version { color: var(--muted); margin: 0 0 1.5rem; }
+    .card { background: var(--card); border-radius: 18px; padding: 1.25rem; margin-bottom: 1rem; }
+    .button { display: block; text-align: center; text-decoration: none; font-weight: 600; border-radius: 14px; padding: .9rem 1rem; margin: .6rem 0; border: 1px solid var(--line); color: var(--text); }
+    .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    ol { padding-left: 1.2rem; margin: .5rem 0 0; }
+    li { margin: .35rem 0; }
+    p.note { color: var(--muted); font-size: .9rem; margin: .5rem 0 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AirPlay Subtitles</h1>
+    <p class="version" id="version">Última versión</p>
+
+    <div class="card">
+      <a class="button primary" id="install" href="#">Instalar con LiveContainer</a>
+      <a class="button" id="direct" href="#">Instalación directa (LiveContainer cerrado)</a>
+      <a class="button" id="download" href="#">Descargar IPA</a>
+      <a class="button" id="release" href="#">Ver la release en GitHub</a>
+    </div>
+
+    <div class="card">
+      <strong>Cómo funciona</strong>
+      <ol>
+        <li>Pulsa <em>Instalar con LiveContainer</em>.</li>
+        <li>Si la app está abierta dentro de LiveContainer, acepta volver a LiveContainer.</li>
+        <li>Elige reemplazar la app existente para conservar tus datos.</li>
+      </ol>
+      <p class="note">El IPA no está firmado: LiveContainer lo instala con su propio certificado.</p>
+    </div>
+  </main>
+  <script>
+    // Project pages live at https://<owner>.github.io/<repo>/; the links only
+    // ever point at this repository's GitHub releases.
+    const owner = location.hostname.split('.')[0];
+    const repo = location.pathname.split('/').filter(Boolean)[0] || '';
+    const requested = new URLSearchParams(location.search).get('tag') || '';
+    const tag = /^v\d+\.\d+\.\d+$/.test(requested) ? requested : null;
+    const releases = `https://github.com/${owner}/${repo}/releases`;
+    const base = tag ? `${releases}/download/${tag}` : `${releases}/latest/download`;
+    const ipa = `${base}/AirPlaySubtitlePlayer-unsigned.ipa`;
+    const manifest = `${base}/manifest.plist`;
+    // LiveContainer refuses livecontainer://install while one of its apps is
+    // running; open-web-page relaunches it and installs from the OTA manifest.
+    const itms = `itms-services://?action=download-manifest&url=${encodeURIComponent(manifest)}`;
+    document.getElementById('install').href = `livecontainer://open-web-page?url=${encodeURIComponent(btoa(itms))}`;
+    document.getElementById('direct').href = `livecontainer://install?url=${encodeURIComponent(ipa)}`;
+    document.getElementById('download').href = ipa;
+    document.getElementById('release').href = tag ? `${releases}/tag/${tag}` : `${releases}/latest`;
+    document.getElementById('version').textContent = tag ? `Versión ${tag.slice(1)}` : 'Última versión';
+  </script>
+</body>
+</html>

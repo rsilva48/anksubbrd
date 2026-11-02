@@ -50,11 +50,13 @@ El token se guarda como elemento sincronizable del **Llavero de iCloud**, asocia
 
 Al abrirse, la app consulta las releases de GitHub. Si hay una versión con IPA más nueva que la instalada, muestra los cambios de todas las versiones intermedias y ofrece:
 
-- **Instalar con LiveContainer** (`livecontainer://install?url=…`), con descarga directa del IPA si LiveContainer no responde.
+- **Instalar con LiveContainer**: si la release incluye `manifest.plist`, prepara un enlace `itms-services` y lo envía a LiveContainer mediante `open-web-page`. Para releases anteriores usa `livecontainer://install?url=…`. Si LiveContainer no responde, ofrece descargar el IPA.
 - **Ver la release en GitHub**.
 - **Ahora no** u **Omitir esta versión**.
 
 También puedes buscar actualizaciones desde **Configuración → Acerca de**.
+
+El flujo con `open-web-page` y `itms-services` está pendiente de validación en iPhone/iPad cuando la app se ejecuta dentro de LiveContainer. No se debe dar por garantizado que el traspaso instale la actualización ni que conserve los datos: confirma en LiveContainer qué opción aparece antes de reemplazar la instalación y mantén un respaldo del token.
 
 ## Bridge
 
@@ -246,6 +248,17 @@ Así `https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubt
 La app requiere iOS/iPadOS 26 y usa los componentes nativos de Liquid Glass. El workflow selecciona la versión estable más reciente de Xcode instalada en el runner, así que compila con el SDK de iOS 27 en cuanto la imagen de GitHub incluya Xcode 27; el paso **Select Xcode** muestra la versión y el SDK usados. Para fijar una versión instalada, define la variable de repositorio `XCODE_VERSION` (por ejemplo `26.6`).
 
 El IPA no está firmado: impórtalo en LiveContainer o fírmalo con tu herramienta de sideload (por ejemplo ByteLoader).
+
+### Página de instalación con GitHub Pages
+
+La página está en [`docs/index.html`](docs/index.html). Las notas de cada release de app incluyen un enlace HTTPS a la página con `?tag=vX.Y.Z`, además del enlace para descargar directamente la IPA. La página ofrece enlaces para instalar con LiveContainer y para descargar el archivo; sin parámetro `tag`, usa los assets de la última release de app marcada como `latest`.
+
+Para publicarla:
+
+1. Incluye `docs/index.html`, el workflow y los cambios de la app en el commit, y sube el commit y su etiqueta.
+2. En GitHub, abre **Settings → Pages → Build and deployment**. Elige **Deploy from a branch**, la rama `main` y la carpeta `/docs`, y guarda. La dirección prevista es `https://rsilva48.github.io/anksubbrd/`.
+3. En la nueva release de app, comprueba que se hayan publicado **ambos assets**, `AirPlaySubtitlePlayer-unsigned.ipa` y `manifest.plist`, y que el enlace de las notas lleve a la página con la etiqueta correcta. El workflow genera el manifiesto con la URL del IPA de esa versión; las releases antiguas no reciben el manifest automáticamente.
+4. Prueba por separado el enlace desde la página y el botón de actualización de la app. El primero pasa por GitHub Pages; el segundo construye directamente el enlace para LiveContainer. Verifica el comportamiento con la app invitada abierta, el diálogo de reemplazo y la conservación de sus datos. Si no funciona, descarga el IPA desde la release e impórtalo manualmente.
 
 ## Límites técnicos
 

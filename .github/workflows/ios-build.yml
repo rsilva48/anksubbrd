@@ -168,11 +168,49 @@ jobs:
           test -f "$app/$executable"
           cd "$RUNNER_TEMP/ipa"
           zip -qry "$RUNNER_TEMP/AirPlaySubtitlePlayer-unsigned.ipa" Payload
+      # LiveContainer installs from an OTA manifest (itms-services) even while
+      # the app itself is running inside it; see the in-app update sheet.
+      - name: Create install manifest
+        run: |
+          app="$RUNNER_TEMP/ipa/Payload/AirPlaySubtitlePlayer.app"
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist")
+          version='${{ steps.version.outputs.version }}'
+          ipa_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/AirPlaySubtitlePlayer-unsigned.ipa"
+          cat > "$RUNNER_TEMP/manifest.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>items</key>
+            <array>
+              <dict>
+                <key>assets</key>
+                <array>
+                  <dict>
+                    <key>kind</key><string>software-package</string>
+                    <key>url</key><string>${ipa_url}</string>
+                  </dict>
+                </array>
+                <key>metadata</key>
+                <dict>
+                  <key>bundle-identifier</key><string>${bundle_id}</string>
+                  <key>bundle-version</key><string>${version}</string>
+                  <key>kind</key><string>software</string>
+                  <key>title</key><string>AirPlay Subtitles</string>
+                </dict>
+              </dict>
+            </array>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint "$RUNNER_TEMP/manifest.plist"
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: AirPlaySubtitlePlayer-unsigned
-          path: ${{ runner.temp }}/AirPlaySubtitlePlayer-unsigned.ipa
+          path: |
+            ${{ runner.temp }}/AirPlaySubtitlePlayer-unsigned.ipa
+            ${{ runner.temp }}/manifest.plist
           if-no-files-found: error
           retention-days: 7
 
@@ -232,7 +270,15 @@ jobs:
             lines=$(git log --no-merges --format='- %s (`%h`)' "$range" -- "$@")
             if [[ -n "$lines" ]]; then printf '### %s\n\n%s\n\n' "$title" "$lines" >> release-notes.md; fi
           }
-          printf '## Cambios\n\n' > release-notes.md
+          : > release-notes.md
+          if [[ "$HAS_APP" == true ]]; then
+            # GitHub strips livecontainer:// links from release notes, so the
+            # install link goes through the GitHub Pages page in docs/.
+            pages="https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/?tag=${GITHUB_REF_NAME}"
+            ipa="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/AirPlaySubtitlePlayer-unsigned.ipa"
+            printf '### Instalar\n\n[Instalar con LiveContainer](%s) · [Descargar IPA](%s)\n\n' "$pages" "$ipa" >> release-notes.md
+          fi
+          printf '## Cambios\n\n' >> release-notes.md
           section 'App iOS' ios
           section 'Bridge' proxy
           section 'Repositorio y documentación' . ':(exclude)ios' ':(exclude)proxy'
@@ -247,7 +293,7 @@ jobs:
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: ${{ env.HAS_APP == 'true' && github.ref_name || format('{0} (bridge)', github.ref_name) }}
-          files: ${{ env.HAS_APP == 'true' && 'release-assets/AirPlaySubtitlePlayer-unsigned.ipa' || '' }}
+          files: ${{ env.HAS_APP == 'true' && 'release-assets/*' || '' }}
           body_path: release-notes.md
           fail_on_unmatched_files: true
           make_latest: ${{ env.HAS_APP == 'true' && 'true' || 'false' }}
