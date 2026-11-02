@@ -310,11 +310,19 @@ final class DownloadStore {
         let path = catalogPath(of: watchUrl)
         let stored = records.filter { catalogPath(of: $0.watchUrl) == path && $0.state == .completed }
         guard let first = stored.first else { return nil }
-        let episodes = Dictionary(grouping: stored, by: \.episode)
-            .map { number, copies in
-                Episode(number: number, title: copies[0].episodeTitle, sub: copies.contains { $0.kind == .sub }, dub: copies.contains { $0.kind == .dub })
-            }
-            .sorted { $0.number < $1.number }
+        // Spelled out step by step: the chained version was too slow for the
+        // type checker.
+        var copiesByEpisode: [Int: [DownloadRecord]] = [:]
+        for record in stored {
+            copiesByEpisode[record.episode, default: []].append(record)
+        }
+        var episodes: [Episode] = []
+        for (number, copies) in copiesByEpisode {
+            let hasSub = copies.contains { $0.kind == .sub }
+            let hasDub = copies.contains { $0.kind == .dub }
+            episodes.append(Episode(number: number, title: copies[0].episodeTitle, sub: hasSub, dub: hasDub))
+        }
+        episodes.sort { $0.number < $1.number }
         return Series(
             seriesKey: "",
             title: first.seriesTitle,
