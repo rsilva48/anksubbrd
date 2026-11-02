@@ -42,7 +42,14 @@ jobs:
           case "$EVENT_NAME" in
             workflow_dispatch) base='' ;;
             pull_request) base="$PR_BASE" ;;
-            *) base=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${GITHUB_SHA}^" 2>/dev/null || true) ;;
+            *)
+              # The newest earlier version that was actually published: a tag
+              # whose build failed has no release, and its changes must still
+              # reach the next one.
+              base=''
+              for tag in $(git tag --merged "${GITHUB_SHA}^" --list 'v[0-9]*' --sort=-v:refname | head -n 20); do
+                if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then base="$tag"; break; fi
+              done ;;
           esac
           if [[ "$GITHUB_REF_TYPE" == tag ]] && gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # Re-pushed tags (for example after rewriting history) keep their
@@ -237,7 +244,8 @@ jobs:
             android/**/gradle-wrapper.properties
             android/gradle/libs.versions.toml
       - name: Install Android SDK
-        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager 'platforms;android-37'"
+        # Since API 37, platforms are published with a minor version.
+        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager 'platforms;android-37.0'"
       - name: Build APK
         working-directory: android
         shell: bash
