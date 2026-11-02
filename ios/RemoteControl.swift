@@ -5,6 +5,10 @@ struct RemoteDevice: Decodable, Identifiable, Hashable {
     let id: String
     let name: String
     let state: RemoteDeviceState?
+    /// Milliseconds since the TV reported `state`, measured by the bridge.
+    let stateAge: Double?
+    /// Whether the TV can open the app by itself for "play" (nil on older bridges).
+    let canOpen: Bool?
 }
 
 struct RemoteDeviceState: Decodable, Hashable {
@@ -22,6 +26,12 @@ struct RemoteDeviceState: Decodable, Hashable {
     let skip: String?
 
     var isActive: Bool { status != "idle" && seriesTitle != nil }
+
+    /// Whether the TV is already on this episode (playing, paused or loading).
+    func isShowing(_ command: RemoteCommand) -> Bool {
+        guard status != "idle", let watchUrl, let target = command.watchUrl else { return false }
+        return episode == command.episode && URL(string: watchUrl)?.path == URL(string: target)?.path
+    }
 }
 
 struct RemoteDevicesResponse: Decodable { let devices: [RemoteDevice] }
@@ -34,6 +44,8 @@ struct RemoteCommand: Encodable, Hashable {
     var kind: String? = nil
     /// Relative jump for `seek` (negative goes back).
     var seconds: Double? = nil
+    /// Absolute position for `seek`, from scrubbing.
+    var position: Double? = nil
 
     static func play(_ watchUrl: String, episode: Int, kind: StreamKind?) -> RemoteCommand {
         RemoteCommand(type: "play", watchUrl: watchUrl, episode: episode, kind: kind?.rawValue)
@@ -42,50 +54,76 @@ struct RemoteCommand: Encodable, Hashable {
 
 private struct RemoteCommandReply: Decodable { let ok: Bool }
 
-/// An episode to start on a TV, chosen in the remote sheet.
+/// An episode for the remote sheet: started on the TV right away
+/// (`autoplay`, from an episode's menu) or offered with a button.
 struct RemotePlayRequest: Identifiable {
     let id = UUID()
     let command: RemoteCommand?
     let title: String?
+    var autoplay = true
 }
 
-/// Remote control for the TV apps of this identity, through the bridge: plays
-/// an episode on the chosen TV (when opened with one) and controls playback.
+/// Remote control for the TV apps of this identity, through the bridge.
+/// The chosen TV is remembered and used every time until "Desconectar";
+/// opening the sheet only shows its state, it never sends anything by itself
+/// except an episode chosen with "Ver en TV" in its menu.
 struct TVRemoteSheet: View {
     var play: RemoteCommand? = nil
     var playTitle: String? = nil
+    var autoplay = true
     @Environment(ProfileStore.self) private var profile
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("anksubbrd.remote.tv") private var connectedID = ""
+    @AppStorage("anksubbrd.remote.tv-name") private var connectedName = ""
     @State private var devices: [RemoteDevice] = []
-    @State private var selectedID: String?
+    /// When `devices` arrived, to advance the position between reports.
+    @State private var receivedAt = Date()
     @State private var pendingPlay: RemoteCommand?
     @State private var loaded = false
     @State private var errorMessage: String?
+    /// Position under the finger while scrubbing.
+    @State private var scrubPosition: Double?
+    /// Where the last scrub sent the TV, shown until the TV reports it.
+    @State private var seekTarget: (position: Double, until: Date)?
 
-    private var selected: RemoteDevice? { devices.first { $0.id == selectedID } }
+    private var connected: RemoteDevice? { devices.first { $0.id == connectedID } }
     private var language: TitleLanguage { profile.preferences.titleLanguage }
 
     var body: some View {
         NavigationStack {
             List {
-                if let device = selected {
-                    controls(device)
-                } else {
+                if connectedID.isEmpty {
                     deviceList
+                } else if let device = connected {
+                    controls(device)
+                } else if loaded {
+                    Section {
+                        ContentUnavailableView(
+                            "\(connectedName.isEmpty ? "La TV" : connectedName) no está disponible",
+                            systemImage: "tv.slash",
+                            description: Text("Enciende la TV y abre AniBridge Player con un perfil vinculado a esta identidad.")
+                        )
+                    }
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
                 }
                 if let errorMessage {
                     Section { ErrorNotice(message: errorMessage) }
                 }
             }
-            .navigationTitle(selected?.name ?? "Ver en TV")
+            .navigationTitle(connectedID.isEmpty ? "Ver en TV" : (connected?.name ?? connectedName))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Listo") { dismiss() }
                 }
-                if selected != nil, devices.count > 1 {
+                if !connectedID.isEmpty {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("Otra TV") { selectedID = nil }
+                        Button("Desconectar", role: .destructive) {
+                            connectedID = ""
+                            connectedName = ""
+                        }
                     }
                 }
             }
@@ -94,7 +132,7 @@ struct TVRemoteSheet: View {
                 // The TVs report every few seconds; the sheet follows them while open.
                 while !Task.isCancelled {
                     await refresh()
-                    try? await Task.sleep(for: .seconds(selectedID == nil ? 3 : 1.5))
+                    try? await Task.sleep(for: .seconds(connectedID.isEmpty ? 3 : 1.5))
                 }
             }
         }
@@ -114,7 +152,7 @@ struct TVRemoteSheet: View {
             } else {
                 ForEach(devices) { device in
                     Button {
-                        choose(device)
+                        connect(device)
                     } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
@@ -132,16 +170,29 @@ struct TVRemoteSheet: View {
                 }
             }
         } header: {
-            Text(pendingPlay == nil ? "TVs conectadas" : "Elige la TV")
+            Text("Conectar a una TV")
         } footer: {
-            if pendingPlay != nil, let playTitle {
-                Text("Se reproducirá \(playTitle).")
-            }
+            Text("La app recordará la TV elegida hasta que pulses Desconectar.")
         }
     }
 
     @ViewBuilder
     private func controls(_ device: RemoteDevice) -> some View {
+        if let command = pendingPlay, !autoplay, device.state?.isShowing(command) != true {
+            Section {
+                Button("Reproducir en la TV", systemImage: "play.tv") {
+                    pendingPlay = nil
+                    send(command, to: device)
+                }
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let playTitle { Text(playTitle) }
+                    if device.canOpen == false, device.state?.isActive != true {
+                        Text("La TV solo empieza episodios con AniBridge Player en pantalla. Para que se abra sola, pulsa «Abrir desde el teléfono» en la app de la TV.")
+                    }
+                }
+            }
+        }
         if let state = device.state, state.isActive {
             Section {
                 HStack(spacing: 12) {
@@ -163,16 +214,7 @@ struct TVRemoteSheet: View {
                     }
                 }
                 if let duration = state.duration, duration > 0 {
-                    VStack(spacing: 4) {
-                        ProgressView(value: min(state.position ?? 0, duration), total: duration)
-                        HStack {
-                            Text(formatTime(state.position ?? 0))
-                            Spacer()
-                            Text(formatTime(duration))
-                        }
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                    }
+                    progress(device, state: state, duration: duration)
                 }
             }
             Section {
@@ -194,12 +236,57 @@ struct TVRemoteSheet: View {
                     send(RemoteCommand(type: "stop"), to: device)
                 }
             }
-        } else {
+        } else if pendingPlay == nil || autoplay {
             Section {
                 Text("La TV no está reproduciendo nada. En la ficha de una serie, usa «Ver en TV» para empezar un episodio ahí.")
                     .foregroundStyle(.secondary)
+            } footer: {
+                if device.canOpen == false {
+                    Text("La TV solo empieza episodios con AniBridge Player en pantalla. Para que se abra sola, pulsa «Abrir desde el teléfono» en la app de la TV.")
+                }
             }
         }
+    }
+
+    /// A scrubbable progress bar. Between reports (every 5 s while playing)
+    /// the position advances locally, so the bar moves smoothly.
+    private func progress(_ device: RemoteDevice, state: RemoteDeviceState, duration: Double) -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let shown = scrubPosition ?? shownPosition(device, state: state, duration: duration, now: context.date)
+            VStack(spacing: 4) {
+                Slider(
+                    value: Binding(get: { shown }, set: { scrubPosition = $0 }),
+                    in: 0...duration,
+                    onEditingChanged: { editing in
+                        guard !editing, let target = scrubPosition else { return }
+                        seekTarget = (target, Date().addingTimeInterval(6))
+                        scrubPosition = nil
+                        send(RemoteCommand(type: "seek", position: target), to: device)
+                    }
+                )
+                .accessibilityLabel("Posición")
+                .accessibilityValue(formatTime(shown))
+                HStack {
+                    Text(formatTime(shown))
+                    Spacer()
+                    Text(formatTime(duration))
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func shownPosition(_ device: RemoteDevice, state: RemoteDeviceState, duration: Double, now: Date) -> Double {
+        var position = state.position ?? 0
+        if state.status == "playing" {
+            position += (device.stateAge ?? 0) / 1000 + now.timeIntervalSince(receivedAt)
+        }
+        // After a scrub, the target until the TV reports a position near it.
+        if let target = seekTarget, now < target.until, abs(position - target.position) > 3 {
+            position = target.position
+        }
+        return min(max(position, 0), duration)
     }
 
     private func remoteButton(_ symbol: String, _ label: String, large: Bool = false, action: @escaping () -> Void) -> some View {
@@ -219,12 +306,18 @@ struct TVRemoteSheet: View {
         return "\(status): \(title)\(episode)"
     }
 
-    private func choose(_ device: RemoteDevice) {
-        selectedID = device.id
-        if let command = pendingPlay {
-            pendingPlay = nil
-            send(command, to: device)
-        }
+    private func connect(_ device: RemoteDevice) {
+        connectedID = device.id
+        connectedName = device.name
+        startPendingPlay(on: device)
+    }
+
+    /// Sends the episode from "Ver en TV" once, unless the TV already shows it.
+    private func startPendingPlay(on device: RemoteDevice) {
+        guard autoplay, let command = pendingPlay else { return }
+        pendingPlay = nil
+        if device.state?.isShowing(command) == true { return }
+        send(command, to: device)
     }
 
     private func send(_ command: RemoteCommand, to device: RemoteDevice) {
@@ -245,12 +338,10 @@ struct TVRemoteSheet: View {
         do {
             let reply: RemoteDevicesResponse = try await BridgeClient.get(base: profile.bridgeURL, path: "/api/devices", timeoutInterval: 10)
             devices = reply.devices
-            if let current = selectedID, !devices.contains(where: { $0.id == current }) {
-                selectedID = nil
-            }
-            // A single TV with nothing to start opens its controls directly.
-            if selectedID == nil, pendingPlay == nil, devices.count == 1 {
-                selectedID = devices[0].id
+            receivedAt = Date()
+            if let device = connected {
+                connectedName = device.name
+                startPendingPlay(on: device)
             }
             errorMessage = nil
         } catch is CancellationError {

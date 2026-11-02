@@ -169,7 +169,10 @@ data class RemoteCommand(
     val watchUrl: String? = null,
     val episode: Int? = null,
     val kind: String? = null,
+    /** Relative jump for "seek" (negative goes back). */
     val seconds: Double? = null,
+    /** Absolute position for "seek", from scrubbing on the phone. */
+    val position: Double? = null,
 )
 
 @Serializable
@@ -193,7 +196,7 @@ data class DeviceState(
 )
 
 @Serializable
-private data class DeviceReport(val name: String, val state: DeviceState)
+private data class DeviceReport(val name: String, val state: DeviceState, val canOpen: Boolean)
 
 @Serializable
 private data class OkResponse(val ok: Boolean = true)
@@ -274,8 +277,8 @@ class BridgeClient(val baseUrl: String, private val token: String) {
 
     suspend fun pairingStatus(pairingId: String): PairingStatus = get("/api/pair/status", listOf("pairingId" to pairingId))
 
-    suspend fun reportDevice(deviceId: String, name: String, state: DeviceState) {
-        send<OkResponse>("PUT", "/api/devices/$deviceId", emptyList(), json.encodeToString(DeviceReport.serializer(), DeviceReport(name, state)))
+    suspend fun reportDevice(deviceId: String, name: String, state: DeviceState, canOpen: Boolean) {
+        send<OkResponse>("PUT", "/api/devices/$deviceId", emptyList(), json.encodeToString(DeviceReport.serializer(), DeviceReport(name, state, canOpen)))
     }
 
     /** Long poll: returns when a command arrives, or empty after about 25 s. */

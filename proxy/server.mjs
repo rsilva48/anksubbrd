@@ -553,7 +553,7 @@ function deviceFor(user, deviceId, create = true) {
   const key = `${user.userId}:${id}`;
   let device = devices.get(key);
   if (!device && create) {
-    device = { id, userId: user.userId, name: 'TV', state: null, lastSeen: 0, queue: [], waiters: new Set() };
+    device = { id, userId: user.userId, name: 'TV', state: null, stateAt: 0, canOpen: false, lastSeen: 0, queue: [], waiters: new Set() };
     devices.set(key, device);
   }
   return device;
@@ -575,13 +575,22 @@ function reportDevice(user, deviceId, body) {
   const device = deviceFor(user, deviceId);
   device.name = historyText(body?.name, device.name, 60);
   device.state = deviceState(body?.state);
-  device.lastSeen = Date.now();
+  // Whether the TV app can open itself for "play" while it is closed.
+  device.canOpen = body?.canOpen === true;
+  device.stateAt = device.lastSeen = Date.now();
   return { ok: true };
 }
 function listDevices(user) {
   const cutoff = Date.now() - deviceTimeout;
+  const now = Date.now();
   const online = [...devices.values()].filter((device) => device.userId === user.userId && device.lastSeen > cutoff);
-  return { devices: online.map(({ id, name, state, lastSeen }) => ({ id, name, state, lastSeen: new Date(lastSeen).toISOString() })) };
+  // stateAge (ms) lets the phone advance the position between reports
+  // without depending on its clock matching the bridge's.
+  return {
+    devices: online.map(({ id, name, state, stateAt, canOpen, lastSeen }) => ({
+      id, name, state, stateAge: now - stateAt, canOpen, lastSeen: new Date(lastSeen).toISOString(),
+    })),
+  };
 }
 function sendCommand(user, deviceId, body) {
   const device = deviceFor(user, deviceId, false);
@@ -595,10 +604,11 @@ function sendCommand(user, deviceId, body) {
     command.kind = ['sub', 'dub'].includes(body.kind) ? body.kind : null;
   }
   if (type === 'seek') {
-    // Relative jump in seconds (negative goes back).
-    const seconds = Number(body.seconds);
-    if (!Number.isFinite(seconds) || Math.abs(seconds) > 6 * 3600) throw new HttpError(400, 'Invalid seek');
-    command.seconds = seconds;
+    // An absolute position, or a relative jump in seconds (negative goes back).
+    const valid = (value) => value !== undefined && value !== null && Number.isFinite(Number(value)) && Math.abs(Number(value)) <= 6 * 3600;
+    if (valid(body.position) && Number(body.position) >= 0) command.position = Number(body.position);
+    else if (valid(body.seconds)) command.seconds = Number(body.seconds);
+    else throw new HttpError(400, 'Invalid seek');
   }
   device.queue.push(command);
   if (device.queue.length > 20) device.queue.shift();

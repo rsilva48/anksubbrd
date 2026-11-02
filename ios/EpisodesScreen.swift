@@ -211,7 +211,7 @@ struct EpisodesScreen: View {
             }
         }
         .sheet(item: $remoteRequest) { request in
-            TVRemoteSheet(play: request.command, playTitle: request.title)
+            TVRemoteSheet(play: request.command, playTitle: request.title, autoplay: request.autoplay)
         }
         .sheet(item: $downloadRequest) { request in
             ServerPicker(choice: request.choice, defaultKind: request.kind, title: request.title, actionSymbol: "arrow.down.circle") { server in
@@ -225,7 +225,8 @@ struct EpisodesScreen: View {
         .toolbar {
             if let series, !isOffline {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Ver en TV", systemImage: "tv") { watchOnTV(nextEpisodeForTV(series)) }
+                    // Opens the remote; the episode is offered, not sent.
+                    Button("Ver en TV", systemImage: "tv") { watchOnTV(nextEpisodeForTV(series), autoplay: false) }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     downloadMenu(series)
@@ -494,11 +495,12 @@ struct EpisodesScreen: View {
         return series.episode(after: entry.episode, kind: kind) ?? series.episodes.first { $0.number == entry.episode }
     }
 
-    private func watchOnTV(_ episode: Episode?) {
+    private func watchOnTV(_ episode: Episode?, autoplay: Bool = true) {
         let kind = profile.entry(for: current.watchUrl)?.kind ?? profile.preferences.defaultTrack
         remoteRequest = RemotePlayRequest(
             command: episode.map { RemoteCommand.play(current.watchUrl, episode: $0.number, kind: kind) },
-            title: episode.map { "\(current.displayTitle(language)) · episodio \($0.number)" }
+            title: episode.map { "\(current.displayTitle(language)) · episodio \($0.number)" },
+            autoplay: autoplay
         )
     }
 

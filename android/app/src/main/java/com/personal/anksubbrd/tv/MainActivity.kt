@@ -2,6 +2,7 @@
 
 package com.personal.anksubbrd.tv
 
+import android.content.Intent
 import android.os.Bundle
 import android.content.pm.PackageManager
 import android.content.pm.ActivityInfo
@@ -37,6 +38,7 @@ class MainActivity : ComponentActivity() {
         Connectivity.start(applicationContext)
         val isTv = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
         if (isTv) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        if (savedInstanceState == null) forwardRemotePlay(intent)
         val state = AppState(applicationContext)
         setContent {
             if (!isTv) {
@@ -52,6 +54,28 @@ class MainActivity : ComponentActivity() {
             }
             }
         }
+    }
+
+    // RemoteService opens (or brings back) this activity for a "play" from a phone.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        forwardRemotePlay(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Remote.foreground.value = true
+    }
+
+    override fun onPause() {
+        Remote.foreground.value = false
+        super.onPause()
+    }
+
+    private fun forwardRemotePlay(intent: Intent?) {
+        val text = intent?.getStringExtra(RemoteService.EXTRA_PLAY) ?: return
+        intent.removeExtra(RemoteService.EXTRA_PLAY)
+        runCatching { BridgeClient.json.decodeFromString(RemoteCommand.serializer(), text) }.getOrNull()?.let { Remote.playRequests.trySend(it) }
     }
 }
 
@@ -89,13 +113,19 @@ private fun App(state: AppState) {
 
     BackHandler(enabled = stack.size > 1) { stack.removeAt(stack.lastIndex) }
 
-    // Remote control: "play" from a phone opens that episode here, replacing
-    // the episode on screen; the other commands go to the player.
+    // Remote control runs in RemoteService (also while the app is closed);
+    // it follows the active profile. "play" from a phone opens that episode
+    // here, replacing the episode on screen, unless it is already the one
+    // showing; the other commands go to the player.
     LaunchedEffect(session) {
+        RemoteService.start(context)
         val current = session ?: return@LaunchedEffect
-        val deviceName = android.provider.Settings.Global.getString(context.contentResolver, "device_name") ?: android.os.Build.MODEL
-        runRemoteControl(current, state.deviceId, deviceName) { command ->
-            val request = remotePlayback(current, command) ?: return@runRemoteControl
+        for (command in Remote.playRequests) {
+            val showing = Remote.state.value
+            if (showing.status != "idle" && showing.episode == command.episode &&
+                showing.watchUrl != null && command.watchUrl != null && catalogPath(showing.watchUrl) == catalogPath(command.watchUrl)
+            ) continue
+            val request = remotePlayback(current, command) ?: continue
             if (stack.last() is Route.Watch) stack[stack.lastIndex] = Route.Watch(request) else stack.add(Route.Watch(request))
         }
     }

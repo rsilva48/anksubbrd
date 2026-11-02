@@ -2,8 +2,12 @@
 
 package com.personal.anksubbrd.tv
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
-import android.net.Uri
+import android.content.pm.PackageInstaller
+import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,7 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.core.content.FileProvider
+import androidx.core.content.IntentCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
@@ -32,6 +37,7 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -39,6 +45,7 @@ import okhttp3.Request
 import org.json.JSONArray
 
 private const val APK_NAME = "AniBridgePlayer-TV.apk"
+private const val UNKNOWN_APPS_SETTING = "Instalar apps desconocidas"
 private const val MAX_APK_BYTES = 200L * 1024 * 1024
 private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS).followSslRedirects(false).build()
@@ -85,7 +92,7 @@ private suspend fun findUpdate(installed: String): TVUpdate? = withContext(Dispa
     }
 }
 
-private suspend fun downloadUpdate(context: android.content.Context, update: TVUpdate): File = withContext(Dispatchers.IO) {
+private suspend fun downloadUpdate(context: Context, update: TVUpdate): File = withContext(Dispatchers.IO) {
     val directory = File(context.cacheDir, "updates").apply { mkdirs() }
     val file = File(directory, APK_NAME)
     try {
@@ -116,6 +123,49 @@ private suspend fun downloadUpdate(context: android.content.Context, update: TVU
     }
 }
 
+/** Why the last install did not finish, reported by [UpdateResultReceiver]. */
+private val installFailure = MutableStateFlow<String?>(null)
+
+// A PackageInstaller session goes straight to the system confirmation; an
+// ACTION_VIEW of the APK would also offer other apps that open APKs.
+private suspend fun installUpdate(context: Context, file: File) = withContext(Dispatchers.IO) {
+    val installer = context.packageManager.packageInstaller
+    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        .apply { setAppPackageName(context.packageName) }
+    val id = installer.createSession(params)
+    try {
+        installer.openSession(id).use { session ->
+            session.openWrite(APK_NAME, 0, file.length()).use { output ->
+                file.inputStream().use { it.copyTo(output) }
+                session.fsync(output)
+            }
+            // The system fills in the result, so the intent must be mutable.
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+            val result = PendingIntent.getBroadcast(context, id, Intent(context, UpdateResultReceiver::class.java), flags)
+            session.commit(result.intentSender)
+        }
+    } catch (e: Exception) {
+        installer.abandonSession(id)
+        throw e
+    }
+}
+
+/** Shows the system confirmation for the update and reports failures to the dialog. */
+class UpdateResultReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java) ?: return
+                context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+            PackageInstaller.STATUS_SUCCESS -> installFailure.value = null
+            PackageInstaller.STATUS_FAILURE_ABORTED -> installFailure.value = "Instalación cancelada."
+            else -> installFailure.value = "No se pudo instalar: " +
+                (intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "error desconocido")
+        }
+    }
+}
+
 @Composable
 fun TVUpdateControl() {
     val context = LocalContext.current
@@ -124,6 +174,28 @@ fun TVUpdateControl() {
     var busy by remember { mutableStateOf(false) }
     var show by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    // Set while the user is in Settings granting "install unknown apps".
+    var awaitingPermission by remember { mutableStateOf<TVUpdate?>(null) }
+
+    suspend fun install(candidate: TVUpdate) {
+        busy = true
+        try {
+            installUpdate(context, downloadUpdate(context, candidate))
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { message = "No se pudo instalar: ${e.message}" }
+        finally { busy = false }
+    }
+
+    // Back from Settings: continue the install, or explain why it is still
+    // not allowed (on TVs with a work profile the wrong copy is often listed).
+    LifecycleResumeEffect(Unit) {
+        awaitingPermission?.let { candidate ->
+            awaitingPermission = null
+            if (context.packageManager.canRequestPackageInstalls()) scope.launch { install(candidate) }
+            else message = "Todavía no está permitido. " + specialAccessHint(context, UNKNOWN_APPS_SETTING)
+        }
+        onPauseOrDispose { }
+    }
 
     suspend fun check(manual: Boolean) {
         busy = true
@@ -140,11 +212,16 @@ fun TVUpdateControl() {
     // Automatic checks at most every 6 hours: GitHub allows 60 anonymous
     // API requests per hour per IP. The button always checks.
     LaunchedEffect(Unit) {
-        val storage = context.getSharedPreferences("anksubbrd", android.content.Context.MODE_PRIVATE)
+        val storage = context.getSharedPreferences("anksubbrd", Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         if (now - storage.getLong("updates.lastCheck", 0) < 6 * 60 * 60 * 1000L) return@LaunchedEffect
         storage.edit().putLong("updates.lastCheck", now).apply()
         check(false)
+    }
+    LaunchedEffect(Unit) {
+        installFailure.collect { failure ->
+            if (failure != null) { message = failure; show = true; installFailure.value = null }
+        }
     }
     OutlinedButton(onClick = { scope.launch { check(true) } }, enabled = !busy) {
         Text(if (busy) "Buscando…" else "Actualizaciones")
@@ -158,21 +235,10 @@ fun TVUpdateControl() {
                     update?.let { candidate ->
                         Button(enabled = !busy, onClick = {
                             if (!context.packageManager.canRequestPackageInstalls()) {
-                                message = "Permite instalar aplicaciones desde esta app y luego vuelve a pulsar Instalar."
-                                try {
-                                    context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")))
-                                } catch (e: Exception) { message = "No se pudo abrir el permiso de instalación: ${e.message}" }
-                            } else scope.launch {
-                                busy = true
-                                try {
-                                    val file = downloadUpdate(context, candidate)
-                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", file)
-                                    context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
-                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                                } catch (e: CancellationException) { throw e }
-                                catch (e: Exception) { message = "No se pudo instalar: ${e.message}" }
-                                finally { busy = false }
-                            }
+                                message = "Android pide permitir que esta app instale actualizaciones. " + specialAccessHint(context, UNKNOWN_APPS_SETTING)
+                                if (openSpecialAccess(context, Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)) awaitingPermission = candidate
+                                else message = "No se pudo abrir «$UNKNOWN_APPS_SETTING» en Ajustes."
+                            } else scope.launch { install(candidate) }
                         }) { Text(if (busy) "Descargando…" else "Instalar") }
                     }
                     OutlinedButton(enabled = !busy, onClick = { show = false }) { Text("Cerrar") }

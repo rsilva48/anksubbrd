@@ -241,11 +241,13 @@ test('Remote control: a TV reports itself and receives commands from the same id
   const tv = { userId: 'remote-user', token: 't' };
   const other = { userId: 'someone-else', token: 'o' };
   const deviceId = 'tv-0123456789';
-  reportDevice(tv, deviceId, { name: 'Sala', state: { status: 'playing', seriesTitle: 'Delta', episode: 3, position: 61.5, duration: 1440, kind: 'sub' } });
-  assert.deepEqual(listDevices(tv).devices.map(({ id, name, state }) => [id, name, state.status, state.episode]), [[deviceId, 'Sala', 'playing', 3]]);
+  reportDevice(tv, deviceId, { name: 'Sala', canOpen: true, state: { status: 'playing', seriesTitle: 'Delta', episode: 3, position: 61.5, duration: 1440, kind: 'sub' } });
+  assert.deepEqual(listDevices(tv).devices.map(({ id, name, state, canOpen }) => [id, name, state.status, state.episode, canOpen]), [[deviceId, 'Sala', 'playing', 3, true]]);
+  assert.ok(listDevices(tv).devices[0].stateAge >= 0);
   assert.equal(listDevices(other).devices.length, 0);
   assert.throws(() => sendCommand(other, deviceId, { type: 'pause' }), (error) => error.status === 404);
   assert.throws(() => sendCommand(tv, deviceId, { type: 'explode' }), (error) => error.status === 400);
+  assert.throws(() => sendCommand(tv, deviceId, { type: 'seek' }), (error) => error.status === 400);
 
   // A waiting long poll is answered as soon as a command arrives.
   const response = Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false });
@@ -253,6 +255,11 @@ test('Remote control: a TV reports itself and receives commands from the same id
   sendCommand(tv, deviceId, { type: 'seek', seconds: -10 });
   const reply = await pending;
   assert.deepEqual(reply.commands.map(({ type, seconds }) => [type, seconds]), [['seek', -10]]);
+
+  // Scrubbing sends an absolute position.
+  sendCommand(tv, deviceId, { type: 'seek', position: 754.2 });
+  const scrub = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
+  assert.deepEqual(scrub.commands.map(({ type, position, seconds }) => [type, position, seconds]), [['seek', 754.2, undefined]]);
 
   // Commands queued while the TV is away are delivered on its next poll.
   sendCommand(tv, deviceId, { type: 'play', watchUrl: '/watch/delta-4', episode: 5, kind: 'dub' });

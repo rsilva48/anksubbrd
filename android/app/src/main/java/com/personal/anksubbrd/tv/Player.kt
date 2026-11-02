@@ -134,7 +134,10 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
                 "pause" -> player.pause()
                 "resume" -> player.play()
                 "toggle" -> if (player.isPlaying) player.pause() else player.play()
-                "seek" -> command.seconds?.let { player.seekTo((player.currentPosition + it * 1000).toLong().coerceAtLeast(0)) }
+                "seek" -> when {
+                    command.position != null -> player.seekTo((command.position * 1000).toLong().coerceAtLeast(0))
+                    command.seconds != null -> player.seekTo((player.currentPosition + command.seconds * 1000).toLong().coerceAtLeast(0))
+                }
                 "skip" -> skip?.second?.let { range ->
                     player.seekTo((range.end * 1000).toLong())
                     skip = null

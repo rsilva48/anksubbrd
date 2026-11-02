@@ -97,6 +97,7 @@ fun HomeScreen(session: Session, onOpen: (Anime) -> Unit, onSwitchProfile: () ->
                     }
                 }
             }
+            RemoteAccessControl()
             TVUpdateControl()
             Spacer(Modifier.width(12.dp))
             OutlinedButton(onClick = onSwitchProfile) { Text("Perfil: ${session.profile.name}") }
