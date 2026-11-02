@@ -78,7 +78,11 @@ struct Anime: Codable, Hashable, Identifiable {
     var subEpisodes: Int? = nil
     var dubEpisodes: Int? = nil
     var totalEpisodes: Int? = nil
+    var adult: Bool? = nil
     var id: String { watchUrl }
+
+    /// R+ and Rx ratings, or the catalog's own 18+ marker.
+    var isAdult: Bool { adult == true || ["R+", "Rx"].contains(rating ?? "") }
 
     /// "EP 32" or "EP 32/34" when the total is known and not reached yet.
     var episodeBadge: String? {
@@ -105,6 +109,37 @@ struct Series: Decodable {
     let titleJp: String?
     let episodes: [Episode]
     let seasons: [Season]
+    // Details from the series page; older bridges omit them.
+    let synopsis: String?
+    let rating: String?
+    let adult: Bool?
+    let status: String?
+    let mediaType: String?
+    let score: Double?
+    let totalEpisodes: Int?
+    let imageUrl: String?
+
+    var isAdult: Bool { adult == true || ["R+", "Rx"].contains(rating ?? "") }
+
+    var statusLabel: String? {
+        switch status {
+        case "finished": return "Finalizado"
+        case "airing": return "En emisión"
+        case "upcoming": return "Próximamente"
+        default: return nil
+        }
+    }
+
+    var metadataLine: String {
+        [mediaType, statusLabel, score.map { String(format: "★ %.1f", $0) }, rating]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    /// The first episode after `number` that has a source of the given kind.
+    func episode(after number: Int, kind: StreamKind) -> Episode? {
+        episodes.first { $0.number > number && $0.isAvailable(for: kind) }
+    }
 }
 
 struct Season: Decodable, Identifiable, Hashable {
@@ -118,7 +153,24 @@ struct Season: Decodable, Identifiable, Hashable {
     let mediaType: String?
     let year: Int?
     let seasonNumber: Int
+    /// Curated name such as "Season 1, Part 2", when the catalog has one.
+    let label: String?
     var id: String { watchUrl }
+
+    /// The curated name in Spanish ("Temporada 1, parte 2", "Especial 1").
+    var localizedLabel: String? {
+        guard let label, !label.isEmpty else { return nil }
+        return label
+            .replacingOccurrences(of: "Season", with: "Temporada")
+            .replacingOccurrences(of: "Part", with: "parte")
+            .replacingOccurrences(of: "Specials", with: "Especiales")
+            .replacingOccurrences(of: "Special", with: "Especial")
+    }
+
+    /// Specials, recaps, OVAs and movies listed between regular seasons.
+    var isExtra: Bool {
+        title.range(of: #"\b(specials?|mini anime|recap|ova|oad|movie|film)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
 
     var anime: Anime {
         Anime(title: title, watchUrl: watchUrl, imageUrl: imageUrl, meta: meta ?? "", rating: rating, score: score, mediaType: mediaType, year: year, titleJp: titleJp)
@@ -128,7 +180,17 @@ struct Season: Decodable, Identifiable, Hashable {
 struct Episode: Decodable, Identifiable, Hashable {
     let number: Int
     let title: String
+    /// Whether the catalog has Sub/Dub sources; nil on older bridges.
+    let sub: Bool?
+    let dub: Bool?
     var id: Int { number }
+
+    func isAvailable(for kind: StreamKind) -> Bool {
+        switch kind {
+        case .sub: return sub ?? true
+        case .dub: return dub ?? true
+        }
+    }
 
     /// The bridge falls back to "Episode N"; that adds nothing next to the number.
     var subtitle: String? {
@@ -185,9 +247,15 @@ struct WatchHistoryEntry: Codable, Hashable, Identifiable {
     var updatedAt: Date
     var titleJp: String? = nil
     var serverKind: String? = nil
+    var durationSeconds: Double? = nil
+    /// The episode was watched to the end or to its outro.
+    var completed: Bool? = nil
+    /// Episodes announced for the series when it was last played.
+    var totalEpisodes: Int? = nil
     var id: String { "\(watchUrl)#\(episode)" }
 
     var kind: StreamKind? { serverKind.flatMap(StreamKind.init(rawValue:)) }
+    var isCompleted: Bool { completed == true }
 
     var episodeLabel: String {
         let title = episodeTitle.trimmingCharacters(in: .whitespaces)
@@ -224,6 +292,19 @@ struct LatestResponse: Decodable { let results: [Anime]; let page: Int; let hasN
 struct WatchRequest: Encodable { let watchUrl: String }
 struct ServerResponse: Decodable { let episode: Int; let servers: [Server] }
 struct PlayRequest: Encodable { let seriesKey: String; let episode: Int; let serverIndex: Int }
+/// Episode counts the Continue screen uses to spot new episodes and seasons.
+struct SeriesStatus: Decodable {
+    let watchUrl: String
+    let totalEpisodes: Int?
+    let status: String?
+    let latestSub: Int?
+    let latestDub: Int?
+    let nextSeason: Season?
+
+    func latest(for kind: StreamKind) -> Int? { kind == .dub ? latestDub : latestSub }
+}
+struct SeriesStatusRequest: Encodable { let watchUrls: [String] }
+struct SeriesStatusResponse: Decodable { let statuses: [SeriesStatus] }
 struct HistoryResponse: Decodable { let entries: [WatchHistoryEntry]; let deletions: [HistoryDeletion]? }
 struct HistoryPayload: Encodable { let entries: [WatchHistoryEntry]; let deletions: [HistoryDeletion] }
 struct PreferencesEnvelope: Codable { let preferences: UserPreferences? }
@@ -236,6 +317,13 @@ struct AdminUserResponse: Decodable { let userId: String; let createdAt: String 
 func catalogPath(of watchUrl: String) -> String {
     let path = URLComponents(string: watchUrl)?.path ?? ""
     return path.isEmpty ? watchUrl : path
+}
+
+/// Whether `episode` is the last one the series will have: the announced
+/// total, or the newest episode of a series that finished airing.
+func isFinalEpisode(_ episode: Int, totalEpisodes: Int?, status: String?, latestEpisode: Int?) -> Bool {
+    if let totalEpisodes { return episode >= totalEpisodes }
+    return status == "finished" && episode >= (latestEpisode ?? episode)
 }
 
 func formatTime(_ seconds: Double) -> String {

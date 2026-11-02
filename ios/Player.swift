@@ -47,6 +47,8 @@ final class PlayerModel: Identifiable {
     private(set) var isPictureInPictureActive = false
     private(set) var isChangingEpisode = false
     private(set) var didFinish = false
+    /// The last episode available for this kind ended: the player closes.
+    private(set) var reachedSeriesEnd = false
     private(set) var errorMessage: String?
     private(set) var speed: PlaybackSpeed = .normal
     var videoGravity: AVLayerVideoGravity = .resizeAspect
@@ -78,7 +80,11 @@ final class PlayerModel: Identifiable {
     }
 
     var hasPrevious: Bool { resolver.episode(adjacentTo: session.historyEntry.episode, offset: -1) != nil }
-    var hasNext: Bool { resolver.episode(adjacentTo: session.historyEntry.episode, offset: 1) != nil }
+    var hasNext: Bool { nextEpisode != nil }
+
+    /// Sub and Dub advance separately: a Dub viewer only moves on to episodes
+    /// that already have a Dub source.
+    private var nextEpisode: Episode? { resolver.series.episode(after: session.historyEntry.episode, kind: session.kind) }
 
     var activeSkip: (title: String, end: Double)? {
         let preferences = profile.preferences
@@ -214,7 +220,7 @@ final class PlayerModel: Identifiable {
 
     func changeEpisode(by offset: Int) {
         guard !isChangingEpisode, !closed,
-              let episode = resolver.episode(adjacentTo: session.historyEntry.episode, offset: offset) else { return }
+              let episode = offset > 0 ? nextEpisode : resolver.episode(adjacentTo: session.historyEntry.episode, offset: offset) else { return }
         saveProgress()
         player.pause()
         isChangingEpisode = true
@@ -464,12 +470,22 @@ final class PlayerModel: Identifiable {
     }
 
     private func playbackEnded() {
-        saveProgress()
-        if profile.preferences.autoNext, hasNext {
+        saveProgress(completed: true)
+        if !hasNext {
+            reachedSeriesEnd = true
+        } else if profile.preferences.autoNext {
             changeEpisode(by: 1)
         } else {
             didFinish = true
         }
+    }
+
+    /// Watched once the outro starts or within the last stretch of the
+    /// episode, so Continue offers the next episode instead of the credits.
+    private func reachedEnd(at seconds: Double) -> Bool {
+        if let outro = session.playback.outro, outro.start > 60, seconds >= outro.start { return true }
+        guard duration > 0 else { return false }
+        return seconds >= duration - min(120, duration * 0.1)
     }
 
     private func fail(_ message: String?) {
@@ -508,14 +524,14 @@ final class PlayerModel: Identifiable {
         let second = Int(seconds)
         guard second != lastSavedSecond, seconds > 0 else { return }
         lastSavedSecond = second
-        profile.update(session.historyEntry, positionSeconds: seconds)
+        profile.update(session.historyEntry, positionSeconds: seconds, durationSeconds: duration, completed: reachedEnd(at: seconds))
         Task { await profile.sync() }
     }
 
-    private func saveProgress() {
+    private func saveProgress(completed: Bool? = nil) {
         let seconds = player.currentTime().seconds
         guard seconds.isFinite, seconds > 0, player.currentItem != nil else { return }
-        profile.update(session.historyEntry, positionSeconds: seconds)
+        profile.update(session.historyEntry, positionSeconds: seconds, durationSeconds: duration, completed: completed ?? reachedEnd(at: seconds))
         Task { await profile.sync(force: true) }
     }
 
@@ -582,17 +598,37 @@ final class PlayerModel: Identifiable {
 }
 
 struct PlayerScreen: View {
+    private enum Level { case brightness, volume }
+    private enum EdgeDrag { case brightness(start: Double), volume(start: Float), ignored }
+    private struct SeekFeedback: Equatable {
+        let forward: Bool
+        let seconds: Int
+    }
+
     let model: PlayerModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
     @State private var showMediaOptions = false
+    @State private var volume = SystemVolume()
+    @State private var brightness: Double = 0.5
+    @State private var originalBrightness: Double?
+    @State private var adjusting: Level?
+    @State private var levelHideTask: Task<Void, Never>?
+    @State private var edgeDrag: EdgeDrag?
+    @State private var seekFeedback: SeekFeedback?
+    @State private var seekFeedbackTask: Task<Void, Never>?
+    @FocusState private var keyboardFocused: Bool
 
     private var entry: WatchHistoryEntry { model.session.historyEntry }
     private var compact: Bool { horizontalSizeClass == .compact }
+    /// iPhone in portrait has no room for the side bars next to the transport
+    /// buttons; there they only appear while adjusting.
+    private var showsSideBars: Bool { !(compact && verticalSizeClass == .regular) }
 
     var body: some View {
         ZStack {
@@ -608,17 +644,7 @@ struct PlayerScreen: View {
                 externalPlaybackCard
             }
 
-            Color.clear
-                .contentShape(Rectangle())
-                .ignoresSafeArea()
-                .onTapGesture(perform: toggleControls)
-                .gesture(MagnifyGesture().onEnded { value in
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        model.videoGravity = value.magnification > 1 ? .resizeAspectFill : .resizeAspect
-                    }
-                })
-                .accessibilityLabel(controlsVisible ? "Ocultar controles" : "Mostrar controles")
-                .accessibilityAddTraits(.isButton)
+            gestureLayer
 
             if (model.isBuffering && model.isPlaying) || model.isChangingEpisode {
                 ProgressView()
@@ -632,6 +658,10 @@ struct PlayerScreen: View {
                     .transition(.opacity)
             }
 
+            sideBars
+
+            seekFeedbackBubble
+
             skipButton
 
             if let message = model.errorMessage {
@@ -641,13 +671,43 @@ struct PlayerScreen: View {
         .environment(\.colorScheme, .dark)
         .statusBarHidden(!controlsVisible)
         .persistentSystemOverlays(controlsVisible ? .automatic : .hidden)
+        // While this view is on screen iOS does not draw its own volume HUD;
+        // the volume bar replaces it.
+        .background {
+            VolumeViewHost(view: volume.view)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .focusable()
+        .focused($keyboardFocused)
+        .focusEffectDisabled()
+        .onKeyPress(keys: [.space, .leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+            handleKey(press.key)
+        }
         .onAppear {
             model.start()
+            volume.start()
+            brightness = Double(ScreenBrightness.level)
+            keyboardFocused = true
             scheduleAutoHide()
         }
         .onDisappear {
             hideTask?.cancel()
+            levelHideTask?.cancel()
+            seekFeedbackTask?.cancel()
+            volume.stop()
+            if let originalBrightness { ScreenBrightness.set(originalBrightness) }
             model.close()
+        }
+        .onChange(of: volume.externalChange) { _, _ in
+            showLevel(.volume)
+        }
+        .onChange(of: model.reachedSeriesEnd) { _, ended in
+            if ended { close() }
+        }
+        .onChange(of: showMediaOptions) { _, showing in
+            if !showing { keyboardFocused = true }
         }
         .onChange(of: model.isPlaying) { _, playing in
             if playing { scheduleAutoHide() } else { showControls(autoHide: false) }
@@ -660,6 +720,175 @@ struct PlayerScreen: View {
         }
         .sheet(isPresented: $showMediaOptions, onDismiss: scheduleAutoHide) {
             MediaOptionsSheet(model: model)
+        }
+    }
+
+    // MARK: Gestures and keyboard
+
+    /// Tap toggles the controls, a double tap on either half seeks 10 s, a
+    /// vertical swipe on the left/right half changes brightness/volume and a
+    /// pinch switches between fit and fill.
+    private var gestureLayer: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2, coordinateSpace: LocalCoordinateSpace.local) { location in
+                    seek(forward: location.x > proxy.size.width / 2)
+                }
+                .onTapGesture(perform: toggleControls)
+                .gesture(edgeDragGesture(in: proxy.size))
+                .simultaneousGesture(MagnifyGesture().onEnded { value in
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        model.videoGravity = value.magnification > 1 ? .resizeAspectFill : .resizeAspect
+                    }
+                })
+        }
+        .ignoresSafeArea()
+        .accessibilityLabel(controlsVisible ? "Ocultar controles" : "Mostrar controles")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggleControls() }
+    }
+
+    private func edgeDragGesture(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 16)
+            .onChanged { drag in
+                if edgeDrag == nil {
+                    let vertical = abs(drag.translation.height) > abs(drag.translation.width)
+                    if !vertical {
+                        edgeDrag = .ignored
+                    } else if drag.startLocation.x < size.width / 2 {
+                        edgeDrag = .brightness(start: brightness)
+                    } else {
+                        edgeDrag = .volume(start: volume.level)
+                    }
+                }
+                let delta = -drag.translation.height / max(size.height * 0.7, 1)
+                switch edgeDrag ?? .ignored {
+                case .brightness(let start):
+                    setBrightness(start + delta)
+                case .volume(let start):
+                    volume.set(start + Float(delta))
+                    showLevel(.volume)
+                default:
+                    break
+                }
+            }
+            .onEnded { _ in edgeDrag = nil }
+    }
+
+    private func handleKey(_ key: KeyEquivalent) -> KeyPress.Result {
+        switch key {
+        case .space:
+            model.togglePlayback()
+            bumpControls()
+        case .leftArrow:
+            seek(forward: false)
+        case .rightArrow:
+            seek(forward: true)
+        case .upArrow:
+            volume.change(by: 1 / 16)
+            showLevel(.volume)
+        case .downArrow:
+            volume.change(by: -1 / 16)
+            showLevel(.volume)
+        default:
+            return .ignored
+        }
+        return .handled
+    }
+
+    /// Seeks 10 s and shows the accumulated jump on that side of the screen.
+    private func seek(forward: Bool) {
+        model.skip(by: forward ? 10 : -10)
+        let previous = seekFeedback?.forward == forward ? seekFeedback?.seconds ?? 0 : 0
+        withAnimation(.easeOut(duration: 0.15)) {
+            seekFeedback = SeekFeedback(forward: forward, seconds: previous + 10)
+        }
+        seekFeedbackTask?.cancel()
+        seekFeedbackTask = Task {
+            try? await Task.sleep(for: .seconds(0.9))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.25)) { seekFeedback = nil }
+        }
+    }
+
+    private func setBrightness(_ value: Double) {
+        if originalBrightness == nil { originalBrightness = Double(ScreenBrightness.level) }
+        brightness = min(max(value, 0), 1)
+        ScreenBrightness.set(brightness)
+        showLevel(.brightness)
+    }
+
+    /// Shows one side bar for a moment even while the controls are hidden.
+    private func showLevel(_ level: Level) {
+        if adjusting != level {
+            withAnimation(.easeOut(duration: 0.15)) { adjusting = level }
+        }
+        levelHideTask?.cancel()
+        levelHideTask = Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.3)) { adjusting = nil }
+        }
+    }
+
+    private var sideBars: some View {
+        HStack {
+            if adjusting == .brightness || (controlsVisible && showsSideBars) {
+                LevelBar(
+                    title: "Brillo",
+                    systemImage: brightness < 0.5 ? "sun.min.fill" : "sun.max.fill",
+                    value: brightness,
+                    onChange: setBrightness,
+                    onEditing: editingLevel
+                )
+                .transition(.opacity)
+            }
+            Spacer(minLength: 0)
+            if adjusting == .volume || (controlsVisible && showsSideBars) {
+                LevelBar(
+                    title: "Volumen",
+                    systemImage: volumeSymbol,
+                    value: Double(volume.level),
+                    onChange: { volume.set(Float($0)); showLevel(.volume) },
+                    onEditing: editingLevel
+                )
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, compact ? 16 : 28)
+    }
+
+    private var volumeSymbol: String {
+        switch volume.level {
+        case 0: return "speaker.slash.fill"
+        case ..<0.34: return "speaker.wave.1.fill"
+        case ..<0.67: return "speaker.wave.2.fill"
+        default: return "speaker.wave.3.fill"
+        }
+    }
+
+    /// Dragging a bar keeps the controls up until it is released.
+    private func editingLevel(_ editing: Bool) {
+        if editing { hideTask?.cancel() } else { scheduleAutoHide() }
+    }
+
+    @ViewBuilder
+    private var seekFeedbackBubble: some View {
+        if let seekFeedback {
+            HStack {
+                if seekFeedback.forward { Spacer() }
+                Label("\(seekFeedback.seconds) s", systemImage: seekFeedback.forward ? "goforward" : "gobackward")
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .glassEffect(.regular, in: .capsule)
+                if !seekFeedback.forward { Spacer() }
+            }
+            .padding(.horizontal, compact ? 72 : 120)
+            .allowsHitTesting(false)
+            .transition(.opacity)
         }
     }
 
@@ -991,6 +1220,140 @@ private struct MediaOptionsSheet: View {
             .contentShape(Rectangle())
         }
         .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
+/// Vertical Liquid Glass bar for brightness or volume. Drag anywhere on it
+/// to set the level; VoiceOver adjusts it with swipes.
+private struct LevelBar: View {
+    let title: String
+    let systemImage: String
+    let value: Double
+    let onChange: (Double) -> Void
+    let onEditing: (Bool) -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            GeometryReader { proxy in
+                ZStack(alignment: .bottom) {
+                    Capsule().fill(.white.opacity(0.2))
+                    Capsule().fill(.white)
+                        .frame(height: proxy.size.height * min(max(value, 0), 1))
+                }
+            }
+            .frame(width: 6)
+            Image(systemName: systemImage)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 20)
+        }
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+        .frame(width: 44, height: 168)
+        .glassEffect(.regular, in: .capsule)
+        .contentShape(Capsule())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { drag in
+                    onEditing(true)
+                    // The track spans the bar minus the padding and the icon.
+                    onChange(1 - (drag.location.y - 16) / (168 - 16 - 42))
+                }
+                .onEnded { _ in onEditing(false) }
+        )
+        .accessibilityElement()
+        .accessibilityLabel(title)
+        .accessibilityValue("\(Int((value * 100).rounded())) %")
+        .accessibilityAdjustableAction { direction in
+            onChange(value + (direction == .increment ? 0.1 : -0.1))
+        }
+    }
+}
+
+/// System output volume (also the AirPlay route's). Apps can only set it
+/// through an MPVolumeView, so a 1-pt one stays on screen with the player.
+@MainActor
+@Observable
+final class SystemVolume {
+    private(set) var level: Float = AVAudioSession.sharedInstance().outputVolume
+    /// Bumped when the hardware buttons (or Control Center) change the volume.
+    private(set) var externalChange = 0
+
+    let view: MPVolumeView = {
+        let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        view.alpha = 0.01
+        view.isUserInteractionEnabled = false
+        return view
+    }()
+    @ObservationIgnored private var observation: NSKeyValueObservation?
+    @ObservationIgnored private var requested: Float?
+
+    func start() {
+        guard observation == nil else { return }
+        level = AVAudioSession.sharedInstance().outputVolume
+        observation = observeOutputVolume()
+    }
+
+    func stop() {
+        observation?.invalidate()
+        observation = nil
+    }
+
+    func set(_ value: Float) {
+        let clamped = min(max(value, 0), 1)
+        level = clamped
+        requested = clamped
+        guard let slider = Self.slider(in: view) else { return }
+        slider.setValue(clamped, animated: false)
+        slider.sendActions(for: .valueChanged)
+    }
+
+    func change(by delta: Float) {
+        set(level + delta)
+    }
+
+    private static func slider(in view: UIView) -> UISlider? {
+        if let slider = view as? UISlider { return slider }
+        for subview in view.subviews {
+            if let slider = slider(in: subview) { return slider }
+        }
+        return nil
+    }
+
+    nonisolated private func observeOutputVolume() -> NSKeyValueObservation {
+        AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
+            let value = session.outputVolume
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.outputVolumeChanged(value) }
+            }
+        }
+    }
+
+    private func outputVolumeChanged(_ value: Float) {
+        let ownChange = requested.map { abs($0 - value) < 0.02 } ?? false
+        level = value
+        if !ownChange { externalChange += 1 }
+    }
+}
+
+private struct VolumeViewHost: UIViewRepresentable {
+    let view: MPVolumeView
+
+    func makeUIView(context: Context) -> MPVolumeView { view }
+    func updateUIView(_ view: MPVolumeView, context: Context) {}
+}
+
+/// Brightness of the screen showing the app.
+@MainActor
+enum ScreenBrightness {
+    private static var screen: UIScreen? {
+        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
+    }
+
+    static var level: CGFloat { screen?.brightness ?? 0.5 }
+
+    static func set(_ value: Double) {
+        screen?.brightness = CGFloat(min(max(value, 0), 1))
     }
 }
 

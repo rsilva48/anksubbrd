@@ -68,7 +68,8 @@ final class PlaybackResolver {
                 positionSeconds: profile.position(for: anime.watchUrl, episode: episode.number),
                 updatedAt: Date(),
                 titleJp: series.titleJp ?? anime.titleJp,
-                serverKind: resolvedKind.rawValue
+                serverKind: resolvedKind.rawValue,
+                totalEpisodes: series.totalEpisodes
             )
             return PlaybackSession(playback: playback, historyEntry: entry, kind: resolvedKind)
         }
@@ -112,6 +113,11 @@ struct EpisodesScreen: View {
     var body: some View {
         List {
             header
+            if let synopsis = series?.synopsis, !synopsis.isEmpty {
+                Section("Sinopsis") {
+                    SynopsisText(text: synopsis)
+                }
+            }
             if seasons.count > 1 {
                 Section {
                     Picker("Temporada", selection: $selectedSeasonURL) {
@@ -139,7 +145,7 @@ struct EpisodesScreen: View {
                 }
             }
         }
-        .navigationTitle(current.displayTitle(language))
+        // The title is shown next to the poster only.
         .navigationBarTitleDisplayMode(.inline)
         .task(id: current.watchUrl) { await loadSeries() }
         .refreshable { await loadSeries() }
@@ -173,17 +179,20 @@ struct EpisodesScreen: View {
     private var header: some View {
         Section {
             HStack(alignment: .top, spacing: 16) {
-                PosterImage(imageURL: current.imageUrl)
+                PosterImage(imageURL: current.imageUrl ?? series?.imageUrl)
                     .frame(width: 96)
                 VStack(alignment: .leading, spacing: 8) {
                     SeriesTitle(title: series?.title ?? current.title, titleJp: series?.titleJp ?? current.titleJp, language: language, font: .title3.weight(.bold), lineLimit: 3)
-                    if !current.metadataLine.isEmpty {
-                        Text(current.metadataLine)
+                    if current.isAdult || series?.isAdult == true {
+                        AdultBadge()
+                    }
+                    if !metadataLine.isEmpty {
+                        Text(metadataLine)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                     if let series {
-                        Text("\(series.episodes.count) episodios")
+                        Text(episodeCountLine(series))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -195,19 +204,64 @@ struct EpisodesScreen: View {
         }
     }
 
+    private var metadataLine: String {
+        let fromSeries = series?.metadataLine ?? ""
+        return fromSeries.isEmpty ? current.metadataLine : fromSeries
+    }
+
+    private func episodeCountLine(_ series: Series) -> String {
+        if let total = series.totalEpisodes, total > series.episodes.count {
+            return "\(series.episodes.count) de \(total) episodios"
+        }
+        return "\(series.episodes.count) episodios"
+    }
+
+    /// The season that follows this one in the watch order, skipping extras
+    /// such as specials when a regular season comes later.
+    private var followingSeason: Season? {
+        let path = catalogPath(of: current.watchUrl)
+        guard let index = seasons.firstIndex(where: { catalogPath(of: $0.watchUrl) == path }) else { return nil }
+        let following = seasons[(index + 1)...]
+        return following.first { !$0.isExtra } ?? following.first
+    }
+
     @ViewBuilder
     private var primaryAction: some View {
         if let series {
             if let entry = profile.entry(for: current.watchUrl),
                let episode = series.episodes.first(where: { $0.number == entry.episode }) {
-                Button {
-                    start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
-                } label: {
-                    Label("Continuar episodio \(entry.episode) · \(formatTime(entry.positionSeconds))", systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
+                let kind = entry.kind ?? profile.preferences.defaultTrack
+                if !entry.isCompleted {
+                    actionButton("Continuar episodio \(entry.episode) · \(formatTime(entry.positionSeconds))") {
+                        start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
+                    }
+                } else if let next = series.episode(after: entry.episode, kind: kind) {
+                    // Finished episodes never reopen on their last second:
+                    // the next one with the same Sub/Dub kind starts instead.
+                    actionButton("Ver episodio \(next.number) · siguiente") {
+                        start { try await $0.session(for: next, preferredName: entry.serverName, kind: kind) }
+                    }
+                } else {
+                    let finished = isFinalEpisode(entry.episode, totalEpisodes: series.totalEpisodes, status: series.status, latestEpisode: series.episodes.last?.number)
+                    if finished, let nextSeason = followingSeason {
+                        actionButton("Ver \(label(for: nextSeason))", systemImage: "forward.fill") {
+                            selectedSeasonURL = nextSeason.watchUrl
+                        }
+                    }
+                    Label(
+                        finished ? "Serie completada · viste los \(entry.episode) episodios" : "Estás al día: viste el episodio \(entry.episode). Aparecerá aquí cuando salga el siguiente en \(kind.displayName).",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    Button {
+                        start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
+                    } label: {
+                        Label("Volver a ver el episodio \(entry.episode)", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glass)
                 }
-                .buttonStyle(.glassProminent)
-                .controlSize(.large)
             } else if let episode = series.episodes.first(where: { $0.number == latestEpisode }) ?? series.episodes.first {
                 Button {
                     chooseServer(for: episode)
@@ -221,8 +275,18 @@ struct EpisodesScreen: View {
         }
     }
 
+    private func actionButton(_ title: String, systemImage: String = "play.fill", action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.glassProminent)
+        .controlSize(.large)
+    }
+
     private func episodesSection(_ series: Series) -> some View {
-        let inProgress = profile.entry(for: current.watchUrl)
+        let entry = profile.entry(for: current.watchUrl)
+        let kind = entry?.kind ?? profile.preferences.defaultTrack
         return Section("Episodios") {
             ForEach(series.episodes) { episode in
                 Button {
@@ -230,8 +294,10 @@ struct EpisodesScreen: View {
                 } label: {
                     EpisodeRow(
                         episode: episode,
-                        progress: inProgress?.episode == episode.number ? inProgress?.positionSeconds : nil,
-                        isLatest: episode.number == latestEpisode
+                        progress: entry?.episode == episode.number && entry?.isCompleted == false ? entry?.positionSeconds : nil,
+                        watched: entry.map { episode.number < $0.episode || (episode.number == $0.episode && $0.isCompleted) } ?? false,
+                        isLatest: episode.number == latestEpisode,
+                        missingKind: episode.isAvailable(for: kind) ? nil : kind
                     )
                 }
             }
@@ -239,6 +305,7 @@ struct EpisodesScreen: View {
     }
 
     private func label(for season: Season) -> String {
+        if let label = season.localizedLabel { return label }
         let sameNumber = seasons.filter { $0.seasonNumber == season.seasonNumber }.count > 1
         return sameNumber ? season.anime.displayTitle(language) : "Temporada \(season.seasonNumber)"
     }
@@ -304,7 +371,10 @@ struct EpisodesScreen: View {
 private struct EpisodeRow: View {
     let episode: Episode
     let progress: Double?
+    let watched: Bool
     let isLatest: Bool
+    /// Sub/Dub kind the viewer uses that this episode does not have yet.
+    let missingKind: StreamKind?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -325,12 +395,40 @@ private struct EpisodeRow: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.tint)
                 }
+                if let missingKind {
+                    Text("Aún sin \(missingKind.displayName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 0)
-            Image(systemName: "play.circle")
-                .foregroundStyle(.secondary)
+            Image(systemName: watched ? "checkmark.circle.fill" : "play.circle")
+                .foregroundStyle(watched ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .accessibilityLabel(watched ? "Visto" : "Reproducir")
         }
         .contentShape(Rectangle())
+    }
+}
+
+/// Synopsis clamped to a few lines with a toggle for long texts.
+private struct SynopsisText: View {
+    let text: String
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(text)
+                .font(.subheadline)
+                .lineLimit(expanded ? nil : 4)
+                .textSelection(.enabled)
+            if text.count > 220 {
+                Button(expanded ? "Menos" : "Más") {
+                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                }
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.borderless)
+            }
+        }
     }
 }
 

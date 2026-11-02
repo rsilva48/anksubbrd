@@ -27,6 +27,27 @@ struct CatalogFilters: Equatable {
     }
 }
 
+/// Which episodes Recents follows: the configured kind by default.
+enum CatalogLanguage: String, CaseIterable, Identifiable {
+    case sub
+    case dub
+    case all
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .sub: return "Sub"
+        case .dub: return "Dub"
+        case .all: return "Sub y Dub"
+        }
+    }
+
+    init(_ kind: StreamKind) {
+        self = kind == .dub ? .dub : .sub
+    }
+}
+
 /// Paged catalog results. A new `reset` invalidates replies still in flight.
 @MainActor
 @Observable
@@ -154,6 +175,12 @@ struct PosterCard: View {
                     }
                     .padding(6)
                 }
+                .overlay(alignment: .topTrailing) {
+                    if anime.isAdult {
+                        AdultBadge()
+                            .padding(6)
+                    }
+                }
             Text(anime.displayTitle(language))
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)
@@ -189,6 +216,7 @@ private struct FeedKey: Equatable {
     let scope: String?
     let query: String
     let filters: CatalogFilters
+    var language: CatalogLanguage? = nil
 }
 
 struct LatestScreen: View {
@@ -197,8 +225,11 @@ struct LatestScreen: View {
     @State private var filters = CatalogFilters()
     @State private var showFilters = false
     @State private var loadedKey: FeedKey?
+    /// Chosen in the toolbar for this session; otherwise the configured kind.
+    @State private var languageOverride: CatalogLanguage?
 
-    private var key: FeedKey { FeedKey(scope: profile.scope, query: "", filters: filters) }
+    private var language: CatalogLanguage { languageOverride ?? CatalogLanguage(profile.preferences.defaultTrack) }
+    private var key: FeedKey { FeedKey(scope: profile.scope, query: "", filters: filters, language: language) }
 
     var body: some View {
         NavigationStack {
@@ -209,6 +240,17 @@ struct LatestScreen: View {
             .modifier(AdaptableTabRootTitleStyle())
             .navigationDestination(for: Anime.self) { EpisodesScreen(anime: $0) }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Picker("Episodios", selection: Binding(get: { language }, set: { languageOverride = $0 })) {
+                            ForEach(CatalogLanguage.allCases) { Text($0.title).tag($0) }
+                        }
+                    } label: {
+                        Label(language.title, systemImage: "captions.bubble")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .accessibilityLabel("Episodios: \(language.title)")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     FiltersButton(isActive: filters.isActive) { showFilters = true }
                 }
@@ -225,9 +267,10 @@ struct LatestScreen: View {
     }
 
     private func reload(keepingItems: Bool) async {
-        let base = profile.bridgeURL, filters = filters
+        let base = profile.bridgeURL, filters = filters, language = language
         await feed.reset(keepingItems: keepingItems) { page in
-            let reply: LatestResponse = try await BridgeClient.get(base: base, path: "/api/latest", query: filters.queryItems(page: page))
+            let query = filters.queryItems(page: page) + [URLQueryItem(name: "language", value: language.rawValue)]
+            let reply: LatestResponse = try await BridgeClient.get(base: base, path: "/api/latest", query: query)
             return (reply.results, reply.hasNext)
         }
     }
@@ -350,7 +393,7 @@ struct CatalogFilterSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Estación", selection: $draft.season) {
+                    Picker("Temporada", selection: $draft.season) {
                         Text("Todas").tag("")
                         Text("Invierno").tag("winter")
                         Text("Primavera").tag("spring")

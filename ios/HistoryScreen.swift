@@ -13,39 +13,51 @@ struct HistoryScreen: View {
     }
 }
 
+/// Where a series stands for the viewer, from its history entry and the
+/// bridge's episode counts for the Sub/Dub kind they were watching.
+private enum ContinueState {
+    case inProgress
+    /// The finished episode has successors of the same kind.
+    case newEpisodes(count: Int)
+    /// The series is complete and the watch order has a season not started yet.
+    case nextSeason(Season)
+    /// Watched up to the newest episode of a series that is still airing.
+    case caughtUp
+    case completed
+
+    var section: Int {
+        switch self {
+        case .inProgress, .newEpisodes, .nextSeason: return 0
+        case .caughtUp: return 1
+        case .completed: return 2
+        }
+    }
+}
+
 private struct HistoryList: View {
     @Environment(ProfileStore.self) private var profile
     @State private var editMode: EditMode = .inactive
     @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
     @State private var showBulkDeleteConfirmation = false
+    /// Bridge episode counts by catalog path; only finished entries need them.
+    @State private var statuses: [String: SeriesStatus] = [:]
 
     private var isEditing: Bool { editMode.isEditing }
     private var entries: [WatchHistoryEntry] { profile.entries }
+    private var finishedURLs: [String] { entries.filter(\.isCompleted).map(\.watchUrl) }
 
     var body: some View {
         List(selection: $selectedEntryIDs) {
             if entries.isEmpty {
                 ContentUnavailableView("Nada para continuar", systemImage: "play.circle", description: Text("Las series que reproduzcas con esta identidad aparecerán aquí con el segundo en que las dejaste."))
             } else {
-                Section("Reproducciones recientes") {
-                    ForEach(entries) { entry in
-                        NavigationLink {
-                            EpisodesScreen(anime: entry.anime)
-                        } label: {
-                            HistoryRow(entry: entry, language: profile.preferences.titleLanguage)
-                        }
-                        .tag(entry.id)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                delete([entry])
-                            } label: {
-                                Label("Borrar", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
+                let states = Dictionary(entries.map { ($0.id, state(of: $0)) }, uniquingKeysWith: { first, _ in first })
+                section("En curso", entries: entries.filter { states[$0.id]?.section == 0 }, states: states)
+                section("Al día", entries: entries.filter { states[$0.id]?.section == 1 }, states: states, footer: "Vuelven a «En curso» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.")
+                section("Completados", entries: entries.filter { states[$0.id]?.section == 2 }, states: states)
             }
         }
+        .task(id: finishedURLs) { await loadStatuses() }
         .environment(\.editMode, $editMode)
         .listStyle(.insetGrouped)
         .navigationTitle("Continuar viendo")
@@ -88,6 +100,7 @@ private struct HistoryList: View {
         }
         .refreshable {
             await profile.sync(force: true)
+            await loadStatuses()
         }
         .onChange(of: entries) { _, updatedEntries in
             selectedEntryIDs.formIntersection(Set(updatedEntries.map(\.id)))
@@ -96,6 +109,65 @@ private struct HistoryList: View {
             if !editing {
                 selectedEntryIDs.removeAll()
             }
+        }
+    }
+
+    @ViewBuilder
+    private func section(_ title: String, entries: [WatchHistoryEntry], states: [WatchHistoryEntry.ID: ContinueState], footer: String? = nil) -> some View {
+        if !entries.isEmpty {
+            Section {
+                ForEach(entries) { entry in
+                    let state = states[entry.id] ?? .inProgress
+                    NavigationLink {
+                        if case .nextSeason(let season) = state {
+                            EpisodesScreen(anime: season.anime)
+                        } else {
+                            EpisodesScreen(anime: entry.anime)
+                        }
+                    } label: {
+                        HistoryRow(entry: entry, state: state, language: profile.preferences.titleLanguage)
+                    }
+                    .tag(entry.id)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            delete([entry])
+                        } label: {
+                            Label("Borrar", systemImage: "trash")
+                        }
+                    }
+                }
+            } header: {
+                Text(title)
+            } footer: {
+                if let footer { Text(footer) }
+            }
+        }
+    }
+
+    private func state(of entry: WatchHistoryEntry) -> ContinueState {
+        guard entry.isCompleted else { return .inProgress }
+        let kind = entry.kind ?? profile.preferences.defaultTrack
+        let status = statuses[catalogPath(of: entry.watchUrl)]
+        let latest = status?.latest(for: kind)
+        if let latest, latest > entry.episode { return .newEpisodes(count: latest - entry.episode) }
+        let isFinal = isFinalEpisode(entry.episode, totalEpisodes: status?.totalEpisodes ?? entry.totalEpisodes, status: status?.status, latestEpisode: latest)
+        guard isFinal else { return .caughtUp }
+        if let next = status?.nextSeason, profile.entry(for: next.watchUrl) == nil { return .nextSeason(next) }
+        return .completed
+    }
+
+    private func loadStatuses() async {
+        let urls = finishedURLs
+        guard !urls.isEmpty else { return }
+        do {
+            let reply: SeriesStatusResponse = try await BridgeClient.post(base: profile.bridgeURL, path: "/api/series/status", body: SeriesStatusRequest(watchUrls: urls))
+            var updated = statuses
+            for status in reply.statuses {
+                updated[catalogPath(of: status.watchUrl)] = status
+            }
+            statuses = updated
+        } catch {
+            // Older bridges: entries are grouped with their own details.
         }
     }
 
@@ -142,6 +214,7 @@ private struct HistoryList: View {
 
 private struct HistoryRow: View {
     let entry: WatchHistoryEntry
+    let state: ContinueState
     let language: TitleLanguage
 
     private var serverLine: String {
@@ -154,9 +227,8 @@ private struct HistoryRow: View {
                 .frame(width: 56)
             VStack(alignment: .leading, spacing: 4) {
                 SeriesTitle(title: entry.seriesTitle, titleJp: entry.titleJp, language: language)
-                Text("\(entry.episodeLabel) · \(formatTime(entry.positionSeconds))")
+                detail
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
                 if !serverLine.isEmpty {
                     Text(serverLine)
                         .font(.caption)
@@ -165,5 +237,26 @@ private struct HistoryRow: View {
             }
         }
         .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        switch state {
+        case .inProgress:
+            Text("\(entry.episodeLabel) · \(formatTime(entry.positionSeconds))")
+                .foregroundStyle(.secondary)
+        case .newEpisodes(let count):
+            Label(count == 1 ? "Nuevo: episodio \(entry.episode + 1)" : "\(count) episodios nuevos desde el \(entry.episode + 1)", systemImage: "sparkles")
+                .foregroundStyle(.tint)
+        case .nextSeason(let season):
+            Label("Nueva temporada: \(season.localizedLabel ?? season.anime.displayTitle(language))", systemImage: "sparkles")
+                .foregroundStyle(.tint)
+        case .caughtUp:
+            Text("Al día · viste el episodio \(entry.episode)")
+                .foregroundStyle(.secondary)
+        case .completed:
+            Label("Completada · \(entry.episode) episodios", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.secondary)
+        }
     }
 }

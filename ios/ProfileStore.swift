@@ -97,20 +97,28 @@ final class ProfileStore {
         return entries.first { catalogPath(of: $0.watchUrl) == path }
     }
 
+    /// Where an episode resumes. A finished episode starts over instead of
+    /// reopening on its last second.
     func position(for watchUrl: String, episode: Int) -> Double {
-        guard let entry = entry(for: watchUrl), entry.episode == episode else { return 0 }
+        guard let entry = entry(for: watchUrl), entry.episode == episode, !entry.isCompleted else { return 0 }
         return entry.positionSeconds
     }
 
     func open(_ entry: WatchHistoryEntry) {
         var copy = entry
         copy.positionSeconds = position(for: entry.watchUrl, episode: entry.episode)
+        if let existing = self.entry(for: entry.watchUrl), existing.episode == entry.episode, !existing.isCompleted {
+            copy.durationSeconds = existing.durationSeconds
+        }
+        copy.completed = false
         upsert(copy)
     }
 
-    func update(_ entry: WatchHistoryEntry, positionSeconds: Double) {
+    func update(_ entry: WatchHistoryEntry, positionSeconds: Double, durationSeconds: Double? = nil, completed: Bool = false) {
         var copy = entry
         copy.positionSeconds = positionSeconds
+        if let durationSeconds, durationSeconds > 0 { copy.durationSeconds = durationSeconds }
+        copy.completed = completed
         upsert(copy)
     }
 

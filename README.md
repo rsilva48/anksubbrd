@@ -22,12 +22,15 @@ Las URLs y tokens temporales del proveedor no se registran en disco y desaparece
 2. En el primer uso, **Buscar**, **Recientes** y **Continuar** permanecen bloqueados y ofrecen un acceso directo a **Configuración**.
 3. En **Configuración → Bridge** elige `https://` (predeterminado) o `http://` y escribe sólo el dominio o la IP, con puerto si hace falta (`bridge.midominio.com` o `192.168.1.20:8787`). Si pegas una dirección con `http://` o `https://`, el prefijo se quita del campo y el selector adopta ese protocolo. **Probar y guardar** activa la dirección únicamente si `/health` responde.
 4. Si el bridge requiere identidad, créala, restáurala desde el Llavero de iCloud o importa un token (ver [Identidades](#identidades)).
-5. Busca una serie (al abrir **Buscar** el campo se activa con el teclado) o entra en **Recientes**, donde cada póster muestra el episodio más reciente, el total si se conoce y los episodios en Dub. Elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
+5. Busca una serie (al abrir **Buscar** el campo se activa con el teclado) o entra en **Recientes**, que sigue los estrenos del tipo configurado (`Sub` o `Dub`; el selector de la barra permite cambiar a Sub, Dub o ambos). Cada póster muestra el episodio más reciente, el total si se conoce, los episodios en Dub y una marca **+18** en series R+ o Rx. La ficha de la serie muestra la sinopsis, el estado de emisión y las temporadas relacionadas según el orden de visionado del catálogo. Elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
 
 ### Reproductor
 
 - El vídeo ocupa siempre toda la pantalla; los controles flotan encima con Liquid Glass y nunca lo redimensionan.
 - Un toque muestra u oculta todos los controles a la vez; se ocultan solos tras unos segundos de reproducción.
+- Doble toque en la mitad izquierda o derecha retrocede o adelanta 10 s (se acumula si repites). Deslizar en vertical en la mitad izquierda cambia el brillo y en la derecha el volumen; con los controles visibles también aparecen las barras de brillo (izquierda) y volumen (derecha), salvo en iPhone vertical, donde se muestran sólo al ajustar.
+- Con teclado físico: espacio reproduce/pausa, ← → retroceden/adelantan 10 s y ↑ ↓ cambian el volumen.
+- Al terminar el último episodio disponible (del tipo Sub o Dub que estabas viendo) el reproductor se cierra solo.
 - Incluye AirPlay, imagen dentro de imagen, ±10 s, episodio anterior/siguiente sin cerrar el reproductor, un panel de subtítulos, audio y velocidad, ajuste/relleno de pantalla (también con gesto de pellizco) y botones **Saltar intro/outro**.
 - Sub activa los subtítulos automáticamente: el idioma elegido en **Subtítulos en Sub**, si no el idioma del dispositivo y, si no existe, la pista predeterminada del bridge (inglés). Cambiar de subtítulo durante un episodio Sub actualiza esa preferencia.
 - Los controles de la pantalla bloqueada y del Centro de control funcionan mientras se reproduce por AirPlay.
@@ -36,7 +39,9 @@ Usa el botón AirPlay del reproductor, no **Duplicar pantalla**: la app configur
 
 ### Continuar viendo
 
-Guarda la serie, episodio, servidor, tipo (Sub/Dub) y segundo actual de las últimas 50 series. **Continuar** reanuda directamente con el mismo servidor y tipo. Al abrir una serie, el botón **Continuar** aparece en la temporada que tenga progreso; cambiar de temporada actualiza la misma pantalla, así que **Atrás** siempre vuelve a donde entraste.
+Guarda la serie, episodio, servidor, tipo (Sub/Dub) y segundo actual de las últimas 50 series. **Continuar** reanuda directamente con el mismo servidor y tipo. Un episodio cuenta como visto al llegar al outro o a sus últimos minutos; entonces la serie ofrece el siguiente episodio del mismo tipo en lugar de reabrir el final del anterior.
+
+La lista se divide en **En curso** (incluye las series con un episodio nuevo o, si terminaste, una temporada siguiente por empezar), **Al día** (viste el último episodio emitido y la serie sigue en emisión) y **Completados**. Los episodios nuevos se cuentan sólo en el tipo que estabas viendo: un estreno en Dub no aparece si ves la serie en Sub. Al abrir una serie, el botón **Continuar** aparece en la temporada que tenga progreso; cambiar de temporada actualiza la misma pantalla, así que **Atrás** siempre vuelve a donde entraste.
 
 Con el idioma de catálogo en japonés, la lista muestra el nombre en inglés y debajo el título japonés.
 
@@ -211,8 +216,9 @@ La app usa estas rutas; no necesitas llamarlas manualmente.
 
 - `GET /health`
 - `GET /api/search?q=titulo`
-- `GET /api/latest?page=1&season=winter&status=currently-airing` (filtros paginados; `q` busca por título)
-- `POST /api/series` con `{ "watchUrl": "…" }`
+- `GET /api/latest?page=1&language=sub&season=winter&status=currently-airing` (filtros paginados; `q` busca por título; `language` es `sub`, `dub` o `all`)
+- `POST /api/series` con `{ "watchUrl": "…" }` (incluye sinopsis, clasificación, estado, total de episodios, disponibilidad Sub/Dub por episodio y temporadas relacionadas)
+- `POST /api/series/status` con `{ "watchUrls": ["…"] }`: último episodio Sub y Dub, total, estado y temporada siguiente de hasta 50 series (caché de 15 min)
 - `GET /api/series/:seriesKey/servers?episode=2`
 - `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`
 - `GET` / `PUT /api/history`: historial privado; se conserva el episodio más reciente de cada serie y los borrados se sincronizan.

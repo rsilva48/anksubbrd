@@ -144,3 +144,22 @@ test('History rows keep a valid server kind only', () => {
   assert.equal(normalizeHistoryEntry({ ...base, serverKind: 'dub' }).serverKind, 'dub');
   assert.equal(normalizeHistoryEntry({ ...base, serverKind: 'raw' }).serverKind, null);
 });
+
+test('History rows keep completion details for the Continue screen', () => {
+  const base = { watchUrl: '/watch/example-1', episode: 12, positionSeconds: 1400 };
+  const entry = normalizeHistoryEntry({ ...base, durationSeconds: 1420, completed: true, totalEpisodes: 12 });
+  assert.deepEqual([entry.durationSeconds, entry.completed, entry.totalEpisodes], [1420, true, 12]);
+  const legacy = normalizeHistoryEntry(base);
+  assert.deepEqual([legacy.durationSeconds, legacy.completed, legacy.totalEpisodes], [null, false, null]);
+  assert.equal(normalizeHistoryEntry({ ...base, completed: 'yes', totalEpisodes: -1 }).completed, false);
+});
+
+test('Sub and Dub recents use the home widgets and flag adult cards', async (context) => {
+  const html = '<div class="item"><div class="ani poster"><a href="/watch/delta-4/ep-9"><img src="/p.jpg"><div class="meta"><div class="inner"><div class="left"><span class="ep-status sub"><span> 9</span></span><span class="ep-status dub"><span> 8</span></span></div></div></div></a><div class="adult"></div></div><div class="info"><a class="name d-title" href="/watch/delta-4/ep-9">Delta</a></div></div>';
+  const requested = [];
+  context.mock.method(globalThis, 'fetch', async (url) => { requested.push(String(url)); return Response.json({ status: 200, result: html }); });
+  const { results, hasNext } = await createAnkProvider('https://catalog.example').latest(new URLSearchParams({ language: 'dub', page: '2' }));
+  assert.equal(requested[0], 'https://catalog.example/ajax/home/widget/updated-dub?page=2');
+  assert.deepEqual(results.map(({ episode, adult }) => ({ episode, adult })), [{ episode: 8, adult: true }]);
+  assert.equal(hasNext, false);
+});

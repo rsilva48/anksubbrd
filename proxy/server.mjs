@@ -16,6 +16,8 @@ const bridgeVersion = (() => {
 const declareAudioLanguage = process.env.DECLARE_AUDIO_LANGUAGE !== 'false';
 const sources = new Map();
 const seriesCache = new Map();
+// Episode counts per series for the Continue screen, refreshed every 15 minutes.
+const seriesSummaries = new Map();
 const bridgeUsers = configuredBridgeUsers();
 const bridgeAdminToken = cleanText(process.env.BRIDGE_ADMIN_TOKEN);
 const historyStorePath = resolve(process.env.HISTORY_STORE_PATH ?? `${process.cwd()}/data/history.json`);
@@ -321,6 +323,8 @@ function normalizeHistoryEntry(value) {
   const episode = Number(value?.episode);
   if (!Number.isInteger(episode) || episode < 1 || episode > 100000) throw new Error('History episode is invalid');
   const position = Number(value?.positionSeconds);
+  const duration = Number(value?.durationSeconds ?? NaN);
+  const totalEpisodes = Number(value?.totalEpisodes ?? NaN);
   return {
     seriesTitle: historyText(value?.seriesTitle, 'Untitled'),
     titleJp: value?.titleJp ? historyText(value.titleJp, '', 500) : null,
@@ -331,6 +335,9 @@ function normalizeHistoryEntry(value) {
     serverName: historyText(value?.serverName, ''),
     serverKind: ['sub', 'dub'].includes(value?.serverKind) ? value.serverKind : null,
     positionSeconds: Number.isFinite(position) ? Math.max(0, position) : 0,
+    durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : null,
+    completed: value?.completed === true,
+    totalEpisodes: Number.isInteger(totalEpisodes) && totalEpisodes > 0 ? totalEpisodes : null,
     updatedAt: historyDate(value?.updatedAt).toISOString(),
   };
 }
@@ -490,6 +497,12 @@ function seasonIdentity(title) {
     base = cleanText(base.replace(pattern, ''));
     break;
   }
+  // "Title II" style sequels.
+  const roman = seasonNumber === null ? base.match(/\s+(II|III|IV|V|VI|VII|VIII|IX|X)$/) : null;
+  if (roman) {
+    seasonNumber = ['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'].indexOf(roman[1]) + 2;
+    base = cleanText(base.slice(0, roman.index));
+  }
   return { base, baseKey: normalizedTitle(base), seasonNumber };
 }
 function seasonRecord(anime) {
@@ -500,8 +513,43 @@ async function getSeries(watchUrl) {
   const series = await provider.series(provider.watchUrl(watchUrl));
   if (!series.episodes.length) throw new Error('No episodes were returned');
   const key = randomUUID(); seriesCache.set(key, { ...series, expiresAt: Date.now() + 20 * 60 * 1000 });
+  rememberSummary(series);
   console.info(`[bridge] Loaded ${series.title}: ${series.episodes.length} episode(s), ${series.seasons.length} related season(s)`);
-  return { seriesKey: key, title: series.title, titleJp: series.titleJp, episodes: series.episodes.map(({ number, title }) => ({ number, title })), seasons: series.seasons };
+  const { synopsis, rating, adult, status, mediaType, score, totalEpisodes, imageUrl } = series;
+  return {
+    seriesKey: key, title: series.title, titleJp: series.titleJp, synopsis, rating, adult, status, mediaType, score, totalEpisodes, imageUrl,
+    episodes: series.episodes.map(({ number, title, sub, dub }) => ({ number, title, sub, dub })), seasons: series.seasons,
+  };
+}
+// The newest Sub and Dub episode, the announced total and the season that
+// follows in the watch order: enough for the app to tell a finished series
+// from one waiting for its next episode.
+function seriesSummary(series) {
+  const latest = (kind) => series.episodes.reduce((newest, episode) => (episode[kind] ? Math.max(newest, episode.number) : newest), 0) || null;
+  const index = series.seasons.findIndex((season) => season.watchUrl === series.watchUrl);
+  const following = index >= 0 ? series.seasons.slice(index + 1) : [];
+  const nextSeason = following.find((season) => !/\b(?:specials?|mini anime|recap|ova|oad|movie|film)\b/i.test(season.title)) ?? following[0] ?? null;
+  return { watchUrl: series.watchUrl, totalEpisodes: series.totalEpisodes, status: series.status, latestSub: latest('sub'), latestDub: latest('dub'), nextSeason };
+}
+function rememberSummary(series) {
+  const summary = seriesSummary(series);
+  seriesSummaries.set(series.watchUrl, { summary, expiresAt: Date.now() + 15 * 60 * 1000 });
+  return summary;
+}
+async function getSeriesStatuses(watchUrls) {
+  if (!Array.isArray(watchUrls)) throw new HttpError(400, 'watchUrls must be an array');
+  const urls = [...new Set(watchUrls.slice(0, 50).map((value) => { try { return provider.watchUrl(String(value)); } catch { return null; } }).filter(Boolean))];
+  const statuses = []; let next = 0;
+  // A few at a time so a long Continue list does not flood the catalog.
+  async function worker() {
+    while (next < urls.length) {
+      const url = urls[next++]; const cached = seriesSummaries.get(url);
+      if (cached && cached.expiresAt > Date.now()) { statuses.push(cached.summary); continue; }
+      try { statuses.push(rememberSummary(await provider.series(url))); } catch (error) { console.warn(`[bridge] Status lookup failed: ${error.message}`); }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(4, urls.length) }, worker));
+  return { statuses };
 }
 function cachedSeries(key) {
   const series = seriesCache.get(key);
@@ -557,6 +605,7 @@ function createAnkProvider(configuredOrigin) {
     if (Number(payload.status) !== 200) throw new Error(payload.message || 'Provider did not return a successful result');
     return payload.result;
   }
+  function isAdultRating(rating) { return ['R+', 'Rx'].includes(rating); }
   function parseSearch(html) {
     const $ = load(html); const seen = new Set(); const results = [];
     $('a.item[href*="/watch/"]').each((_, node) => {
@@ -577,7 +626,7 @@ function createAnkProvider(configuredOrigin) {
         titleJp: cleanText($(node).find('.name').first().attr('data-jp')) || null,
         imageUrl: $(node).find('img').first().attr('src') ? absoluteUrl($(node).find('img').first().attr('src'), providerOrigin) : null,
         meta: cleanText($(node).find('.meta').text()),
-        rating, score, mediaType, year: yearText ? Number(yearText) : null,
+        rating, score, mediaType, year: yearText ? Number(yearText) : null, adult: isAdultRating(rating),
       });
     });
     return results;
@@ -589,15 +638,24 @@ function createAnkProvider(configuredOrigin) {
     const page = Math.max(1, Math.min(10000, Number.parseInt(params.get('page') || '1', 10) || 1));
     const season = params.get('season') || '', status = params.get('status') || '';
     const rating = params.get('rating') || '', mediaType = params.get('mediaType') || '', year = params.get('year') || '';
-    const keyword = cleanText(params.get('q')).slice(0, 200);
+    const keyword = cleanText(params.get('q')).slice(0, 200), language = params.get('language') || 'all';
+    if (!['sub', 'dub', 'all'].includes(language)) throw new HttpError(400, 'Invalid language');
     if (season && !['winter', 'spring', 'summer', 'fall'].includes(season)) throw new HttpError(400, 'Invalid season');
     if (status && !['finished-airing', 'currently-airing', 'not-yet-aired'].includes(status)) throw new HttpError(400, 'Invalid status');
     if (rating && !['G', 'PG', 'PG-13', 'R', 'R+', 'Rx'].includes(rating)) throw new HttpError(400, 'Invalid rating');
     if (mediaType && !['TV', 'Movie', 'ONA', 'OVA', 'Special'].includes(mediaType)) throw new HttpError(400, 'Invalid media type');
     if (year && !/^\d{4}$/.test(year)) throw new HttpError(400, 'Invalid year');
-    const url = new URL(season || status || keyword || rating || mediaType || year ? '/filter' : '/latest-updated', providerOrigin);
+    const filtered = Boolean(season || status || keyword || rating || mediaType || year);
+    // Plain Sub or Dub recents come from the home widgets, which order series
+    // by their newest episode of that kind (12 per page, no pager).
+    if (!filtered && language !== 'all') {
+      const result = await providerJson(`/ajax/home/widget/updated-${language}?page=${page}`);
+      const results = parseCards(load(typeof result === 'string' ? result : result?.html ?? ''), language);
+      return { results, page, hasNext: results.length >= 12 && page < 100 };
+    }
+    const url = new URL(filtered || language !== 'all' ? '/filter' : '/latest-updated', providerOrigin);
     url.searchParams.set('page', String(page));
-    if (season || status || keyword || rating || mediaType || year) {
+    if (filtered || language !== 'all') {
       url.searchParams.set('sort', keyword ? 'default' : 'latest-updated');
       if (keyword) url.searchParams.set('keyword', keyword);
       if (season) url.searchParams.append('season[]', season);
@@ -605,10 +663,15 @@ function createAnkProvider(configuredOrigin) {
       if (rating) url.searchParams.append('rating[]', rating);
       if (mediaType) url.searchParams.append('term_type[]', mediaType);
       if (year) url.searchParams.append('year[]', year);
+      if (language !== 'all') url.searchParams.append('language[]', language);
     }
     const response = await fetchWithTimeout(url, { headers: { Accept: 'text/html' } }, 15000, 'Latest catalog request');
     if (!response.ok) throw new Error(`Catalog HTTP ${response.status}`);
-    const $ = load(await response.text()); const results = [];
+    const $ = load(await response.text());
+    return { results: parseCards($, language), page, hasNext: $('a[rel=next]').length > 0 };
+  }
+  function parseCards($, language) {
+    const results = [];
     $('.ani.poster').each((_, node) => {
       const card = $(node).parent(), name = card.find('a.name.d-title').first();
       const href = name.attr('href') || $(node).find('a').first().attr('href');
@@ -619,15 +682,56 @@ function createAnkProvider(configuredOrigin) {
       // `ep-status` badges (Sub, Dub and total counts).
       const count = (kind) => Number(cleanText($(node).find(`.ep-status.${kind}`).first().text())) || null;
       const subEpisodes = count('sub'), dubEpisodes = count('dub'), totalEpisodes = count('total');
-      const episode = Math.max(subEpisodes ?? 0, dubEpisodes ?? 0) || Number(watch.pathname.match(/\/ep-(\d+)\/?$/)?.[1]) || null;
+      const newest = language === 'sub' ? subEpisodes : language === 'dub' ? dubEpisodes : Math.max(subEpisodes ?? 0, dubEpisodes ?? 0);
+      const episode = newest || Number(watch.pathname.match(/\/ep-(\d+)\/?$/)?.[1]) || null;
       watch.pathname = watch.pathname.replace(/\/ep-\d+\/?$/, '');
       const src = $(node).find('img').first().attr('src');
       const scoreValue = Number(cleanText(card.find('.info .meta .rated span').first().text()));
-      results.push({ title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: watch.toString(), imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta: cleanText(card.find('.info .meta').text()), rating: null, score: scoreValue > 0 ? scoreValue : null, mediaType: cleanText($(node).find('.right').text()) || null, year: null, episode, subEpisodes, dubEpisodes, totalEpisodes });
+      results.push({ title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: watch.toString(), imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta: cleanText(card.find('.info .meta').text()), rating: null, score: scoreValue > 0 ? scoreValue : null, mediaType: cleanText($(node).find('.right').text()) || null, year: null, episode, subEpisodes, dubEpisodes, totalEpisodes, adult: $(node).find('.adult').length > 0 });
     });
-    return { results, page, hasNext: $('a[rel=next]').length > 0 };
+    return results;
   }
-  async function relatedSeasons(series) {
+  // The franchise watch order lists every related entry chronologically
+  // (sequels named "II" included); the curated season strip only adds labels
+  // such as "Season 1, Part 2". Entries that only link to a search are skipped.
+  async function relatedSeasons(series, animeId) {
+    const [order, curated] = await Promise.all([
+      providerJson(`/api/watch-order/${animeId}`).catch(() => null),
+      providerJson(`/api/seasons/${animeId}`).catch(() => null),
+    ]);
+    const labels = new Map(); const curatedSeasons = [];
+    if (typeof curated === 'string') {
+      const $ = load(curated);
+      $('.season a[href]').each((_, node) => {
+        let url;
+        try { url = watchUrl($(node).attr('href')); } catch { return; }
+        const label = cleanText($(node).find('.name').text()) || null;
+        labels.set(url, label); curatedSeasons.push({ title: label ?? series.title, titleJp: null, watchUrl: url, imageUrl: null, meta: '', label });
+      });
+    }
+    const entries = [];
+    if (typeof order === 'string') {
+      const $ = load(order);
+      $('.item').each((_, node) => {
+        const link = $(node).find('a.name[href], .poster a[href]').first(); let url;
+        try { url = watchUrl(link.attr('href')); } catch { return; }
+        const name = $(node).find('a.name').first(); const src = $(node).find('.poster img').first().attr('src');
+        const meta = cleanText($(node).find('.meta').text()).replace(/^\?$/, '');
+        entries.push({
+          title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: url,
+          imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta, mediaType: meta.match(/^(TV|Movie|ONA|OVA|Special)\b/i)?.[1] ?? null, label: labels.get(url) ?? null,
+        });
+      });
+    }
+    for (const season of curatedSeasons) if (!entries.some((entry) => entry.watchUrl === season.watchUrl)) entries.push(season);
+    if (entries.length) {
+      if (!entries.some((entry) => entry.watchUrl === series.watchUrl)) entries.push({ title: series.title, titleJp: series.titleJp, watchUrl: series.watchUrl, imageUrl: series.imageUrl, meta: '', label: labels.get(series.watchUrl) ?? null });
+      return [...new Map(entries.map((entry) => [entry.watchUrl, seasonRecord(entry)])).values()];
+    }
+    return searchedSeasons(series);
+  }
+  // Fallback for series without a watch order: same base title in a search.
+  async function searchedSeasons(series) {
     const identity = seasonIdentity(series.title);
     if (identity.baseKey.length < 3) return [seasonRecord(series)];
     try {
@@ -647,19 +751,38 @@ function createAnkProvider(configuredOrigin) {
     if (!page.ok) throw new Error(`Provider page HTTP ${page.status}`);
     const $ = load(await page.text()); const animeId = $('#watch-main').attr('data-id');
     if (!animeId || !/^\d+$/.test(animeId)) throw new Error('Series identifier was not found');
+    // "Label: value" rows of the details block (Type, Status, Episodes, MAL…).
+    const details = new Map();
+    $('#w-info .bmeta .meta > div').each((_, node) => {
+      const match = cleanText($(node).text()).match(/^([^:]+):\s*(.*)$/);
+      if (match && !details.has(match[1].toLowerCase())) details.set(match[1].toLowerCase(), match[2]);
+    });
+    const total = Number(details.get('episodes')), score = Number(details.get('mal'));
+    const statusText = (details.get('status') ?? '').toLowerCase();
+    const rating = cleanText($('#w-info .meta.icons .rating').first().text()) || null;
+    const poster = $('#w-info .poster img').first().attr('src');
     const info = {
       title: cleanText($('#w-info h1, #w-info .film-name, h1').first().text()) || 'Untitled',
       titleJp: cleanText($('#w-info [data-jp], h1[data-jp], .d-title[data-jp]').first().attr('data-jp')) || null,
       watchUrl: url,
+      synopsis: cleanText($('#w-info .synopsis .content').first().text()) || null,
+      rating, adult: isAdultRating(rating),
+      status: /finished/.test(statusText) ? 'finished' : /currently|airing/.test(statusText) ? 'airing' : /not yet/.test(statusText) ? 'upcoming' : null,
+      mediaType: details.get('type') || null,
+      score: score > 0 ? score : null,
+      totalEpisodes: Number.isInteger(total) && total > 0 ? total : null,
+      imageUrl: poster ? absoluteUrl(poster, providerOrigin) : null,
     };
     const $episodes = load(await providerJson(`/ajax/episode/list/${animeId}`)); const episodes = [];
     $episodes('[data-ids]').each((_, node) => {
       const element = $episodes(node); const number = Number(element.attr('data-num')); const ids = element.attr('data-ids');
       if (!Number.isFinite(number) || !ids) return;
-      episodes.push({ number, title: cleanText(element.text()).replace(/^\d+\s*/, '') || `Episode ${number}`, ref: ids });
+      // Older markup has no flags: every episode was assumed to have Sub only.
+      const sub = element.attr('data-sub') === undefined ? true : element.attr('data-sub') === '1';
+      episodes.push({ number, title: cleanText(element.text()).replace(/^\d+\s*/, '') || `Episode ${number}`, ref: ids, sub, dub: element.attr('data-dub') === '1' });
     });
     episodes.sort((a, b) => a.number - b.number);
-    return { ...info, episodes, seasons: await relatedSeasons(info) };
+    return { ...info, episodes, seasons: await relatedSeasons(info, animeId) };
   }
   async function servers(episodeRef) {
     const $ = load(await providerJson(`/ajax/server/list?servers=${encodeURIComponent(episodeRef)}`)); const result = [];
@@ -899,6 +1022,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'GET' && requestUrl.pathname === '/api/preferences') return json(response, 200, await storedPreferences(user.userId));
     if (request.method === 'PUT' && requestUrl.pathname === '/api/preferences') return json(response, 200, await mergePreferences(user.userId, JSON.parse(await readBody(request))));
     if (request.method === 'POST' && requestUrl.pathname === '/api/series') return json(response, 200, await getSeries(JSON.parse(await readBody(request)).watchUrl));
+    if (request.method === 'POST' && requestUrl.pathname === '/api/series/status') return json(response, 200, await getSeriesStatuses(JSON.parse(await readBody(request)).watchUrls));
     const serversRoute = requestUrl.pathname.match(/^\/api\/series\/([\w-]+)\/servers$/);
     if (request.method === 'GET' && serversRoute) return json(response, 200, await getServers(serversRoute[1], requestUrl.searchParams.get('episode')));
     if (request.method === 'POST' && requestUrl.pathname === '/api/play') { const body = JSON.parse(await readBody(request)); return json(response, 201, await createPlayback(body.seriesKey, body.episode, body.serverIndex, requestOrigin(request), user)); }

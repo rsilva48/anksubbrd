@@ -64,6 +64,20 @@ struct SeriesTitle: View {
     }
 }
 
+/// "+18" marker for R+ and Rx series.
+struct AdultBadge: View {
+    var body: some View {
+        Text("+18")
+            .font(.caption2.weight(.heavy))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(.red, in: Capsule())
+            .accessibilityLabel("Para mayores de 18 años")
+    }
+}
+
 struct ErrorNotice: View {
     let message: String
 
