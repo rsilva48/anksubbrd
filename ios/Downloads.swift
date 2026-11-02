@@ -101,6 +101,9 @@ final class DownloadStore {
         configuration.isDiscretionary = false
         // Finished downloads are picked up the next time the app opens.
         configuration.sessionSendsLaunchEvents = false
+        // The CDN limits requests per IP, and the bridge paces what it sends;
+        // a few connections to it at a time keep every download moving.
+        configuration.httpMaximumConnectionsPerHost = 4
         session = AVAssetDownloadURLSession(configuration: configuration, assetDownloadDelegate: delegate, delegateQueue: .main)
         Task { await reattachTasks() }
     }
@@ -559,7 +562,7 @@ private struct DownloadRow: View {
         switch record.state {
         case .downloading:
             ProgressView(value: record.progress) {
-                Text("Descargando · \(record.kind.displayName) · \(record.serverName) · \(Int((record.progress * 100).rounded())) %")
+                Text(record.progress > 0 ? "Descargando · \(record.kind.displayName) · \(record.serverName) · \(Int((record.progress * 100).rounded())) %" : "Esperando · \(record.kind.displayName) · \(record.serverName)")
                     .foregroundStyle(.secondary)
             }
         case .completed:

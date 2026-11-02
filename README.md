@@ -56,6 +56,7 @@ Cada episodio de la ficha tiene su botón de descarga (también al mantenerlo pu
 - El progreso se guarda en **Continuar viendo** y se sincroniza al volver a tener conexión.
 - Con **Configuración → Este dispositivo → Borrar descargas ya vistas** (activado por defecto), una descarga se elimina al terminar ese episodio o al avanzar a uno posterior, también si lo ves desde otro dispositivo con la misma identidad. La limpieza ocurre al cerrar el reproductor y al abrir la app o la pestaña.
 - El bridge debe responder mientras se descarga: cada episodio se resuelve en línea y el bridge conserva la fuente durante dos horas. Una descarga fallida se reintenta deslizando a la derecha en **Descargas**.
+- El CDN limita las peticiones por IP. El bridge las envía a un ritmo fijo (`UPSTREAM_RATE`) y, si aun así recibe un 429, pausa todo el tráfico durante el `Retry-After` antes de reintentar. Un episodio tarda alrededor de un minuto en descargarse; varios a la vez se reparten ese ritmo.
 
 ### Avisos de nuevos episodios
 
@@ -116,6 +117,8 @@ El flujo con `open-web-page` y `itms-services` está pendiente de validación en
 | `PROVIDER_TYPE` | `ANK` | Implementación del proveedor de catálogo (ver [Proveedores](#proveedores)). |
 | `PROVIDER_ORIGIN` | origen incluido para `ANK` | Dominio del proveedor, por si el sitio se muda. |
 | `DECLARE_AUDIO_LANGUAGE` | `true` | Con `false` deja de anunciar el idioma del audio en el manifiesto (para comparar comportamientos). |
+| `UPSTREAM_RATE` | `6` | Peticiones por segundo que el bridge envía al CDN, sumando todas las reproducciones y descargas. El CDN responde 429 a las ráfagas de una misma IP; bájalo si los logs muestran `is rate limiting`. |
+| `UPSTREAM_CONCURRENCY` | `4` | Peticiones simultáneas al CDN. |
 | `HISTORY_STORE_PATH` | `proxy/data/history.json` | Historial por usuario. |
 | `PREFERENCES_STORE_PATH` | junto a `history.json` | Preferencias por usuario. |
 | `BRIDGE_USER_STORE_PATH` | `proxy/data/users.json` | Hash y salt de los tokens registrados. |
@@ -299,7 +302,7 @@ La página está en [`docs/index.html`](docs/index.html). Las notas de cada rele
 Para publicarla:
 
 1. Incluye `docs/index.html`, el workflow y los cambios de la app en el commit, y sube el commit y su etiqueta.
-2. En GitHub, abre **Settings → Pages → Build and deployment**. Elige **Deploy from a branch**, la rama `main` y la carpeta `/docs`, y guarda. La dirección prevista es `https://rsilva48.github.io/anksubbrd/`.
+2. En GitHub, abre **Settings → Pages → Build and deployment** y elige **Source: GitHub Actions**. Publica [`.github/workflows/pages.yml`](.github/workflows/pages.yml), que se ejecuta cuando cambia `docs/` en `main` (o a mano desde **Actions → Publish install page → Run workflow**). Sustituye al workflow automático de GitHub, cuyas acciones todavía usan Node.js 20. La dirección es `https://rsilva48.github.io/anksubbrd/`.
 3. En la nueva release de app, comprueba que se hayan publicado **ambos assets**, `AirPlaySubtitlePlayer-unsigned.ipa` y `manifest.plist`, y que el enlace de las notas lleve a la página con la etiqueta correcta. El workflow genera el manifiesto con la URL del IPA de esa versión; las releases antiguas no reciben el manifest automáticamente.
 4. Prueba por separado el enlace desde la página y el botón de actualización de la app. El primero pasa por GitHub Pages; el segundo construye directamente el enlace para LiveContainer. Verifica el comportamiento con la app invitada abierta, el diálogo de reemplazo y la conservación de sus datos. Si no funciona, descarga el IPA desde la release e impórtalo manualmente.
 

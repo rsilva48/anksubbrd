@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 process.env.BRIDGE_NO_LISTEN = '1';
 process.env.PROVIDER_ORIGIN = 'https://catalog.example';
-const { createAnkProvider, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
+const { createAnkProvider, fetchUpstream, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
 
 // One 188-byte MPEG-TS packet starting a PES with only a PTS.
 function pesPacket(streamId, pts) {
@@ -183,4 +183,25 @@ test('Upstream requests re-sign CDN tokens that are missing or about to expire',
   assert.ok(expiry(fresh) > now + 60);
   assert.equal(provider.signUpstream(fresh, source), fresh);
   assert.equal(provider.signUpstream('https://other.example/seg-1.ts', source), 'https://other.example/seg-1.ts');
+});
+
+test('Rate-limited playlists are retried after Retry-After and then served from cache', async (context) => {
+  let calls = 0;
+  context.mock.method(globalThis, 'fetch', async () => {
+    calls += 1;
+    return calls === 1
+      ? new Response('slow down', { status: 429, headers: { 'retry-after': '1' } })
+      : new Response('#EXTM3U\nseg-1.ts\n', { status: 200, headers: { 'content-type': 'application/vnd.apple.mpegurl' } });
+  });
+  const source = { hlsUrl: 'https://cdn.example/master.m3u8', requestHeaders: {} };
+  const first = await fetchUpstream('https://cdn.example/index.m3u8', source, null, 10000);
+  const second = await fetchUpstream('https://cdn.example/index.m3u8', source, null, 10000);
+  assert.equal(first.body.toString(), '#EXTM3U\nseg-1.ts\n');
+  assert.equal(second.body.toString(), first.body.toString());
+  assert.equal(calls, 2);
+});
+
+test('A 429 that persists after the retries becomes a temporary 503', async (context) => {
+  context.mock.method(globalThis, 'fetch', async () => new Response('', { status: 429, headers: { 'retry-after': '1' } }));
+  await assert.rejects(fetchUpstream('https://cdn.example/seg.ts', { hlsUrl: 'https://cdn.example/m.m3u8', requestHeaders: {} }, null, 3000), (error) => error.status === 503);
 });

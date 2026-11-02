@@ -947,25 +947,80 @@ function durationFromVtt(vtt) {
   for (const match of vtt.matchAll(pattern)) duration = Math.max(duration, secondsInVttTimestamp([, match[4], match[5], match[6]]));
   return Math.ceil(duration);
 }
-// The timeout covers the headers and the body: a stalled CDN must fail the
-// request (so the player can report it and retry) instead of hanging forever.
-async function fetchUpstream(value, source, range, timeoutMs = 30000) {
-  const url = provider.signUpstream ? provider.signUpstream(value, source) : value;
-  const headers = { ...source.requestHeaders, ...(range ? { range } : {}) };
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+// The CDN rate limits each client IP across all of its hosts: a steady
+// sequential stream (about 8 requests per second) is never refused, but
+// parallel bursts get 429 with a Retry-After of up to 10 s. Offline downloads
+// fetch in parallel, so every upstream request goes through one bridge-wide
+// queue: a few at a time, started at a paced rate, and a 429 pauses the whole
+// queue for its Retry-After before the request is retried. VOD playlists are
+// fetched once per source.
+const upstreamConcurrency = Math.max(1, Number(process.env.UPSTREAM_CONCURRENCY ?? 4));
+const upstreamRate = Math.max(1, Number(process.env.UPSTREAM_RATE ?? 6));
+const upstreamQueue = { active: 0, waiting: [], nextStart: 0, pausedUntil: 0 };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function withUpstreamSlot(task) {
+  if (upstreamQueue.active >= upstreamConcurrency) await new Promise((resolve) => upstreamQueue.waiting.push(resolve));
+  upstreamQueue.active += 1;
   try {
-    const response = await fetch(url, { redirect: 'follow', headers, signal: controller.signal });
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      throw new Error(`Upstream responded ${response.status}`);
-    }
-    return { url: response.url, type: response.headers.get('content-type') ?? '', body: Buffer.from(await response.arrayBuffer()) };
-  } catch (error) {
-    if (error?.name === 'AbortError') throw new Error(`Upstream request timed out after ${timeoutMs / 1000} seconds`);
-    throw error;
+    const start = Math.max(Date.now(), upstreamQueue.nextStart, upstreamQueue.pausedUntil);
+    upstreamQueue.nextStart = start + 1000 / upstreamRate;
+    if (start > Date.now()) await sleep(start - Date.now());
+    return await task();
   } finally {
-    clearTimeout(timeout);
+    upstreamQueue.active -= 1;
+    upstreamQueue.waiting.shift()?.();
+  }
+}
+function upstreamCacheKey(value) {
+  const url = new URL(value); url.searchParams.delete('token');
+  return url.toString();
+}
+// The timeout covers the headers and the body of each attempt, counted from
+// when it leaves the queue: a stalled CDN must fail the request (so the player
+// can report it and retry) instead of hanging forever.
+async function fetchUpstream(value, source, range, timeoutMs = 30000) {
+  const cacheKey = range ? null : upstreamCacheKey(value);
+  const cached = cacheKey ? source.playlistCache?.get(cacheKey) : null;
+  // Copies: callers replace the body (segment strip) of what they receive.
+  if (cached && cached.expiresAt > Date.now()) return { ...cached.response };
+  const headers = { ...source.requestHeaders, ...(range ? { range } : {}) };
+  for (let attempt = 0; ; attempt += 1) {
+    const url = provider.signUpstream ? provider.signUpstream(value, source) : value;
+    const result = await withUpstreamSlot(async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { redirect: 'follow', headers, signal: controller.signal });
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => {});
+          return { status: response.status, retryAfter: Number(response.headers.get('retry-after')) };
+        }
+        return { status: response.status, response: { url: response.url || url, type: response.headers.get('content-type') ?? '', body: Buffer.from(await response.arrayBuffer()) } };
+      } catch (error) {
+        if (error?.name === 'AbortError') throw new Error(`Upstream request timed out after ${timeoutMs / 1000} seconds`);
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+    if (result.response) {
+      if (cacheKey && isPlaylist(result.response.url, result.response.type)) {
+        source.playlistCache ??= new Map();
+        source.playlistCache.set(cacheKey, { response: { ...result.response }, expiresAt: Date.now() + 10 * 60 * 1000 });
+      }
+      return result.response;
+    }
+    if (result.status === 429) {
+      const wait = Math.min(15, result.retryAfter > 0 ? result.retryAfter : 2 ** attempt) * 1000;
+      upstreamQueue.pausedUntil = Math.max(upstreamQueue.pausedUntil, Date.now() + wait);
+      if (attempt < 3) {
+        console.warn(`[bridge] ${new URL(url).hostname} is rate limiting; pausing upstream requests for ${wait / 1000}s`);
+        continue;
+      }
+      // 503 tells the client the failure is temporary.
+      throw new HttpError(503, 'Upstream is rate limiting requests (429)');
+    }
+    throw new Error(`Upstream responded ${result.status}`);
   }
 }
 // First presentation timestamp (90 kHz ticks) among the audio/video PES
@@ -1098,4 +1153,4 @@ const server = http.createServer(async (request, response) => {
 // Tests import the pure helpers without opening a port.
 if (!process.env.BRIDGE_NO_LISTEN) server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));
 
-export { createAnkProvider, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
+export { createAnkProvider, fetchUpstream, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
