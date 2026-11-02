@@ -3,6 +3,9 @@
 package com.personal.anksubbrd.tv
 
 import android.os.Bundle
+import android.content.pm.PackageManager
+import android.content.pm.ActivityInfo
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -12,21 +15,33 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 
 class MainActivity : ComponentActivity() {
+    var playerKeyHandler: ((KeyEvent) -> Boolean)? = null
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean =
+        if (playerKeyHandler?.invoke(event) == true) true else super.dispatchKeyEvent(event)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Connectivity.start(applicationContext)
+        val isTv = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+        if (isTv) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         val state = AppState(applicationContext)
         setContent {
+            if (!isTv) {
+                PhoneApp()
+            } else {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF818CF8), secondary = Color(0xFF6366F1))) {
                 // Text inherits white; screens have no Surface to provide it.
                 CompositionLocalProvider(LocalContentColor provides Color.White) {
@@ -34,6 +49,7 @@ class MainActivity : ComponentActivity() {
                         App(state)
                     }
                 }
+            }
             }
         }
     }
@@ -62,7 +78,8 @@ private fun App(state: AppState) {
     }
     // One session per profile: its preferences and its watch history.
     val profile = state.activeProfile ?: state.profiles.singleOrNull()
-    val session = remember(profile) { profile?.let { Session(it, state.client(it)) } }
+    val context = LocalContext.current
+    val session = remember(profile) { profile?.let { Session(it, state.client(it), context) } }
 
     fun push(route: Route) = stack.add(route)
     fun reset(vararg routes: Route) {
@@ -71,6 +88,17 @@ private fun App(state: AppState) {
     }
 
     BackHandler(enabled = stack.size > 1) { stack.removeAt(stack.lastIndex) }
+
+    // Remote control: "play" from a phone opens that episode here, replacing
+    // the episode on screen; the other commands go to the player.
+    LaunchedEffect(session) {
+        val current = session ?: return@LaunchedEffect
+        val deviceName = android.provider.Settings.Global.getString(context.contentResolver, "device_name") ?: android.os.Build.MODEL
+        runRemoteControl(current, state.deviceId, deviceName) { command ->
+            val request = remotePlayback(current, command) ?: return@runRemoteControl
+            if (stack.last() is Route.Watch) stack[stack.lastIndex] = Route.Watch(request) else stack.add(Route.Watch(request))
+        }
+    }
 
     when (val route = stack.last()) {
         Route.Setup -> SetupScreen(state) { reset(if (state.profiles.isEmpty()) Route.Pairing else Route.Profiles) }
@@ -102,7 +130,27 @@ private fun App(state: AppState) {
             DetailsScreen(session = current, anime = route.anime, onPlay = { push(Route.Watch(it)) })
         }
         is Route.Watch -> session?.let { current ->
-            PlayerScreen(session = current, initial = route.request, onExit = { stack.removeAt(stack.lastIndex) })
+            // A new request (from the remote) starts a fresh player.
+            key(route.request) {
+                PlayerScreen(session = current, initial = route.request, onExit = { stack.removeAt(stack.lastIndex) })
+            }
         }
+    }
+}
+
+/** Resolves a remote "play" command; null (with the reason in the TV state) when it fails. */
+private suspend fun remotePlayback(session: Session, command: RemoteCommand): PlaybackRequest? {
+    val watchUrl = command.watchUrl ?: return null
+    Remote.state.value = DeviceState(status = "loading", watchUrl = watchUrl, episode = command.episode, kind = command.kind)
+    return try {
+        val series = session.client.series(watchUrl)
+        val episode = series.episodes.firstOrNull { it.number == command.episode } ?: series.episodes.firstOrNull() ?: return null
+        val entry = session.entry(watchUrl)
+        val kind = command.kind ?: entry?.serverKind ?: session.preferences.defaultTrackType
+        val anime = Anime(title = series.title, watchUrl = watchUrl, imageUrl = series.imageUrl, titleJp = series.titleJp)
+        session.resolve(anime, series, episode, kind, entry?.serverName?.takeIf { entry.serverKind == kind })
+    } catch (error: BridgeException) {
+        Remote.state.value = DeviceState(status = "idle")
+        null
     }
 }

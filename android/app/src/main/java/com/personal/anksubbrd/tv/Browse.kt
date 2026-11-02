@@ -3,6 +3,7 @@
 package com.personal.anksubbrd.tv
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,12 +35,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.tv.material3.Button
 import androidx.tv.material3.Card
+import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.ListItem
 import androidx.tv.material3.MaterialTheme
@@ -47,14 +56,37 @@ import androidx.tv.material3.Tab
 import androidx.tv.material3.TabRow
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import coil3.SingletonImageLoader
+import coil3.request.ImageRequest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun HomeScreen(session: Session, onOpen: (Anime) -> Unit, onSwitchProfile: () -> Unit) {
     val tabs = listOf("Continuar", "Recientes", "Buscar")
     var selected by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(session) { session.refresh() }
+    var initialLoading by remember(session) { mutableStateOf(session.history.isEmpty()) }
+    LaunchedEffect(session) {
+        try {
+            if (withTimeoutOrNull(8_000) { session.refresh(); true } == null) session.initialLoadTimedOut()
+        } finally {
+            initialLoading = false
+        }
+    }
+    val context = LocalContext.current
+    val historyImages = session.history.mapNotNull { it.imageUrl?.takeIf(String::isNotBlank) }.distinct()
+    LaunchedEffect(historyImages) {
+        val loader = SingletonImageLoader.get(context)
+        for (url in historyImages) {
+            loader.execute(ImageRequest.Builder(context).data(url).size(360, 540).build())
+        }
+    }
+
+    if (initialLoading) {
+        StartupScreen()
+        return
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -65,6 +97,8 @@ fun HomeScreen(session: Session, onOpen: (Anime) -> Unit, onSwitchProfile: () ->
                     }
                 }
             }
+            TVUpdateControl()
+            Spacer(Modifier.width(12.dp))
             OutlinedButton(onClick = onSwitchProfile) { Text("Perfil: ${session.profile.name}") }
         }
         Spacer(Modifier.height(20.dp))
@@ -72,6 +106,28 @@ fun HomeScreen(session: Session, onOpen: (Anime) -> Unit, onSwitchProfile: () ->
             0 -> ContinueTab(session, onOpen)
             1 -> CatalogTab(session, onOpen, searching = false)
             else -> CatalogTab(session, onOpen, searching = true)
+        }
+    }
+}
+
+@Composable
+private fun StartupScreen() {
+    Box(Modifier.fillMaxSize().background(Color(0xFF0B0B12)), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Image(
+                painter = painterResource(R.drawable.ic_launcher),
+                contentDescription = null,
+                modifier = Modifier.size(96.dp).clip(RoundedCornerShape(24.dp)),
+            )
+            Text("AniBridge Player", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+            Text("Preparando tu biblioteca", style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.65f))
+            AndroidView(
+                factory = { context -> android.widget.ProgressBar(context).apply {
+                    isIndeterminate = true
+                    indeterminateTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.rgb(129, 140, 248))
+                } },
+                modifier = Modifier.size(32.dp),
+            )
         }
     }
 }
@@ -185,7 +241,7 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
 @Composable
 fun PosterCard(title: String, subtitle: String, imageUrl: String?, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Card(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f)) {
+        Card(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), scale = CardDefaults.scale(focusedScale = 1f)) {
             AsyncImage(model = imageUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
         Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -210,6 +266,7 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val playFocus = remember { FocusRequester() }
 
     LaunchedEffect(current.watchUrl) {
         series = null
@@ -275,7 +332,8 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
                             entry != null -> "Ver episodio ${next.number} · siguiente"
                             else -> "Empezar con el episodio ${next.number}"
                         }
-                        Button(onClick = { play(next) }) { Text(label) }
+                        Button(onClick = { play(next) }, modifier = Modifier.focusRequester(playFocus)) { Text(label) }
+                        LaunchedEffect(current.watchUrl, next.number) { playFocus.requestFocus() }
                     } else if (entry != null) {
                         Text("Estás al día: viste el episodio ${entry.episode}.", color = Color.White.copy(alpha = 0.7f))
                     }

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 process.env.BRIDGE_NO_LISTEN = '1';
 process.env.PROVIDER_ORIGIN = 'https://catalog.example';
-const { approvePairing, createAnkProvider, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
+const { approvePairing, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
 
 // One 188-byte MPEG-TS packet starting a PES with only a PTS.
 function pesPacket(streamId, pts) {
@@ -234,4 +234,28 @@ test('QR pairing hands the approving identity to the TV exactly once', () => {
   assert.deepEqual(pairingStatus(pairingId), { status: 'approved', token: 'abc', label: 'Sala' });
   assert.equal(pairingStatus(pairingId).status, 'expired');
   assert.equal(pairingStatus('unknown').status, 'expired');
+});
+
+test('Remote control: a TV reports itself and receives commands from the same identity', async () => {
+  const { EventEmitter } = await import('node:events');
+  const tv = { userId: 'remote-user', token: 't' };
+  const other = { userId: 'someone-else', token: 'o' };
+  const deviceId = 'tv-0123456789';
+  reportDevice(tv, deviceId, { name: 'Sala', state: { status: 'playing', seriesTitle: 'Delta', episode: 3, position: 61.5, duration: 1440, kind: 'sub' } });
+  assert.deepEqual(listDevices(tv).devices.map(({ id, name, state }) => [id, name, state.status, state.episode]), [[deviceId, 'Sala', 'playing', 3]]);
+  assert.equal(listDevices(other).devices.length, 0);
+  assert.throws(() => sendCommand(other, deviceId, { type: 'pause' }), (error) => error.status === 404);
+  assert.throws(() => sendCommand(tv, deviceId, { type: 'explode' }), (error) => error.status === 400);
+
+  // A waiting long poll is answered as soon as a command arrives.
+  const response = Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false });
+  const pending = waitForCommands(tv, deviceId, response, 5000);
+  sendCommand(tv, deviceId, { type: 'seek', seconds: -10 });
+  const reply = await pending;
+  assert.deepEqual(reply.commands.map(({ type, seconds }) => [type, seconds]), [['seek', -10]]);
+
+  // Commands queued while the TV is away are delivered on its next poll.
+  sendCommand(tv, deviceId, { type: 'play', watchUrl: '/watch/delta-4', episode: 5, kind: 'dub' });
+  const next = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
+  assert.deepEqual(next.commands.map(({ type, watchUrl, episode, kind }) => [type, watchUrl, episode, kind]), [['play', 'https://catalog.example/watch/delta-4', 5, 'dub']]);
 });

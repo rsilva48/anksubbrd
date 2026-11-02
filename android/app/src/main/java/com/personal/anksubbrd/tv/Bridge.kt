@@ -161,6 +161,43 @@ data class PairingStart(val pairingId: String, val code: String, val expiresAt: 
 @Serializable
 data class PairingStatus(val status: String, val token: String? = null, val label: String? = null)
 
+/** A command sent from a phone app (remote control). */
+@Serializable
+data class RemoteCommand(
+    val id: String = "",
+    val type: String,
+    val watchUrl: String? = null,
+    val episode: Int? = null,
+    val kind: String? = null,
+    val seconds: Double? = null,
+)
+
+@Serializable
+data class RemoteCommands(val commands: List<RemoteCommand> = emptyList())
+
+/** What this TV is doing, shown in the phone's remote control. */
+@Serializable
+data class DeviceState(
+    val status: String = "idle",
+    val watchUrl: String? = null,
+    val seriesTitle: String? = null,
+    val titleJp: String? = null,
+    val imageUrl: String? = null,
+    val episode: Int? = null,
+    val episodeTitle: String? = null,
+    val kind: String? = null,
+    val position: Double? = null,
+    val duration: Double? = null,
+    /** "Saltar intro"/"Saltar outro" while that skip is offered. */
+    val skip: String? = null,
+)
+
+@Serializable
+private data class DeviceReport(val name: String, val state: DeviceState)
+
+@Serializable
+private data class OkResponse(val ok: Boolean = true)
+
 @Serializable
 private data class WatchRequest(val watchUrl: String)
 
@@ -236,6 +273,13 @@ class BridgeClient(val baseUrl: String, private val token: String) {
     suspend fun startPairing(): PairingStart = post("/api/pair/start", "{}")
 
     suspend fun pairingStatus(pairingId: String): PairingStatus = get("/api/pair/status", listOf("pairingId" to pairingId))
+
+    suspend fun reportDevice(deviceId: String, name: String, state: DeviceState) {
+        send<OkResponse>("PUT", "/api/devices/$deviceId", emptyList(), json.encodeToString(DeviceReport.serializer(), DeviceReport(name, state)))
+    }
+
+    /** Long poll: returns when a command arrives, or empty after about 25 s. */
+    suspend fun waitForCommands(deviceId: String): List<RemoteCommand> = get<RemoteCommands>("/api/devices/$deviceId/commands").commands
 
     private suspend inline fun <reified T> get(path: String, query: List<Pair<String, String>> = emptyList()): T =
         send("GET", path, query, null)

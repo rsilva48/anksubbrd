@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AnkSubBrdTV"
+rootProject.name = "AniBridgePlayer"
 include(":app")

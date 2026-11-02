@@ -540,6 +540,94 @@ function approvePairing(code, label, user) {
   return { ok: true };
 }
 
+// Remote control. TV apps register as devices of their identity, report what
+// they are playing and wait for commands with a long poll; apps of the same
+// identity list those TVs and send them commands. Kept in memory: a TV that
+// stops reporting for 45 seconds is offline.
+const devices = new Map();
+const deviceTimeout = 45 * 1000;
+const commandTypes = ['play', 'pause', 'resume', 'toggle', 'seek', 'skip', 'next', 'previous', 'stop'];
+function deviceFor(user, deviceId, create = true) {
+  const id = cleanText(deviceId);
+  if (!/^[\w-]{8,64}$/.test(id)) throw new HttpError(400, 'Invalid device id');
+  const key = `${user.userId}:${id}`;
+  let device = devices.get(key);
+  if (!device && create) {
+    device = { id, userId: user.userId, name: 'TV', state: null, lastSeen: 0, queue: [], waiters: new Set() };
+    devices.set(key, device);
+  }
+  return device;
+}
+function deviceState(value) {
+  if (!value || typeof value !== 'object') return null;
+  const seconds = (number) => (Number.isFinite(Number(number)) && Number(number) >= 0 ? Number(number) : null);
+  const text = (field, maximum) => (value[field] ? historyText(value[field], '', maximum) : null);
+  return {
+    status: ['idle', 'loading', 'playing', 'paused'].includes(value.status) ? value.status : 'idle',
+    watchUrl: text('watchUrl', 2000), seriesTitle: text('seriesTitle', 300), titleJp: text('titleJp', 300), imageUrl: text('imageUrl', 2000),
+    episode: Number.isInteger(value.episode) ? value.episode : null, episodeTitle: text('episodeTitle', 300),
+    kind: ['sub', 'dub'].includes(value.kind) ? value.kind : null,
+    position: seconds(value.position), duration: seconds(value.duration),
+    skip: text('skip', 40),
+  };
+}
+function reportDevice(user, deviceId, body) {
+  const device = deviceFor(user, deviceId);
+  device.name = historyText(body?.name, device.name, 60);
+  device.state = deviceState(body?.state);
+  device.lastSeen = Date.now();
+  return { ok: true };
+}
+function listDevices(user) {
+  const cutoff = Date.now() - deviceTimeout;
+  const online = [...devices.values()].filter((device) => device.userId === user.userId && device.lastSeen > cutoff);
+  return { devices: online.map(({ id, name, state, lastSeen }) => ({ id, name, state, lastSeen: new Date(lastSeen).toISOString() })) };
+}
+function sendCommand(user, deviceId, body) {
+  const device = deviceFor(user, deviceId, false);
+  if (!device || device.lastSeen < Date.now() - deviceTimeout) throw new HttpError(404, 'The TV is not connected');
+  const type = cleanText(body?.type);
+  if (!commandTypes.includes(type)) throw new HttpError(400, 'Invalid command');
+  const command = { id: randomUUID(), type };
+  if (type === 'play') {
+    command.watchUrl = provider.watchUrl(historyText(body.watchUrl, '', 2000));
+    command.episode = Number.isInteger(body.episode) && body.episode > 0 ? body.episode : null;
+    command.kind = ['sub', 'dub'].includes(body.kind) ? body.kind : null;
+  }
+  if (type === 'seek') {
+    // Relative jump in seconds (negative goes back).
+    const seconds = Number(body.seconds);
+    if (!Number.isFinite(seconds) || Math.abs(seconds) > 6 * 3600) throw new HttpError(400, 'Invalid seek');
+    command.seconds = seconds;
+  }
+  device.queue.push(command);
+  if (device.queue.length > 20) device.queue.shift();
+  for (const wake of [...device.waiters]) wake();
+  return { ok: true, id: command.id };
+}
+// Long poll: answers as soon as a command is queued, or empty after 25 s.
+// Commands stay queued if the TV disconnected before they could be sent.
+async function waitForCommands(user, deviceId, response, waitMs = 25 * 1000) {
+  const device = deviceFor(user, deviceId);
+  device.lastSeen = Date.now();
+  if (!device.queue.length) {
+    await new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        device.waiters.delete(done);
+        response.off('close', done);
+        resolve();
+      };
+      const timer = setTimeout(done, waitMs);
+      device.waiters.add(done);
+      response.on('close', done);
+    });
+  }
+  if (response.destroyed || response.writableEnded) return null;
+  device.lastSeen = Date.now();
+  return { commands: device.queue.splice(0) };
+}
+
 async function getSeries(watchUrl) {
   const series = await provider.series(provider.watchUrl(watchUrl));
   if (!series.episodes.length) throw new Error('No episodes were returned');
@@ -798,7 +886,8 @@ function createAnkProvider(configuredOrigin) {
     });
     const total = Number(details.get('episodes')), score = Number(details.get('mal'));
     const statusText = (details.get('status') ?? '').toLowerCase();
-    const rating = cleanText($('#w-info .meta.icons .rating').first().text()) || null;
+    // The catalog prints "NONE" when a series has no rating.
+    const rating = cleanText($('#w-info .meta.icons .rating').first().text()).replace(/^none$/i, '') || null;
     const poster = $('#w-info .poster img').first().attr('src');
     // "The next episode is predicted to arrive on …" countdown (Unix seconds).
     const nextEpisodeAt = Number($('.alert.next-episode .count-down').first().attr('data-target'));
@@ -1159,6 +1248,11 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { results });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/latest') return json(response, 200, await provider.latest(requestUrl.searchParams));
+    if (request.method === 'GET' && requestUrl.pathname === '/api/devices') return json(response, 200, listDevices(user));
+    const deviceRoute = requestUrl.pathname.match(/^\/api\/devices\/([\w-]+)(\/commands)?$/);
+    if (deviceRoute && request.method === 'PUT' && !deviceRoute[2]) return json(response, 200, reportDevice(user, deviceRoute[1], JSON.parse(await readBody(request))));
+    if (deviceRoute && request.method === 'POST' && deviceRoute[2]) return json(response, 201, sendCommand(user, deviceRoute[1], JSON.parse(await readBody(request))));
+    if (deviceRoute && request.method === 'GET' && deviceRoute[2]) { const reply = await waitForCommands(user, deviceRoute[1], response); return reply ? json(response, 200, reply) : undefined; }
     if (request.method === 'POST' && requestUrl.pathname === '/api/pair/approve') { const body = JSON.parse(await readBody(request)); return json(response, 200, approvePairing(body.code, body.label, user)); }
     if (request.method === 'GET' && requestUrl.pathname === '/api/schedule') return json(response, 200, { entries: await provider.schedule() });
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
@@ -1196,4 +1290,4 @@ const server = http.createServer(async (request, response) => {
 // Tests import the pure helpers without opening a port.
 if (!process.env.BRIDGE_NO_LISTEN) server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));
 
-export { approvePairing, createAnkProvider, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
+export { approvePairing, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };

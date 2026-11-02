@@ -60,6 +60,7 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.foundation)
+    implementation(libs.compose.material3)
     implementation(libs.tv.material)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)

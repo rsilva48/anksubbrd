@@ -1,6 +1,8 @@
-# AirPlay Subtitle Bridge
+# AniBridge Player
 
-App personal para iPhone/iPad (iOS/iPadOS 26 o posterior) que navega un catálogo de anime a través de un bridge propio, reproduce el episodio elegido y lo envía por AirPlay con los subtítulos como pistas HLS reales. El bridge también guarda, por identidad, el progreso de **Continuar viendo** y las preferencias de catálogo y reproducción.
+App personal para iPhone/iPad (iOS/iPadOS 26 o posterior) y Android TV que navega un catálogo de anime a través de un bridge propio. En iPhone y iPad reproduce el episodio elegido y lo envía por AirPlay con los subtítulos como pistas HLS reales. El bridge también guarda, por identidad, el progreso de **Continuar viendo** y las preferencias de catálogo y reproducción.
+
+La versión para teléfonos Android está en desarrollo: la misma APK detecta si se ejecuta en un teléfono y presenta una interfaz táctil Material 3. Esta primera etapa requiere Android 8 o posterior y permite conectar un bridge con una identidad existente, consultar el historial, explorar recientes y buscar, abrir episodios y reproducirlos. Aún no tiene todas las funciones de iOS; el token se guarda cifrado con Android Keystore y debe respaldarse por separado para restaurarlo en otro dispositivo.
 
 ```text
 App iOS: buscar → serie → episodio → servidor
@@ -256,10 +258,42 @@ La app usa estas rutas; no necesitas llamarlas manualmente.
 - `GET` / `PUT /api/history`: historial privado; se conserva el episodio más reciente de cada serie y los borrados se sincronizan.
 - `GET` / `PUT /api/preferences`: preferencias privadas; gana la modificación más reciente.
 - `POST /api/admin/users` con el encabezado `X-Bridge-Admin-Token`: registra un token de usuario.
+- `POST /api/pair/start` y `GET /api/pair/status?pairingId=…` (sin identidad), `POST /api/pair/approve` con `{ "code", "label" }`: vinculación de la TV por QR.
+- `GET /api/devices`: TVs conectadas de la identidad, con lo que reproducen. `PUT /api/devices/:id` con `{ "name", "state" }`: la TV informa su estado. `GET /api/devices/:id/commands`: la TV espera órdenes (long polling de hasta 25 s). `POST /api/devices/:id/commands` con `{ "type": "play" | "pause" | "resume" | "toggle" | "seek" | "skip" | "next" | "previous" | "stop", … }`: el teléfono envía una orden (`play` lleva `watchUrl`, `episode` y `kind`; `seek`, `seconds` relativos).
 
 Las sesiones de serie caducan a los 20 minutos (HTTP 410); la app recarga la serie y reintenta sola. El bridge sólo acepta URLs `/watch/…` del origen configurado y no expone un proxy genérico.
 
+### Control de la TV desde el teléfono
+
+La app de Android TV, con un perfil abierto, aparece como TV conectada para las apps que usan la misma identidad (el mismo bridge y token). En el iPhone:
+
+- **Ficha de una serie → botón TV** de la barra: reproduce en la TV el episodio en curso o el siguiente. Manteniendo pulsado un episodio, **Ver en TV** lo reproduce a él.
+- **Continuar viendo → Ver en TV**: abre el control remoto sin cambiar lo que se reproduce.
+
+El control remoto muestra lo que reproduce la TV, con su progreso, y permite pausar o reanudar, ±10 s, saltar intro/outro cuando la TV lo ofrece, episodio anterior o siguiente y detener. Las órdenes pasan por el bridge, así que funcionan aunque el teléfono y la TV no estén en la misma red. La app de la TV debe estar abierta; una TV que deja de informar durante 45 s desaparece de la lista.
+
 ## Versiones y releases
+
+### Android TV: APK y actualizaciones
+
+Cuando cambia `android/`, el workflow compila `AniBridgePlayer-TV.apk` y lo adjunta a la release. Las releases solo de Android no cambian el `latest` usado por iOS; Android busca en las releases estables la versión más reciente que incluya el APK. El botón **Actualizaciones** permite comprobar manualmente; además se comprueba sola al abrir la pantalla principal, como mucho cada 6 horas (la API de GitHub sin autenticar admite 60 consultas por hora). El usuario confirma la descarga y el instalador de Android pide confirmación para reemplazar la app. La app verifica el SHA-256 publicado por GitHub antes de entregar el APK al instalador. En el primer intento puede ser necesario permitir instalaciones desde esta app y volver a pulsar **Instalar**.
+
+Para una release es obligatorio configurar estos secretos de Actions en el repositorio: `ANDROID_KEYSTORE_BASE64` (archivo del keystore codificado en base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` y `ANDROID_KEY_PASSWORD`. Conserva un respaldo seguro del keystore: las actualizaciones de Android solo pueden reemplazar una instalación firmada con la misma clave. Las compilaciones de prueba de pull requests o manuales usan una clave de depuración del runner y no son actualizaciones instalables sobre la release.
+
+La app actualmente instalada con `assembleDebug` está firmada con el keystore de depuración de la máquina que la compiló. Para poder actualizarla sin desinstalarla, hay que configurar en GitHub esa misma clave y sus credenciales; la clave de depuración predeterminada suele estar en `%USERPROFILE%\.android\debug.keystore`, con alias `androiddebugkey` y contraseña `android`, pero verifica que sea realmente la utilizada. Si se usa una clave distinta, Android rechazará la actualización; reinstalar requiere desinstalar la app anterior y se perderán sus datos locales, por lo que conviene respaldar la identidad antes.
+
+Para el keystore de depuración predeterminado de esta máquina, con GitHub CLI autenticado y desde PowerShell, se pueden configurar los cuatro secretos así (el contenido de la clave no se imprime):
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.android\debug.keystore")) | gh secret set ANDROID_KEYSTORE_BASE64 -R rsilva48/anksubbrd
+'android' | gh secret set ANDROID_KEYSTORE_PASSWORD -R rsilva48/anksubbrd
+'androiddebugkey' | gh secret set ANDROID_KEY_ALIAS -R rsilva48/anksubbrd
+'android' | gh secret set ANDROID_KEY_PASSWORD -R rsilva48/anksubbrd
+```
+
+Estos valores solo sirven para el keystore de depuración predeterminado; si usaste otra clave, configura sus credenciales reales en su lugar. Compartir el keystore como secreto del repositorio permite a sus administradores y workflows autorizados usar esa clave, así que controla quién puede modificar esos workflows.
+
+Los APK de release se compilan únicamente cuando la etiqueta coincide con `version.txt` y todos los secretos de firma están presentes; si faltan, el job falla y esa release no se publica. El flujo de actualización se debe probar en la TV tras publicar el primer APK firmado con la clave correcta.
 
 [`version.txt`](version.txt) es la única fuente de la versión. [`scripts/version.mjs`](scripts/version.mjs) la lee y la sube, y sincroniza `MARKETING_VERSION` del proyecto Xcode y `version` de `proxy/package.json` y su lock; el bridge la informa en `/health`. Otros scripts (por ejemplo, un empaquetado) pueden leer `version.txt` directamente.
 
@@ -288,10 +322,11 @@ Al subir una etiqueta, [`.github/workflows/ios-build.yml`](.github/workflows/ios
 | Cambió | Resultado |
 | --- | --- |
 | `ios/` | Compila el IPA sin firmar (artefacto y asset de la release) y publica la release como **latest**. |
-| Sólo `proxy/` | Prueba el bridge y publica una release `vX.Y.Z (bridge)` sin IPA, que nunca se marca como latest. |
-| Ninguno de los dos | No publica release. |
+| `android/` | Compila el APK firmado y lo adjunta a la release; si no hay cambios iOS, no cambia el **latest** usado por iOS. |
+| Sólo `proxy/` | Prueba el bridge y publica una release sin IPA, que nunca se marca como latest. |
+| Ninguno de los tres | No publica release. |
 
-Así `https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa` siempre apunta a un IPA y la app no ofrece actualizaciones que sólo tocaron el bridge. Las notas se agrupan en **App iOS**, **Bridge** y **Repositorio**; las de una release de la app incluyen todo lo ocurrido desde el IPA anterior. **Actions → Build iOS app → Run workflow** compila siempre, sin publicar release.
+Así `https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa` siempre apunta a un IPA y la app no ofrece actualizaciones que sólo tocaron el bridge. Las notas se agrupan en **App iOS**, **Android TV**, **Bridge** y **Repositorio**; las de una release de la app incluyen todo lo ocurrido desde el IPA anterior. **Actions → Build AniBridge Player → Run workflow** compila siempre, sin publicar release.
 
 ### Compilación iOS
 

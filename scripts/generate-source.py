@@ -46,11 +46,11 @@ def main():
         'sha256': digest, 'minOSVersion': info['MinimumOSVersion'],
     }
     source = {
-        'name': 'AirPlay Subtitles', 'identifier': f'io.github.{owner.lower()}.{repo.lower()}',
+        'name': 'AniBridge Player', 'identifier': f'io.github.{owner.lower()}.{repo.lower()}',
         'subtitle': 'Reproductor personal con subtítulos para AirPlay',
         'website': f'https://github.com/{args.repository}', 'iconURL': icon_url,
         'apps': [{
-            'name': 'AirPlay Subtitles', 'bundleIdentifier': info['CFBundleIdentifier'],
+            'name': 'AniBridge Player', 'bundleIdentifier': info['CFBundleIdentifier'],
             'developerName': owner, 'localizedDescription': 'Reproductor personal para iPhone y iPad con bridge propio y subtítulos AirPlay.',
             'iconURL': icon_url, 'tintColor': '4B49D6', 'versions': [version_info],
         }], 'news': [],

@@ -164,7 +164,7 @@ fun ProfilesScreen(state: AppState, onSelect: (Profile) -> Unit, onAdd: () -> Un
 @Composable
 private fun ProfileTile(name: String, onClick: () -> Unit, symbol: String? = null, onLongClick: (() -> Unit)? = null) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Card(onClick = onClick, onLongClick = onLongClick, modifier = Modifier.size(150.dp), shape = androidx.tv.material3.CardDefaults.shape(CircleShape)) {
+        Card(onClick = onClick, onLongClick = onLongClick, modifier = Modifier.size(150.dp), shape = androidx.tv.material3.CardDefaults.shape(CircleShape), scale = androidx.tv.material3.CardDefaults.scale(focusedScale = 1f)) {
             Box(Modifier.fillMaxSize().background(Color(0xFF4F46E5)), contentAlignment = Alignment.Center) {
                 Text(symbol ?: name.take(1).uppercase(), fontSize = 56.sp, color = Color.White)
             }

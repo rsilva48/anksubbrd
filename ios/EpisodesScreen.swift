@@ -113,6 +113,8 @@ struct EpisodesScreen: View {
     @State private var downloadRequest: DownloadRequest?
     /// Episodes of the last batch that used another server or were skipped.
     @State private var downloadNotice: String?
+    /// Opens the remote control, optionally starting an episode on a TV.
+    @State private var remoteRequest: RemotePlayRequest?
     /// The bridge could not be reached: saved series data and downloads only.
     @State private var isOffline = false
     @State private var pendingServer: (episode: Episode, server: Server)?
@@ -208,6 +210,9 @@ struct EpisodesScreen: View {
                 serverChoice = nil
             }
         }
+        .sheet(item: $remoteRequest) { request in
+            TVRemoteSheet(play: request.command, playTitle: request.title)
+        }
         .sheet(item: $downloadRequest) { request in
             ServerPicker(choice: request.choice, defaultKind: request.kind, title: request.title, actionSymbol: "arrow.down.circle") { server in
                 downloadRequest = nil
@@ -219,6 +224,9 @@ struct EpisodesScreen: View {
         }
         .toolbar {
             if let series, !isOffline {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Ver en TV", systemImage: "tv") { watchOnTV(nextEpisodeForTV(series)) }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     downloadMenu(series)
                 }
@@ -378,6 +386,7 @@ struct EpisodesScreen: View {
                             }
                         }
                     }
+                    Button("Ver en TV", systemImage: "tv") { watchOnTV(episode) }
                     Button("Elegir servidor en línea", systemImage: "antenna.radiowaves.left.and.right") {
                         chooseServer(for: episode)
                     }
@@ -472,6 +481,25 @@ struct EpisodesScreen: View {
             .buttonStyle(.borderless)
             .accessibilityLabel("Descargar episodio \(episode.number) en \(kind.displayName)")
         }
+    }
+
+    /// The episode "Ver en TV" starts: the one in progress, else the next
+    /// one of the same kind, else the newest or the first.
+    private func nextEpisodeForTV(_ series: Series) -> Episode? {
+        guard let entry = profile.entry(for: current.watchUrl) else {
+            return series.episodes.first { $0.number == latestEpisode } ?? series.episodes.first
+        }
+        if !entry.isCompleted { return series.episodes.first { $0.number == entry.episode } }
+        let kind = entry.kind ?? profile.preferences.defaultTrack
+        return series.episode(after: entry.episode, kind: kind) ?? series.episodes.first { $0.number == entry.episode }
+    }
+
+    private func watchOnTV(_ episode: Episode?) {
+        let kind = profile.entry(for: current.watchUrl)?.kind ?? profile.preferences.defaultTrack
+        remoteRequest = RemotePlayRequest(
+            command: episode.map { RemoteCommand.play(current.watchUrl, episode: $0.number, kind: kind) },
+            title: episode.map { "\(current.displayTitle(language)) · episodio \($0.number)" }
+        )
     }
 
     /// Downloaded episodes play from disk; the rest ask for a server.

@@ -1,8 +1,10 @@
 package com.personal.anksubbrd.tv
 
+import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.serialization.builtins.ListSerializer
 
 /** An episode ready to play, with what is needed to move to the next one. */
 data class PlaybackRequest(
@@ -14,20 +16,36 @@ data class PlaybackRequest(
 )
 
 /** The active profile: its preferences and its watch history (shared with the phone). */
-class Session(val profile: Profile, val client: BridgeClient) {
+class Session(val profile: Profile, val client: BridgeClient, context: Context) {
+    private val storage = context.applicationContext.getSharedPreferences("anksubbrd", Context.MODE_PRIVATE)
+    private val historyKey = "history.${profile.id}"
+    private val historySerializer = ListSerializer(HistoryEntry.serializer())
     var preferences by mutableStateOf(Preferences())
         private set
-    var history by mutableStateOf<List<HistoryEntry>>(emptyList())
+    var history by mutableStateOf(loadHistory())
         private set
     var historyError by mutableStateOf<String?>(null)
         private set
 
     val japanese: Boolean get() = preferences.titleLanguage == "jp"
 
+    private fun loadHistory(): List<HistoryEntry> = storage.getString(historyKey, null)
+        ?.let { runCatching { BridgeClient.json.decodeFromString(historySerializer, it) }.getOrNull() }
+        ?: emptyList()
+
+    private fun persistHistory() {
+        storage.edit().putString(historyKey, BridgeClient.json.encodeToString(historySerializer, history)).apply()
+    }
+
+    fun initialLoadTimedOut() {
+        if (history.isEmpty()) historyError = "No se pudo cargar el historial. Comprueba la conexión con el bridge."
+    }
+
     suspend fun refresh() {
         runCatching { client.preferences() }.onSuccess { preferences = it }
         try {
             history = client.history().entries.sortedByDescending { it.updatedAt }
+            persistHistory()
             historyError = null
         } catch (error: BridgeException) {
             historyError = error.message
@@ -43,6 +61,7 @@ class Session(val profile: Profile, val client: BridgeClient) {
     /** Saves progress locally and on the bridge (newest wins there). */
     suspend fun record(entry: HistoryEntry) {
         history = listOf(entry) + history.filterNot { catalogPath(it.watchUrl) == catalogPath(entry.watchUrl) }
+        persistHistory()
         runCatching { client.saveHistory(listOf(entry)) }
     }
 

@@ -67,6 +67,9 @@ class AppState(context: Context) {
     fun setBridge(url: String) {
         if (url != bridgeUrl) {
             // Identities belong to one bridge.
+            val editor = storage.edit()
+            profiles.forEach { editor.remove("history.${it.id}") }
+            editor.apply()
             profiles = emptyList()
             activeProfileId = null
         }
@@ -85,6 +88,7 @@ class AppState(context: Context) {
     }
 
     fun removeProfile(profile: Profile) {
+        storage.edit().remove("history.${profile.id}").apply()
         profiles = profiles.filterNot { it.id == profile.id }
         if (activeProfileId == profile.id) activeProfileId = null
         save()

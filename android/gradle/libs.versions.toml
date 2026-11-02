@@ -20,6 +20,7 @@ androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-ru
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-material-icons = { module = "androidx.compose.material:material-icons-core" }
 tv-material = { module = "androidx.tv:tv-material", version.ref = "tvMaterial" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }

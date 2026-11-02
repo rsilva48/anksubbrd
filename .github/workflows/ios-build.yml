@@ -1,4 +1,4 @@
-name: Build iOS app
+name: Build AniBridge Player
 
 on:
   workflow_dispatch:
@@ -11,6 +11,7 @@ on:
     paths:
       - 'ios/**'
       - 'proxy/**'
+      - 'android/**'
       - '.github/workflows/ios-build.yml'
 
 permissions:
@@ -23,6 +24,7 @@ jobs:
     outputs:
       app: ${{ steps.diff.outputs.app }}
       bridge: ${{ steps.diff.outputs.bridge }}
+      android: ${{ steps.diff.outputs.android }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,18 +47,20 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == tag ]] && gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # Re-pushed tags (for example after rewriting history) keep their
             # existing release instead of rebuilding and republishing it.
-            app=false; bridge=false
+            app=false; bridge=false; android=false
             printf 'Release %s already exists; nothing to publish.\n' "$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
           elif [[ "$EVENT_NAME" == workflow_dispatch || -z "$base" ]]; then
-            app=true; bridge=true
+            app=true; bridge=true; android=true
           else
             # Ignores manifests whose only change is the synced version number.
             result=$(node scripts/changed-components.mjs "$base" "$GITHUB_SHA")
             app=$(sed -n 's/^app=//p' <<<"$result")
             bridge=$(sed -n 's/^bridge=//p' <<<"$result")
+            android=$(sed -n 's/^android=//p' <<<"$result")
           fi
           printf 'Base: %s\nApp changed: %s\nBridge changed: %s\n' "${base:-none}" "$app" "$bridge" >> "$GITHUB_STEP_SUMMARY"
           printf 'app=%s\nbridge=%s\n' "$app" "$bridge" >> "$GITHUB_OUTPUT"
+          printf 'android=%s\n' "$android" >> "$GITHUB_OUTPUT"
 
   proxy-check:
     name: Verify bridge on Node 24
@@ -196,7 +200,7 @@ jobs:
                   <key>bundle-identifier</key><string>${bundle_id}</string>
                   <key>bundle-version</key><string>${version}</string>
                   <key>kind</key><string>software</string>
-                  <key>title</key><string>AirPlay Subtitles</string>
+                  <key>title</key><string>AniBridge Player</string>
                 </dict>
               </dict>
             </array>
@@ -214,23 +218,75 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  android-build:
+    name: Build Android TV APK
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: |
+            android/**/*.gradle*
+            android/**/gradle-wrapper.properties
+            android/gradle/libs.versions.toml
+      - name: Install Android SDK
+        run: "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager 'platforms;android-37'"
+      - name: Build APK
+        working-directory: android
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$(tr -d '[:space:]' < ../version.txt)" ]] || { echo 'Tag and version.txt do not match'; exit 1; }
+            [[ -n "$KEYSTORE_BASE64" && -n "$ANDROID_KEYSTORE_PASSWORD" && -n "$ANDROID_KEY_ALIAS" && -n "$ANDROID_KEY_PASSWORD" ]] || { echo 'Android signing secrets are required for releases'; exit 1; }
+            export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/android-release.keystore"
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+            trap 'rm -f "$ANDROID_KEYSTORE_PATH"' EXIT
+            ./gradlew --no-daemon assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/AniBridgePlayer-TV.apk"
+          else
+            ./gradlew --no-daemon assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/AniBridgePlayer-TV.apk"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: AniBridgePlayer-TV
+          path: ${{ runner.temp }}/AniBridgePlayer-TV.apk
+          if-no-files-found: error
+          retention-days: 7
+
   release:
     name: Publish tagged release
-    needs: [changes, build, proxy-check]
+    needs: [changes, build, proxy-check, android-build]
     # Skipped jobs count as success so bridge-only and app-only tags publish too.
     if: >-
       ${{ !cancelled()
       && github.event_name == 'push' && github.ref_type == 'tag'
       && needs.changes.result == 'success'
-      && (needs.changes.outputs.app == 'true' || needs.changes.outputs.bridge == 'true')
+      && (needs.changes.outputs.app == 'true' || needs.changes.outputs.bridge == 'true' || needs.changes.outputs.android == 'true')
       && contains(fromJSON('["success","skipped"]'), needs.build.result)
-      && contains(fromJSON('["success","skipped"]'), needs.proxy-check.result) }}
+      && contains(fromJSON('["success","skipped"]'), needs.proxy-check.result)
+      && contains(fromJSON('["success","skipped"]'), needs.android-build.result) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       HAS_APP: ${{ needs.changes.outputs.app }}
       HAS_BRIDGE: ${{ needs.changes.outputs.bridge }}
+      HAS_ANDROID: ${{ needs.changes.outputs.android }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -240,6 +296,11 @@ jobs:
         if: env.HAS_APP == 'true'
         with:
           name: AirPlaySubtitlePlayer-unsigned
+          path: release-assets
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.HAS_ANDROID == 'true'
+        with:
+          name: AniBridgePlayer-TV
           path: release-assets
       - name: Create changelog from commits
         shell: bash
@@ -280,12 +341,13 @@ jobs:
           fi
           printf '## Cambios\n\n' >> release-notes.md
           section 'App iOS' ios
+          section 'Android TV' android
           section 'Bridge' proxy
-          section 'Repositorio y documentación' . ':(exclude)ios' ':(exclude)proxy'
+          section 'Repositorio y documentación' . ':(exclude)ios' ':(exclude)android' ':(exclude)proxy'
           if [[ "$HAS_APP" == true ]]; then
             printf 'El IPA no está firmado; impórtalo en LiveContainer o fírmalo con tu herramienta de sideload.\n' >> release-notes.md
           else
-            printf 'Release sólo del bridge: no incluye IPA y no reemplaza a la última versión de la app.\n' >> release-notes.md
+            printf 'Esta release no incluye IPA y no reemplaza la última release de iOS.\n' >> release-notes.md
           fi
           cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
       - name: Generate LiveContainer source
@@ -303,8 +365,8 @@ jobs:
       # releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa keeps working.
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          name: ${{ env.HAS_APP == 'true' && github.ref_name || format('{0} (bridge)', github.ref_name) }}
-          files: ${{ env.HAS_APP == 'true' && 'release-assets/*' || '' }}
+          name: ${{ github.ref_name }}
+          files: ${{ (env.HAS_APP == 'true' || env.HAS_ANDROID == 'true') && 'release-assets/*' || '' }}
           body_path: release-notes.md
           fail_on_unmatched_files: true
           make_latest: ${{ env.HAS_APP == 'true' && 'true' || 'false' }}

@@ -44,6 +44,7 @@ private struct HistoryList: View {
     @State private var editMode: EditMode = .inactive
     @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
     @State private var showBulkDeleteConfirmation = false
+    @State private var showRemote = false
     /// Bridge episode counts by catalog path; only finished entries need them.
     @State private var statuses: [String: SeriesStatus] = [:]
 
@@ -75,6 +76,9 @@ private struct HistoryList: View {
         .navigationTitle("Continuar viendo")
         .modifier(AdaptableTabRootTitleStyle())
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Ver en TV", systemImage: "tv") { showRemote = true }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button(isEditing ? "Listo" : "Editar") {
                     if isEditing {
@@ -101,6 +105,7 @@ private struct HistoryList: View {
                 .padding(.vertical, 12)
             }
         }
+        .sheet(isPresented: $showRemote) { TVRemoteSheet() }
         .confirmationDialog(
             "¿Borrar \(selectedEntryIDs.count) series?",
             isPresented: $showBulkDeleteConfirmation,
