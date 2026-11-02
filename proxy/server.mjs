@@ -837,6 +837,19 @@ function createAnkProvider(configuredOrigin) {
     if (pages.some((html) => typeof html === 'string')) scheduleCache = { entries: sorted, expiresAt: Date.now() + 30 * 60 * 1000 };
     return sorted;
   }
+  // The CDN token lasts 90 seconds. Players read the master playlist right
+  // away, but offline downloads (a separate iOS process that may queue the
+  // episode) and long sessions come back later, so every upstream request
+  // on the stream's host re-signs a token that is missing or about to expire.
+  function signUpstream(value, source) {
+    const url = new URL(value);
+    if (url.hostname !== new URL(source.hlsUrl).hostname) return url.toString();
+    let expiresAt = 0;
+    try { expiresAt = Number(Buffer.from(String(url.searchParams.get('token') ?? '').split('.')[0], 'base64url').toString('utf8').split('|')[0]); } catch { /* unreadable: re-sign */ }
+    if (url.searchParams.has('token') && expiresAt - Date.now() / 1000 > 20) return url.toString();
+    url.searchParams.delete('token');
+    return attachCdnToken(url.toString());
+  }
   function attachCdnToken(value) {
     const url = new URL(value);
     if (url.searchParams.has('token')) return url.toString();
@@ -889,7 +902,7 @@ function createAnkProvider(configuredOrigin) {
     return /(?:ibyteimg\.com|tiktokcdn\.com|ipstatp\.com|yoot\.akirax\.buzz)$/i.test(hostname) && body.length > 252 ? body.subarray(252) : body;
   }
 
-  return { type: 'ANK', origin: providerOrigin, watchUrl, search, latest, series, schedule, servers, source, segment };
+  return { type: 'ANK', origin: providerOrigin, watchUrl, search, latest, series, schedule, servers, source, segment, signUpstream };
 }
 
 function rewriteUriLines(textValue, baseUrl, id, source) {
@@ -936,7 +949,8 @@ function durationFromVtt(vtt) {
 }
 // The timeout covers the headers and the body: a stalled CDN must fail the
 // request (so the player can report it and retry) instead of hanging forever.
-async function fetchUpstream(url, source, range, timeoutMs = 30000) {
+async function fetchUpstream(value, source, range, timeoutMs = 30000) {
+  const url = provider.signUpstream ? provider.signUpstream(value, source) : value;
   const headers = { ...source.requestHeaders, ...(range ? { range } : {}) };
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);

@@ -110,6 +110,9 @@ struct EpisodesScreen: View {
     @State private var loading = false
     @State private var errorMessage: String?
     @State private var serverChoice: EpisodeServers?
+    @State private var downloadRequest: DownloadRequest?
+    /// Episodes of the last batch that used another server or were skipped.
+    @State private var downloadNotice: String?
     @State private var pendingServer: (episode: Episode, server: Server)?
     @State private var activePlayer: PlayerModel?
     @State private var busyMessage: String?
@@ -138,6 +141,14 @@ struct EpisodesScreen: View {
                         }
                     }
                     .pickerStyle(.menu)
+                }
+            }
+            if let downloadNotice {
+                Section {
+                    Label(downloadNotice, systemImage: "info.circle")
+                        .font(.footnote)
+                    Button("Entendido") { self.downloadNotice = nil }
+                        .font(.footnote)
                 }
             }
             if let errorMessage {
@@ -176,6 +187,12 @@ struct EpisodesScreen: View {
             ServerPicker(choice: choice, defaultKind: profile.preferences.defaultTrack) { server in
                 pendingServer = (episode: choice.episode, server: server)
                 serverChoice = nil
+            }
+        }
+        .sheet(item: $downloadRequest) { request in
+            ServerPicker(choice: request.choice, defaultKind: request.kind, title: request.title, actionSymbol: "arrow.down.circle") { server in
+                downloadRequest = nil
+                download(request.episodes, server: server)
             }
         }
         .fullScreenCover(item: $activePlayer, onDismiss: { downloads.cleanUpWatched(profile: profile) }) { model in
@@ -313,23 +330,28 @@ struct EpisodesScreen: View {
         let kind = entry?.kind ?? profile.preferences.defaultTrack
         return Section("Episodios") {
             ForEach(series.episodes) { episode in
-                Button {
-                    open(episode)
-                } label: {
-                    EpisodeRow(
-                        episode: episode,
-                        progress: entry?.episode == episode.number && entry?.isCompleted == false ? entry?.positionSeconds : nil,
-                        watched: entry.map { episode.number < $0.episode || (episode.number == $0.episode && $0.isCompleted) } ?? false,
-                        isLatest: episode.number == latestEpisode,
-                        missingKind: episode.isAvailable(for: kind) ? nil : kind,
-                        download: downloads.record(watchUrl: current.watchUrl, episode: episode.number)
-                    )
+                // Two independent controls in the row: non-default button
+                // styles keep a tap on one from triggering the other.
+                HStack(spacing: 10) {
+                    Button {
+                        open(episode)
+                    } label: {
+                        EpisodeRow(
+                            episode: episode,
+                            progress: entry?.episode == episode.number && entry?.isCompleted == false ? entry?.positionSeconds : nil,
+                            watched: entry.map { episode.number < $0.episode || (episode.number == $0.episode && $0.isCompleted) } ?? false,
+                            isLatest: episode.number == latestEpisode,
+                            missingKind: episode.isAvailable(for: kind) ? nil : kind
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    downloadControl(for: episode, kind: kind)
                 }
                 .contextMenu {
                     ForEach(StreamKind.allCases.filter { episode.isAvailable(for: $0) }) { option in
                         if downloads.record(watchUrl: current.watchUrl, episode: episode.number, kind: option)?.state != .completed {
                             Button("Descargar en \(option.displayName)", systemImage: "arrow.down.circle") {
-                                download([episode], kind: option)
+                                requestDownload([episode], kind: option)
                             }
                         }
                     }
@@ -345,7 +367,7 @@ struct EpisodesScreen: View {
                 .swipeActions(edge: .leading) {
                     if episode.isAvailable(for: kind), downloads.record(watchUrl: current.watchUrl, episode: episode.number, kind: kind) == nil {
                         Button {
-                            download([episode], kind: kind)
+                            requestDownload([episode], kind: kind)
                         } label: {
                             Label("Descargar", systemImage: "arrow.down.circle")
                         }
@@ -381,6 +403,42 @@ struct EpisodesScreen: View {
         }
     }
 
+    /// Download button of an episode row, or its download state with the
+    /// actions that apply to it.
+    @ViewBuilder
+    private func downloadControl(for episode: Episode, kind: StreamKind) -> some View {
+        if let record = downloads.record(watchUrl: current.watchUrl, episode: episode.number) {
+            Menu {
+                if record.state == .completed {
+                    Button("Ver sin conexión", systemImage: "play.fill") { open(episode) }
+                }
+                if record.state == .failed {
+                    Button("Reintentar descarga", systemImage: "arrow.clockwise") {
+                        downloads.remove(record)
+                        requestDownload([episode], kind: record.kind)
+                    }
+                }
+                Button(record.state == .downloading ? "Cancelar descarga" : "Borrar descarga", systemImage: "trash", role: .destructive) {
+                    downloads.remove(record)
+                }
+            } label: {
+                DownloadBadge(record: record)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.borderless)
+        } else if episode.isAvailable(for: kind) {
+            Button {
+                requestDownload([episode], kind: kind)
+            } label: {
+                Image(systemName: "arrow.down.circle")
+                    .font(.title3)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Descargar episodio \(episode.number) en \(kind.displayName)")
+        }
+    }
+
     /// Downloaded episodes play from disk; the rest ask for a server.
     private func open(_ episode: Episode) {
         let preferred = profile.entry(for: current.watchUrl)?.kind ?? profile.preferences.defaultTrack
@@ -405,16 +463,24 @@ struct EpisodesScreen: View {
         }
         return Menu {
             Section("Descargar en \(kind.displayName) para ver sin conexión") {
-                ForEach([1, 3, 5].filter { $0 <= pending.count }, id: \.self) { count in
-                    Button(count == 1 ? "Episodio \(pending[0].number)" : "Siguientes \(count) episodios") {
-                        download(Array(pending.prefix(count)), kind: kind)
+                if let next = pending.first {
+                    Button(entry == nil ? "Episodio \(next.number)" : "Episodio \(next.number) · siguiente") {
+                        requestDownload([next], kind: kind)
                     }
                 }
-                if pending.count > 5 {
-                    Button("Los \(pending.count) restantes") {
-                        download(pending, kind: kind)
+                if pending.count > 3 {
+                    Button("Siguientes 3 episodios") {
+                        requestDownload(Array(pending.prefix(3)), kind: kind)
                     }
                 }
+                if pending.count > 1, let last = pending.last {
+                    Button(entry == nil ? "Serie completa · \(pending.count) episodios" : "Los que faltan · episodios \(pending[0].number) a \(last.number)") {
+                        requestDownload(pending, kind: kind)
+                    }
+                }
+            }
+            Section {
+                Text("Cada episodio también tiene su botón de descarga en la lista.")
             }
         } label: {
             Label("Descargar", systemImage: "arrow.down.circle")
@@ -422,27 +488,61 @@ struct EpisodesScreen: View {
         .disabled(pending.isEmpty)
     }
 
+    /// Asks for the server with the servers of the first episode, as
+    /// playback does; see `download(_:server:)` for the rest of a batch.
+    private func requestDownload(_ episodes: [Episode], kind: StreamKind) {
+        guard let resolver, busyMessage == nil, let first = episodes.first else { return }
+        Task {
+            busyMessage = "Cargando servidores del episodio \(first.number)…"
+            defer { busyMessage = nil }
+            do {
+                let servers = try await resolver.servers(for: first)
+                downloadRequest = DownloadRequest(episodes: episodes, kind: kind, choice: EpisodeServers(episode: first, servers: servers))
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
     /// Resolves each episode online (one at a time) and hands it to the
-    /// background download session.
-    private func download(_ episodes: [Episode], kind: StreamKind) {
-        guard let resolver, busyMessage == nil, !episodes.isEmpty else { return }
+    /// background download session. Servers differ between episodes and can
+    /// fail: each episode tries a server with the chosen name, then the other
+    /// servers of the same kind; an episode without any is skipped.
+    private func download(_ episodes: [Episode], server: Server) {
+        guard let resolver, busyMessage == nil, let first = episodes.first else { return }
+        downloadNotice = nil
         Task {
             defer { busyMessage = nil }
+            var notes: [String] = []
             for episode in episodes {
                 busyMessage = "Preparando la descarga del episodio \(episode.number)…"
                 do {
-                    let session = try await resolver.session(for: episode, kind: kind, allowDownload: false)
-                    guard session.kind == kind else {
-                        throw BridgeRequestError(message: "El episodio \(episode.number) no tiene servidores \(kind.displayName).")
+                    // The picked server first (it belongs to the first
+                    // episode), then any server of the same kind.
+                    var resolved: PlaybackSession?
+                    if episode == first {
+                        resolved = try? await resolver.session(for: episode, server: server, allowDownload: false)
                     }
-                    await downloads.start(session)
+                    if resolved == nil {
+                        resolved = try await resolver.downloadSession(for: episode, kind: server.kind, preferredName: server.name, excluding: episode == first ? [server.name] : [])
+                    }
+                    guard let session = resolved else {
+                        notes.append("Episodio \(episode.number): sin servidores \(server.kind.displayName) disponibles, no se descarga.")
+                        continue
+                    }
+                    if session.playback.serverName != server.name {
+                        notes.append("Episodio \(episode.number): \(server.name) no estaba disponible, se usa \(session.playback.serverName).")
+                    }
+                    await downloads.start(session, triedServers: session.playback.serverName == server.name ? [] : [server.name])
                 } catch is CancellationError {
                     return
                 } catch {
-                    errorMessage = error.localizedDescription
-                    return
+                    notes.append("Episodio \(episode.number): \(error.localizedDescription)")
                 }
             }
+            downloadNotice = notes.isEmpty ? nil : notes.joined(separator: "\n")
         }
     }
 
@@ -492,7 +592,6 @@ private struct EpisodeRow: View {
     let isLatest: Bool
     /// Sub/Dub kind the viewer uses that this episode does not have yet.
     let missingKind: StreamKind?
-    let download: DownloadRecord?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -520,9 +619,6 @@ private struct EpisodeRow: View {
                 }
             }
             Spacer(minLength: 0)
-            if let download {
-                DownloadBadge(record: download)
-            }
             Image(systemName: watched ? "checkmark.circle.fill" : "play.circle")
                 .foregroundStyle(watched ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .accessibilityLabel(watched ? "Visto" : "Reproducir")
@@ -607,9 +703,23 @@ private struct SynopsisText: View {
     }
 }
 
+/// Episodes waiting for the user to pick a download server.
+private struct DownloadRequest: Identifiable {
+    let episodes: [Episode]
+    let kind: StreamKind
+    let choice: EpisodeServers
+    var id: Int { choice.id }
+
+    var title: String {
+        episodes.count == 1 ? "Descargar episodio \(choice.episode.number)" : "Descargar \(episodes.count) episodios"
+    }
+}
+
 struct ServerPicker: View {
     let choice: EpisodeServers
     let defaultKind: StreamKind
+    var title: String? = nil
+    var actionSymbol = "play.circle"
     let onSelect: (Server) -> Void
     @State private var kind: StreamKind = .sub
     @Environment(\.dismiss) private var dismiss
@@ -634,13 +744,13 @@ struct ServerPicker: View {
                             Button {
                                 onSelect(server)
                             } label: {
-                                Label(server.name, systemImage: "play.circle")
+                                Label(server.name, systemImage: actionSymbol)
                             }
                         }
                     }
                 }
             }
-            .navigationTitle("Episodio \(choice.episode.number)")
+            .navigationTitle(title ?? "Episodio \(choice.episode.number)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

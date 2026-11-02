@@ -86,6 +86,7 @@ struct RootView: View {
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)
         .task(id: profile.scope) {
+            downloads.use(profile)
             await profile.sync(force: true)
             downloads.cleanUpWatched(profile: profile)
             await notifier.refresh(profile: profile)

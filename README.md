@@ -47,8 +47,10 @@ Con el idioma de catálogo en japonés, la lista muestra el nombre en inglés y 
 
 ### Descargas sin conexión
 
-En la ficha de una serie, mantén pulsado un episodio (o deslízalo a la derecha) para descargarlo en Sub o Dub, o usa el botón **Descargar** de la barra para bajar los siguientes episodios sin ver. La descarga guarda el HLS completo: vídeo, audio y todas las pistas de subtítulos, en un paquete nativo de iOS que sigue bajando con la app en segundo plano.
+Cada episodio de la ficha tiene su botón de descarga (también al mantenerlo pulsado, en Sub o Dub). El botón **Descargar** de la barra ofrece el siguiente episodio sin ver, los siguientes 3 y **los que faltan** desde el que estás viendo (o la **serie completa** si aún no la empezaste). La descarga guarda el HLS completo: vídeo, audio y todas las pistas de subtítulos, en un paquete nativo de iOS que sigue bajando con la app en segundo plano.
 
+- Antes de descargar eliges el servidor, igual que al reproducir. Si en algún episodio ese servidor no existe o no responde, se prueba automáticamente otro del mismo tipo (Sub o Dub); un episodio sin ninguno de ese tipo se omite. La ficha avisa de cada caso y **Descargas** muestra el servidor de cada episodio.
+- Si una descarga falla a mitad de camino, se reinicia sola con el siguiente servidor del mismo tipo que aún no se probó, hasta agotarlos.
 - La pestaña **Descargas** funciona sin red y sin bridge configurado. Al reproducir desde ahí, el siguiente episodio es la siguiente descarga de la misma serie y tipo.
 - En la ficha de la serie, un episodio descargado se reproduce desde el dispositivo. **Elegir servidor en línea** fuerza el streaming.
 - El progreso se guarda en **Continuar viendo** y se sincroniza al volver a tener conexión.

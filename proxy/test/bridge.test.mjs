@@ -170,3 +170,17 @@ test('The schedule lists one entry per series, episode and kind with its airing 
   const entries = await createAnkProvider('https://catalog.example').schedule();
   assert.deepEqual(entries, [{ watchUrl: 'https://catalog.example/watch/delta-4', title: 'Delta', titleJp: 'Delta JP', imageUrl: 'https://catalog.example/p.jpg', episode: 5, kind: 'sub', airingAt: 1793896080 }]);
 });
+
+test('Upstream requests re-sign CDN tokens that are missing or about to expire', () => {
+  const provider = createAnkProvider('https://catalog.example');
+  const path = `https://cdn.example/${'a'.repeat(32)}/${'b'.repeat(32)}/master.m3u8`;
+  const source = { hlsUrl: path };
+  const expiry = (url) => Number(Buffer.from(new URL(url).searchParams.get('token').split('.')[0], 'base64url').toString('utf8').split('|')[0]);
+  const now = Date.now() / 1000;
+  const stale = `${path}?token=${Buffer.from(`${Math.floor(now) - 5}|x`).toString('base64url')}.sig`;
+  assert.ok(expiry(provider.signUpstream(stale, source)) > now + 60);
+  const fresh = provider.signUpstream(path, source);
+  assert.ok(expiry(fresh) > now + 60);
+  assert.equal(provider.signUpstream(fresh, source), fresh);
+  assert.equal(provider.signUpstream('https://other.example/seg-1.ts', source), 'https://other.example/seg-1.ts');
+});

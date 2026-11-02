@@ -32,6 +32,9 @@ struct DownloadRecord: Codable, Identifiable {
     var bytes: Int64?
     var errorMessage: String?
     let createdAt: Date
+    /// Servers that already failed for this episode (optional: records
+    /// saved by 0.2.7 do not have it).
+    var triedServers: [String]? = nil
 
     var fileURL: URL? {
         guard let storedPath else { return nil }
@@ -50,6 +53,28 @@ struct DownloadRecord: Codable, Identifiable {
     }
 }
 
+extension PlaybackResolver {
+    /// A download source of `kind` for the episode: the preferred server
+    /// first, then the episode's other servers of that kind, skipping the
+    /// excluded ones and any that fail to resolve. Nil when none is left.
+    func downloadSession(for episode: Episode, kind: StreamKind, preferredName: String?, excluding: Set<String> = []) async throws -> PlaybackSession? {
+        let candidates = try await servers(for: episode).filter { $0.kind == kind && !excluding.contains($0.name) }
+        let ordered = candidates.filter { $0.name == preferredName } + candidates.filter { $0.name != preferredName }
+        var lastError: Error?
+        for server in ordered {
+            do {
+                return try await session(for: episode, server: server, allowDownload: false)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+            }
+        }
+        if let lastError { throw lastError }
+        return nil
+    }
+}
+
 /// Downloads run in a background `AVAssetDownloadURLSession`, so they keep
 /// going while the app is suspended. Records are stored per device.
 @MainActor
@@ -64,6 +89,8 @@ final class DownloadStore {
     @ObservationIgnored private let delegate = DownloadSessionDelegate()
     @ObservationIgnored private var tasks: [String: AVAssetDownloadTask] = [:]
     @ObservationIgnored private var progressObservations: [String: NSKeyValueObservation] = [:]
+    /// Identity used to resolve another server when a download fails.
+    @ObservationIgnored private weak var profile: ProfileStore?
     private let defaults = UserDefaults.standard
     private static let storageKey = "anksubbrd.downloads.v1"
 
@@ -85,6 +112,10 @@ final class DownloadStore {
     }
 
     var totalBytes: Int64 { records.compactMap(\.bytes).reduce(0, +) }
+
+    func use(_ profile: ProfileStore) {
+        self.profile = profile
+    }
 
     // MARK: Lookup
 
@@ -148,7 +179,7 @@ final class DownloadStore {
 
     /// Downloads a freshly resolved (online) session. The bridge keeps the
     /// source for two hours, which is plenty for one episode.
-    func start(_ playbackSession: PlaybackSession) async {
+    func start(_ playbackSession: PlaybackSession, triedServers: [String] = []) async {
         let entry = playbackSession.historyEntry
         if let existing = record(watchUrl: entry.watchUrl, episode: entry.episode, kind: playbackSession.kind), existing.state != .failed { return }
         let id = UUID().uuidString
@@ -168,7 +199,8 @@ final class DownloadStore {
             subtitleTracks: playbackSession.playback.subtitleTracks,
             state: .downloading,
             progress: 0,
-            createdAt: Date()
+            createdAt: Date(),
+            triedServers: triedServers
         ))
         persist()
         do {
@@ -297,6 +329,7 @@ final class DownloadStore {
                 $0.storedPath = nil
                 $0.errorMessage = error.localizedDescription
             }
+            Task { await retryWithAnotherServer(id) }
         } else if let url = record.fileURL, FileManager.default.fileExists(atPath: url.path) {
             let size = Self.size(of: url)
             update(id) {
@@ -310,7 +343,38 @@ final class DownloadStore {
                 $0.state = .failed
                 $0.errorMessage = "La descarga terminó sin archivo."
             }
+            Task { await retryWithAnotherServer(id) }
         }
+    }
+
+    /// A failed download starts over with the next server of the same kind
+    /// that was not tried yet, until the episode runs out of servers.
+    private func retryWithAnotherServer(_ id: String) async {
+        guard let profile, profile.isBridgeConfigured, let record = records.first(where: { $0.id == id }) else { return }
+        let tried = Set((record.triedServers ?? []) + [record.serverName])
+        let failure = record.errorMessage ?? "La descarga falló."
+        update(id) { $0.errorMessage = "\(failure) Probando otro servidor…" }
+        do {
+            guard let session = try await alternativeSession(for: record, excluding: tried, profile: profile) else {
+                update(id) { $0.errorMessage = "\(failure) Ningún otro servidor \(record.kind.displayName) funcionó." }
+                return
+            }
+            remove(record)
+            await start(session, triedServers: Array(tried))
+        } catch {
+            update(id) { $0.errorMessage = "\(failure) \(error.localizedDescription)" }
+        }
+    }
+
+    /// Resolves the record's episode again through the bridge, preferring
+    /// its server unless excluded.
+    func alternativeSession(for record: DownloadRecord, excluding: Set<String>, profile: ProfileStore) async throws -> PlaybackSession? {
+        let series: Series = try await BridgeClient.post(base: profile.bridgeURL, path: "/api/series", body: WatchRequest(watchUrl: record.watchUrl))
+        guard let episode = series.episodes.first(where: { $0.number == record.episode }) else {
+            throw BridgeRequestError(message: "El episodio \(record.episode) ya no está en el catálogo.")
+        }
+        let resolver = PlaybackResolver(series: series, anime: record.anime, profile: profile)
+        return try await resolver.downloadSession(for: episode, kind: record.kind, preferredName: record.serverName, excluding: excluding)
     }
 
     private static func size(of url: URL) -> Int64 {
@@ -445,7 +509,7 @@ struct DownloadsScreen: View {
     }
 
     /// Failed downloads need the bridge again: the series is reloaded and the
-    /// same server and kind are resolved once more.
+    /// same server (or another of the same kind) is resolved once more.
     private func retry(_ record: DownloadRecord) {
         guard retrying == nil else { return }
         retrying = record.id
@@ -453,12 +517,9 @@ struct DownloadsScreen: View {
         Task {
             defer { retrying = nil }
             do {
-                let series: Series = try await BridgeClient.post(base: profile.bridgeURL, path: "/api/series", body: WatchRequest(watchUrl: record.watchUrl))
-                guard let episode = series.episodes.first(where: { $0.number == record.episode }) else {
-                    throw BridgeRequestError(message: "El episodio \(record.episode) ya no está en el catálogo.")
+                guard let session = try await downloads.alternativeSession(for: record, excluding: [], profile: profile) else {
+                    throw BridgeRequestError(message: "El episodio \(record.episode) no tiene servidores \(record.kind.displayName).")
                 }
-                let resolver = PlaybackResolver(series: series, anime: record.anime, profile: profile)
-                let session = try await resolver.session(for: episode, preferredName: record.serverName, kind: record.kind, allowDownload: false)
                 downloads.remove(record)
                 await downloads.start(session)
             } catch {
@@ -498,12 +559,12 @@ private struct DownloadRow: View {
         switch record.state {
         case .downloading:
             ProgressView(value: record.progress) {
-                Text("Descargando · \(record.kind.displayName) · \(Int((record.progress * 100).rounded())) %")
+                Text("Descargando · \(record.kind.displayName) · \(record.serverName) · \(Int((record.progress * 100).rounded())) %")
                     .foregroundStyle(.secondary)
             }
         case .completed:
             let size = record.bytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-            let parts = [record.kind.displayName, size, progress.map { "Visto hasta \(formatTime($0))" }].compactMap { $0 }
+            let parts = [record.kind.displayName, record.serverName, size, progress.map { "Visto hasta \(formatTime($0))" }].compactMap { $0 }
             Text(parts.joined(separator: " · "))
                 .foregroundStyle(.secondary)
         case .failed:
