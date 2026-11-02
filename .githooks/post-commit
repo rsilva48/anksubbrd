@@ -1,4 +1,5 @@
 #!/bin/sh
-# A tag points at the completed commit; no files or existing commits are changed.
+# Local only: bumps the patch in version.txt (amended into this commit) unless
+# the commit already changed the version, then tags it vX.Y.Z.
 node "$(git rev-parse --show-toplevel)/scripts/post-commit-version.mjs" || \
-  printf '%s\n' 'No se pudo generar la etiqueta de versión. Revisa scripts/post-commit-version.mjs.' >&2
+  printf '%s\n' 'No se pudo actualizar la versión. Revisa scripts/post-commit-version.mjs.' >&2

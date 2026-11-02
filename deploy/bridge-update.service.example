@@ -1,0 +1,15 @@
+[Unit]
+Description=Update the AirPlay subtitle bridge to the newest version tag
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+# The user must own the checkout and be able to run docker compose.
+User=root
+Environment=BRIDGE_DIR=/opt/anksubbrd
+Environment=BRIDGE_CONTAINER=ani-bridge
+Environment=BRIDGE_HEALTH_URL=http://127.0.0.1:8787/health
+# Run through bash so the script needs no executable bit and is always read
+# from the current checkout.
+ExecStart=/bin/bash /opt/anksubbrd/deploy/update-bridge.sh

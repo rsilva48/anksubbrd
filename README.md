@@ -1,144 +1,247 @@
 # AirPlay Subtitle Bridge
 
-Aplicación personal de iPhone/iPad para navegar automáticamente un catálogo de anime a través de tu bridge, elegir serie, episodio y servidor, y reproducirlo por AirPlay con subtítulos como pistas HLS reales. El bridge también puede guardar el progreso privado para que continúes entre dispositivos.
+App personal para iPhone/iPad (iOS/iPadOS 26 o posterior) que navega un catálogo de anime a través de un bridge propio, reproduce el episodio elegido y lo envía por AirPlay con los subtítulos como pistas HLS reales. El bridge también guarda, por identidad, el progreso de **Continuar viendo** y las preferencias de catálogo y reproducción.
 
 ```text
 App iOS: buscar → serie → episodio → servidor
                        │
                        ▼
-Bridge local: API pública del sitio → metadatos del reproductor → HLS + VTT
+Bridge: metadatos públicos del reproductor → HLS + VTT + idioma de audio
                        │
                        ▼
 AVPlayer en iPhone/iPad ───────── AirPlay ─────────► TV
 ```
 
-No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor usando las mismas solicitudes AJAX públicas que utiliza la página. Consulta los metadatos públicos del reproductor, descifra su fuente temporal y conserva en memoria el HLS y los VTT. Después sirve un manifiesto HLS que declara cada VTT como subtítulo para `AVPlayer`.
+No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor con las mismas solicitudes AJAX públicas que usa la página de origen, descifra la fuente temporal y sirve un manifiesto HLS que declara cada VTT como subtítulo y el idioma del audio (japonés para Sub, inglés para Dub) para que `AVPlayer` active los subtítulos correctos.
 
-Las URLs y tokens temporales del proveedor no se registran en disco y desaparecen al reiniciar el bridge. Si activas un token de bridge, la app recibe sólo su propio token dentro de las URLs HLS temporales que necesita el receptor AirPlay; por eso deben viajar siempre por HTTPS.
+Las URLs y tokens temporales del proveedor no se registran en disco y desaparecen al reiniciar el bridge. Si usas identidades, la app incluye su propio token en las URLs HLS temporales que necesita el receptor AirPlay; por eso deben viajar siempre por HTTPS fuera de tu red local.
 
-## Requisitos del bridge
+## Uso de la app
 
-- Un equipo en la misma red que iPhone/iPad y TV: Windows, Linux, Mac o NAS compatible.
-- Node.js 24 LTS o posterior para el bridge. Instálalo en la máquina o servidor donde se ejecuta el proxy; actualizar este repositorio no actualiza Node automáticamente.
+1. Instala el IPA (ver [Releases](#versiones-y-releases)).
+2. En el primer uso, **Buscar**, **Recientes** y **Continuar** permanecen bloqueados y ofrecen un acceso directo a **Configuración**.
+3. En **Configuración → Bridge** elige `https://` (predeterminado) o `http://` y escribe sólo el dominio o la IP, con puerto si hace falta (`bridge.midominio.com` o `192.168.1.20:8787`). Si pegas una dirección con `http://` o `https://`, el prefijo se quita del campo y el selector adopta ese protocolo. **Probar y guardar** activa la dirección únicamente si `/health` responde.
+4. Si el bridge requiere identidad, créala, restáurala desde el Llavero de iCloud o importa un token (ver [Identidades](#identidades)).
+5. Busca una serie, elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
+
+### Reproductor
+
+- El vídeo ocupa siempre toda la pantalla; los controles flotan encima con Liquid Glass y nunca lo redimensionan.
+- Un toque muestra u oculta todos los controles a la vez; se ocultan solos tras unos segundos de reproducción.
+- Incluye AirPlay, imagen dentro de imagen, ±10 s, episodio anterior/siguiente sin cerrar el reproductor, menú de subtítulos y audio, velocidad, ajuste/relleno de pantalla (también con gesto de pellizco) y botones **Saltar intro/outro**.
+- Sub activa los subtítulos automáticamente: el idioma elegido en **Subtítulos en Sub**, si no el idioma del dispositivo y, si no existe, la pista predeterminada del bridge (inglés). Cambiar de subtítulo durante un episodio Sub actualiza esa preferencia.
+- Los controles de la pantalla bloqueada y del Centro de control funcionan mientras se reproduce por AirPlay.
+
+Usa el botón AirPlay del reproductor, no **Duplicar pantalla**: la app configura la sesión de vídeo de larga duración para que el TV reciba vídeo, audio y pistas VTT.
+
+### Continuar viendo
+
+Guarda la serie, episodio, servidor, tipo (Sub/Dub) y segundo actual de las últimas 50 series. **Continuar** reanuda directamente con el mismo servidor y tipo. Al abrir una serie, el botón **Continuar** aparece en la temporada que tenga progreso; cambiar de temporada actualiza la misma pantalla, así que **Atrás** siempre vuelve a donde entraste.
+
+Con el idioma de catálogo en japonés, la lista muestra el nombre en inglés y debajo el título japonés.
+
+### Identidades
+
+Cada token es un usuario distinto del bridge: tiene su propio historial y sus propias preferencias (idioma de títulos, servidores por defecto, subtítulos, siguiente episodio y saltos de intro/outro). Dos dispositivos con el mismo token comparten ambos; otro token queda aislado. El servidor deriva la identidad del token y sólo guarda su hash con salt.
+
+El token se guarda como elemento sincronizable del **Llavero de iCloud**, asociado a la URL normalizada del bridge. En un segundo dispositivo con el mismo Apple ID, prueba la misma URL y usa **Restaurar desde Llavero de iCloud**, o importa el token manualmente.
+
+### Actualizaciones de la app
+
+Al abrirse, la app consulta las releases de GitHub. Si hay una versión con IPA más nueva que la instalada, muestra los cambios de todas las versiones intermedias y ofrece:
+
+- **Instalar con LiveContainer** (`livecontainer://install?url=…`), con descarga directa del IPA si LiveContainer no responde.
+- **Ver la release en GitHub**.
+- **Ahora no** u **Omitir esta versión**.
+
+También puedes buscar actualizaciones desde **Configuración → Acerca de**.
+
+## Bridge
+
+### Requisitos
+
+- Node.js 24 LTS o posterior (o Docker).
 - Acceso a Internet desde el bridge.
+- Para uso en casa, el iPhone/iPad y el TV deben alcanzar la IP LAN del bridge; para uso remoto, ambos necesitan salida al dominio HTTPS.
 
-## Instalar y ejecutar
+### Variables de entorno
 
-En el equipo que actuará como bridge:
+| Variable | Predeterminado | Uso |
+| --- | --- | --- |
+| `BRIDGE_HOST` / `BRIDGE_PORT` | `0.0.0.0` / `8787` | Interfaz y puerto de escucha. |
+| `BRIDGE_ADMIN_TOKEN` | — | Activa las identidades: se usa una vez desde la app para registrar cada token. |
+| `PROVIDER_TYPE` | `ANK` | Implementación del proveedor de catálogo (ver [Proveedores](#proveedores)). |
+| `PROVIDER_ORIGIN` | origen incluido para `ANK` | Dominio del proveedor, por si el sitio se muda. |
+| `HISTORY_STORE_PATH` | `proxy/data/history.json` | Historial por usuario. |
+| `PREFERENCES_STORE_PATH` | junto a `history.json` | Preferencias por usuario. |
+| `BRIDGE_USER_STORE_PATH` | `proxy/data/users.json` | Hash y salt de los tokens registrados. |
+
+Sin `BRIDGE_ADMIN_TOKEN` ni usuarios registrados, el bridge funciona sin autenticación (sólo para tu red local).
+
+### Proveedores
+
+Todo lo específico del sitio de catálogo vive en un adaptador de proveedor dentro de [`proxy/server.mjs`](proxy/server.mjs); el resto del bridge (identidades, historial, preferencias y el proxy HLS con subtítulos) es común. Cada tipo implementa `watchUrl`, `search`, `latest`, `series`, `servers`, `source` y `segment`, descritos junto a `providerTypes`.
+
+- **El sitio se muda de dominio con la misma estructura:** mantén `PROVIDER_TYPE=ANK` y define `PROVIDER_ORIGIN=https://nuevo-dominio`. El historial guarda la ruta `/watch/…` y se reubica sobre el origen nuevo, así que **Continuar viendo** sigue funcionando sin migraciones.
+- **Otro sitio:** implementa un adaptador nuevo con la misma interfaz, regístralo en `providerTypes` con su propio tipo y selecciónalo con `PROVIDER_TYPE`.
+
+`/health` informa el tipo activo (`{"ok":true,"provider":"ANK"}`); un `PROVIDER_TYPE` desconocido detiene el arranque con la lista de tipos admitidos.
+
+### Ejecutar en local
 
 ```sh
 cd proxy
 npm ci
+npm test
 node server.mjs
+curl http://127.0.0.1:8787/health   # {"ok":true,"provider":"ANK"}
 ```
 
-El primer paso instala `cheerio`. No se necesita Chromium, Playwright, ni un perfil de Edge. Permite conexiones entrantes TCP al puerto `8787` en el firewall. Encuentra la IP LAN del equipo y úsala en la app, por ejemplo `http://192.168.1.20:8787`.
+Permite conexiones TCP entrantes al puerto `8787` y usa la IP LAN del equipo en la app con `http://`. La consola registra cada operación sin imprimir URLs temporales, tokens ni credenciales; tras **Probar y guardar** debe aparecer `[bridge] GET /health`.
 
-Comprueba que el servicio arrancó:
+### Docker con Apache (VPS)
+
+El repositorio no incluye tus archivos de Docker; el bridge sólo necesita un contenedor que ejecute `node server.mjs` desde `proxy/` con Node 24, un volumen persistente para los JSON de datos y, opcionalmente, un `HEALTHCHECK`. Un ejemplo mínimo:
+
+```dockerfile
+FROM node:24-alpine
+WORKDIR /app
+COPY proxy/package.json proxy/package-lock.json proxy/.npmrc ./
+RUN npm ci --omit=dev --ignore-scripts && mkdir -p /data && chown node:node /data
+COPY proxy/server.mjs ./
+USER node
+ENV HISTORY_STORE_PATH=/data/history.json BRIDGE_USER_STORE_PATH=/data/users.json
+HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8787/health || exit 1
+CMD ["node", "server.mjs"]
+```
+
+```yaml
+services:
+  bridge:
+    build: .
+    container_name: ani-bridge
+    restart: unless-stopped
+    environment:
+      BRIDGE_ADMIN_TOKEN: ${BRIDGE_ADMIN_TOKEN}
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - bridge-data:/data
+volumes:
+  bridge-data:
+```
+
+Apache publica HTTPS en `:443` y reenvía al puerto interno. `X-Forwarded-Proto` es necesario para que las URLs HLS que genera el bridge usen `https://`, y el formato de registro omite la query para no guardar tokens:
+
+```apache
+<VirtualHost *:443>
+    ServerName bridge.midominio.com
+    # SSLEngine y certificados como en el resto de tus sitios.
+    ProxyPreserveHost On
+    RequestHeader set X-Forwarded-Proto "https"
+    ProxyPass        / http://127.0.0.1:8787/ nocanon
+    ProxyPassReverse / http://127.0.0.1:8787/
+    CustomLog ${APACHE_LOG_DIR}/bridge.log "%h %t \"%m %U\" %>s %b"
+</VirtualHost>
+```
+
+### Actualización automática del bridge
+
+[`deploy/update-bridge.sh`](deploy/update-bridge.sh) automatiza el procedimiento manual (`git pull`, `docker compose up -d --build`, health check) siguiendo las etiquetas de versión:
+
+1. Busca la etiqueta `vX.Y.Z` más reciente de `origin/main`; si ya está desplegada, termina sin hacer nada.
+2. Avanza el checkout hasta esa etiqueta con `--ff-only`.
+3. Sólo si cambió `proxy/`, ejecuta `docker compose up -d --build --remove-orphans` con `DOCKER_CONFIG=$PWD/.docker` y espera hasta 90 s a que `/health` responda y el contenedor esté `healthy`.
+4. Si la salud falla, vuelve al commit anterior, reconstruye y marca esa etiqueta como fallida para no reintentarla en bucle (`FORCE=1` la reintenta).
+
+Para ejecutarlo cada 15 minutos con systemd:
 
 ```sh
-curl http://127.0.0.1:8787/health
+sudo cp /opt/anksubbrd/deploy/bridge-update.service.example /etc/systemd/system/bridge-update.service
+sudo cp /opt/anksubbrd/deploy/bridge-update.timer.example /etc/systemd/system/bridge-update.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now bridge-update.timer
+sudo systemctl start bridge-update.service    # primera ejecución manual
+journalctl -u bridge-update.service -n 50
 ```
 
-Debe responder `{"ok":true}`.
+El servicio usa `/opt/anksubbrd`, el contenedor `ani-bridge` y `http://127.0.0.1:8787/health`; cámbialos en el archivo si tu instalación difiere. Debe ejecutarse con un usuario que pueda usar Docker y sea dueño del checkout; si lo ejecutas como `root` y el checkout pertenece a otro usuario, autoriza la ruta con `git config --global --add safe.directory /opt/anksubbrd`.
 
-## Registros del bridge
+### Alternativa: systemd y Caddy sin Docker
 
-Al arrancar, es normal que sólo aparezca la línea de dirección: no hay actividad hasta que la app se conecte. Esta versión registra cada operación del catálogo, la carga de episodios, el conteo de servidores Sub/Dub, la resolución del reproductor y cualquier error, sin imprimir URLs temporales, tokens ni credenciales.
-
-Después de pulsar **Probar conexión** en la app, la consola debe mostrar como mínimo:
-
-```text
-[bridge] GET /health
-```
-
-Si no aparece esa línea, el iPhone/iPad no está llegando al equipo del bridge: revisa la IP configurada, que ambos equipos estén en la misma red y que el firewall de Windows permita conexiones entrantes TCP al puerto `8787`. Reinicia `node server.mjs` después de actualizar el código para aplicar los nuevos registros.
-
-## Uso en la app
-
-1. Compila e instala la app iOS.
-2. Abre **Configuración**, escribe la dirección de tu bridge local o público HTTPS y usa **Probar conexión**. La URL queda normalizada y guardada en el dispositivo. Es obligatorio completar esa prueba antes de crear, restaurar o importar una identidad.
-3. En **Buscar**, busca por título y elige una serie y un episodio.
-4. Elige una fuente desde las pestañas `Sub` o `Dub`. La predeterminada se cambia en **Configuración** y es `Sub` inicialmente.
-5. Usa el botón AirPlay dentro de los controles nativos del vídeo, no **Duplicar pantalla** desde el Centro de control. La app configura la sesión como vídeo de larga duración para que el TV reciba vídeo, audio y pistas VTT como reproducción externa.
-
-Los resultados separan `PG Rating`, puntuación, tipo (`TV`, `Movie`, `ONA`, `OVA`, `Special`) y año en etiquetas que también funcionan como filtros. Al abrir una serie, las temporadas relacionadas aparecen juntas; al finalizar un episodio se inicia el siguiente con el mismo servidor/tipo cuando está disponible.
-
-La app conserva localmente las últimas 50 reproducciones: serie, carátula, episodio, servidor, fecha y segundo actual. **Continuar viendo** tiene su propia pestaña y el reproductor retoma desde el último segundo guardado. Si ejecutas el bridge con historial (configuración predeterminada), la app sincroniza de manera privada esas entradas entre tus dispositivos; no inicia sesión ni transmite credenciales al sitio de origen.
-
-Cada token representa un usuario distinto en el bridge. Dos dispositivos con el mismo token comparten el historial; un dispositivo con otro token recibe un historial aislado. La app no envía un nombre de perfil que pueda cambiarse para consultar otra lista: el servidor deriva la identidad directamente del token y también impide que una sesión de vídeo de un usuario sea recuperada por otro.
-
-El token de usuario se guarda como un elemento sincronizable del **Llavero de iCloud**, asociado criptográficamente a la URL normalizada del bridge, no a una etiqueta o perfil visible. Con el mismo Apple ID y Llavero de iCloud activado, después de escribir y probar la misma URL en el segundo dispositivo puedes usar **Restaurar desde Llavero de iCloud**; como alternativa permanece la importación manual. La app no consulta ni restaura tokens de otra URL. La primera vez que abras esta versión y pruebes el bridge, migra de forma segura el token y el historial local de las versiones anteriores a esa URL. El bridge conserva únicamente hash y salt del token.
-
-En iPhone el historial se refresca al entrar en **Continuar viendo** y mediante gesto de deslizar hacia abajo. Durante la reproducción se conserva localmente aun cuando el bridge no tenga conexión.
-
-La primera reproducción de un servidor tarda sólo lo necesario para solicitar los metadatos públicos de la fuente. Las siguientes peticiones HLS de esa reproducción pasan por el bridge.
-
-## API local
-
-La app usa estas rutas locales; no necesitas llamarlas manualmente.
-
-- `GET /api/search?q=titulo`
-- `GET /api/latest?page=1&season=winter&status=currently-airing` para novedades y filtros paginados; opcionalmente `q` busca por título.
-- `POST /api/series` con `{ "watchUrl": "…" }`
-- `GET /api/series/:seriesKey/servers?episode=2`
-- `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`
-- `GET /api/history` y `PUT /api/history` para la sincronización privada de progreso; el usuario se deriva del token de acceso. Se conserva solamente el capítulo más reciente de cada serie y los borrados se sincronizan entre dispositivos.
-
-Las sesiones de serie caducan en 20 minutos. El bridge sólo acepta URLs `/watch/...` del origen configurado para el catálogo y no expone un proxy genérico para otros dominios. El historial se guarda en `proxy/data/history.json` por defecto (o en la ruta definida por `HISTORY_STORE_PATH`); esa carpeta está excluida de Git.
-
-## Versiones y releases
-
-En VS Code abre la carpeta del proyecto y ejecuta la tarea **Git: activar hook de version** una vez por clon. Instala el hook `post-commit` sin modificar el commit: crea una etiqueta anotada `vMAJOR.MINOR.PATCH` sobre el commit recién creado, incrementando el parche a partir de la etiqueta más alta (o desde `0.1.0` si aún no hay etiquetas). Requiere Git y Node.js en el PATH. Las tareas de Windows usan PowerShell sin cargar perfiles.
-
-Usa mensajes de [Conventional Commits](https://www.conventionalcommits.org/) (por ejemplo `fix: corregir reproducción` o `feat: añadir filtros`). Cada commit genera un parche; para incrementar MAJOR o MINOR, crea deliberadamente una etiqueta semántica para el commit antes de publicar y evita duplicar la etiqueta. El hook no modifica el commit ni sube nada a GitHub. Para publicar el commit y sus etiquetas anotadas usa la tarea **Git: publicar commits y releases** o `git push --follow-tags origin main`. La instalación habilita `push.followTags` en ese clon. Antes de trabajar en otro clon ejecuta `git fetch --tags`; si dos clones crean la misma versión en commits distintos, Git rechazará la etiqueta y deberás resolver la colisión sin sobrescribir la release existente.
-
-Al subir una etiqueta semántica, GitHub Actions compila un IPA sin firmar cuya versión corresponde a la etiqueta, y publica una GitHub Release con el IPA directamente descargable y los mensajes de commit desde la etiqueta anterior. En el primer release se incluye el historial previo. Una compilación de rama sin etiqueta conserva una versión de desarrollo; no publica una release. La Release solo se crea después de una compilación exitosa. Abre la página Releases desde el iPhone/iPad, descarga el IPA e impórtalo desde LiveContainer. La firma/compatibilidad efectiva depende de la instalación de LiveContainer y de sus certificados; este flujo no firma el IPA.
-
-El enlace permanente del IPA es `https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa`. La app revisa la última release pública al abrirse y, si hay una versión posterior con IPA, ofrece abrirla en LiveContainer. El instalador requiere confirmación; si el esquema no se puede abrir, se ofrece el enlace de descarga en el navegador. La actualización de LiveContainer y la conservación de datos dependen de cómo esté instalado y configurado en el dispositivo.
-
-El hook es local al clon y no afecta commits creados en la interfaz de GitHub u otros clones sin instalarlo. No cambia `core.hooksPath` si ya está configurado ni sustituye un `post-commit` existente. Las releases usan permisos de escritura únicamente en el job de publicación.
-
-## Usarlo fuera de casa con Caddy
-
-Para exponer el bridge únicamente para tus dispositivos, usa un dominio HTTPS y un token privado. No expongas el puerto `8787` al Internet público.
-
-1. En el servidor Linux, instala Node.js 24 LTS o posterior y verifica `node --version`. Instala el proyecto en `/opt/airplay-subtitle-bridge` y ejecuta `npm ci` dentro de `proxy`.
-2. Crea el usuario de servicio y el archivo privado de entorno. Sólo necesitas configurar una vez un **token administrador**: se usa desde la app para registrar identidades nuevas, no para reproducir ni para acceder al historial.
+1. Instala Node.js 24, clona el proyecto en `/opt/airplay-subtitle-bridge` y ejecuta `npm ci` dentro de `proxy`.
+2. Crea el usuario de servicio y el archivo privado de entorno con el token administrador:
 
    ```sh
    sudo useradd --system --home /var/lib/airplay-subtitle-bridge --shell /usr/sbin/nologin airplaybridge
    sudo install -m 600 -o root -g airplaybridge /dev/null /etc/airplay-subtitle-bridge.env
-   openssl rand -hex 32 # token administrador
+   openssl rand -hex 32   # guárdalo como BRIDGE_ADMIN_TOKEN=… en ese archivo
    ```
 
-   Edita `/etc/airplay-subtitle-bridge.env` y guarda ese valor sin espacios adicionales:
+3. Copia [`deploy/airplay-subtitle-bridge.service.example`](deploy/airplay-subtitle-bridge.service.example) a `/etc/systemd/system/airplay-subtitle-bridge.service` y actívalo con `sudo systemctl enable --now airplay-subtitle-bridge`.
+4. Usa [`deploy/Caddyfile.example`](deploy/Caddyfile.example) con tu dominio; Caddy obtiene el certificado y conserva los encabezados necesarios.
 
-   ```ini
-   BRIDGE_ADMIN_TOKEN=TOKEN_ADMINISTRADOR
-   ```
+No expongas el puerto `8787` directamente a Internet ni actives registros que incluyan la query de las URLs de reproducción.
 
-3. Copia [`deploy/airplay-subtitle-bridge.service.example`](deploy/airplay-subtitle-bridge.service.example) a `/etc/systemd/system/airplay-subtitle-bridge.service`, revísalo si la ruta de Node no es `/usr/bin/node`, y actívalo:
+### API
 
-   ```sh
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now airplay-subtitle-bridge
-   ```
+La app usa estas rutas; no necesitas llamarlas manualmente.
 
-4. Copia [`deploy/Caddyfile.example`](deploy/Caddyfile.example) a la configuración de Caddy, sustituye `bridge.example.com`, verifica que el DNS del dominio apunte al servidor y recarga Caddy. El servicio Node escucha sólo en `127.0.0.1`; Caddy publica HTTPS y conserva los encabezados necesarios para que las URL HLS apunten al dominio público.
-5. En el primer iPhone abre **Configuración**, escribe y prueba `https://bridge.example.com`; sólo entonces abre **Crear identidad privada**, introduce una vez el token administrador, genera el token y respáldalo antes de guardarlo. Con el mismo Apple ID y Llavero de iCloud activado, en el segundo iPhone escribe y prueba exactamente esa misma URL y usa **Restaurar desde Llavero de iCloud** para compartir la lista. En el iPad crea otra identidad con el token administrador; su token nuevo tendrá un historial completamente aislado. Si no usas Llavero de iCloud, importa manualmente el token correspondiente. El token administrador no queda guardado en la app.
+- `GET /health`
+- `GET /api/search?q=titulo`
+- `GET /api/latest?page=1&season=winter&status=currently-airing` (filtros paginados; `q` busca por título)
+- `POST /api/series` con `{ "watchUrl": "…" }`
+- `GET /api/series/:seriesKey/servers?episode=2`
+- `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`
+- `GET` / `PUT /api/history`: historial privado; se conserva el episodio más reciente de cada serie y los borrados se sincronizan.
+- `GET` / `PUT /api/preferences`: preferencias privadas; gana la modificación más reciente.
+- `POST /api/admin/users` con el encabezado `X-Bridge-Admin-Token`: registra un token de usuario.
 
-No actives registros de acceso detallados para este host de Caddy: las URL temporales de reproducción llevan un token de acceso. El bridge no registra ese valor ni las URL HLS completas.
+Las sesiones de serie caducan a los 20 minutos (HTTP 410); la app recarga la serie y reintenta sola. El bridge sólo acepta URLs `/watch/…` del origen configurado y no expone un proxy genérico.
 
-## Compilar la app iOS sin Mac
+## Versiones y releases
 
-El workflow [`.github/workflows/ios-build.yml`](.github/workflows/ios-build.yml) se ejecuta en macOS dentro de GitHub Actions. Sube esta carpeta a un repositorio GitHub y ejecuta **Actions → Build iOS app → Run workflow**. Genera el artefacto `AirPlaySubtitlePlayer-unsigned.ipa`.
+[`version.txt`](version.txt) es la única fuente de la versión. [`scripts/version.mjs`](scripts/version.mjs) la lee y la sube, y sincroniza `MARKETING_VERSION` del proyecto Xcode y `version` de `proxy/package.json` y su lock; el bridge la informa en `/health`. Otros scripts (por ejemplo, un empaquetado) pueden leer `version.txt` directamente.
 
-El IPA no viene firmado, pero es el formato que espera ByteLoader. Descárgalo desde el artefacto de Actions, arrástralo a ByteLoader y éste lo firma e instala con tu Apple ID. Con una cuenta Apple gratuita, la firma normalmente se renueva cada siete días; ByteLoader puede renovarla mientras el iPhone y PC estén disponibles en la misma red. [Guía oficial de ByteLoader](https://byteloader.byteknotlabs.com/guide)
+Tareas de VS Code (**Terminal → Ejecutar tarea**):
+
+| Tarea | Efecto |
+| --- | --- |
+| **Versión: mostrar actual** | Imprime `version.txt`. |
+| **Versión: subir parche / menor / mayor** | `0.2.3` → `0.2.4` / `0.3.0` / `1.0.0` en `version.txt` y los proyectos. Incluye esos archivos en tu siguiente commit. |
+| **Versión: sincronizar proyectos** | Copia `version.txt` a los proyectos si los editaste a mano. |
+| **Git: activar hook de version** | Una vez por clon: activa `.githooks` y `push.followTags`. |
+| **Git: probar versionamiento** | Ejecuta el hook real en un repositorio temporal. |
+| **Git: publicar commits y releases** | `git push --follow-tags origin HEAD`. |
+
+El hook `post-commit` actúa sólo en tu clon local:
+
+- Si el commit **no** cambia `version.txt`, sube el parche, lo incluye en ese mismo commit (amend, sin tocar el mensaje) y crea la etiqueta anotada `vX.Y.Z`.
+- Si el commit **ya** cambia la versión (porque usaste una tarea de subir menor o mayor), conserva esa versión y sólo la etiqueta.
+- Si enmiendas un commit aún no publicado, su etiqueta se mueve al commit nuevo; las etiquetas ya publicadas nunca se mueven.
+- Durante rebase, merge o cherry-pick no hace nada. Si subiste la versión con una tarea pero no incluiste los archivos en el commit, avisa y no etiqueta.
+
+Usa mensajes de [Conventional Commits](https://www.conventionalcommits.org/). Ejecuta `git fetch --tags` antes de trabajar en otro clon.
+
+Al subir una etiqueta, [`.github/workflows/ios-build.yml`](.github/workflows/ios-build.yml) compara el commit con la etiqueta anterior:
+
+| Cambió | Resultado |
+| --- | --- |
+| `ios/` | Compila el IPA sin firmar (artefacto y asset de la release) y publica la release como **latest**. |
+| Sólo `proxy/` | Prueba el bridge y publica una release `vX.Y.Z (bridge)` sin IPA, que nunca se marca como latest. |
+| Ninguno de los dos | No publica release. |
+
+Así `https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa` siempre apunta a un IPA y la app no ofrece actualizaciones que sólo tocaron el bridge. Las notas se agrupan en **App iOS**, **Bridge** y **Repositorio**; las de una release de la app incluyen todo lo ocurrido desde el IPA anterior. **Actions → Build iOS app → Run workflow** compila siempre, sin publicar release.
+
+### Compilación iOS
+
+La app requiere iOS/iPadOS 26 y usa los componentes nativos de Liquid Glass. El workflow selecciona la versión estable más reciente de Xcode instalada en el runner, así que compila con el SDK de iOS 27 en cuanto la imagen de GitHub incluya Xcode 27; el paso **Select Xcode** muestra la versión y el SDK usados. Para fijar una versión instalada, define la variable de repositorio `XCODE_VERSION` (por ejemplo `26.6`).
+
+El IPA no está firmado: impórtalo en LiveContainer o fírmalo con tu herramienta de sideload (por ejemplo ByteLoader).
 
 ## Límites técnicos
 
-- Si una fuente no entrega HLS y VTT, no podrá convertirse en subtítulos AirPlay por este bridge.
-- No se admiten DRM, paywalls ni mecanismos de acceso que impidan al receptor AirPlay recuperar el manifiesto.
-- Para una conexión local, el TV debe poder alcanzar la IP LAN del bridge. Para uso remoto, tanto iPhone/iPad como el receptor AirPlay deben tener salida a Internet hacia el dominio HTTPS de Caddy.
-- El inicio de sesión en el sitio de origen no es necesario ni se automatiza: el progreso compartido vive en tu bridge protegido por token, no en el sitio.
+- Si una fuente no entrega HLS y VTT, no puede convertirse en subtítulos AirPlay.
+- No se admiten DRM, paywalls ni mecanismos que impidan al receptor AirPlay recuperar el manifiesto.
+- HTTP sólo funciona dentro de la red local; para un dominio público usa HTTPS.
+- No se inicia sesión en el sitio de origen: el progreso compartido vive en tu bridge, protegido por token.

@@ -2,13 +2,11 @@ name: Build iOS app
 
 on:
   workflow_dispatch:
+  # Path filters are not evaluated for tag pushes; the `changes` job decides
+  # what each release contains by diffing against the previous version tag.
   push:
     tags:
       - 'v*'
-    paths:
-      - 'ios/**'
-      - 'proxy/**'
-      - '.github/workflows/ios-build.yml'
   pull_request:
     paths:
       - 'ios/**'
@@ -19,8 +17,51 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changed components
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+      bridge: ${{ steps.diff.outputs.bridge }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare with the previous version
+        id: diff
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            workflow_dispatch) base='' ;;
+            pull_request) base="$PR_BASE" ;;
+            *) base=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${GITHUB_SHA}^" 2>/dev/null || true) ;;
+          esac
+          if [[ "$GITHUB_REF_TYPE" == tag ]] && gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Re-pushed tags (for example after rewriting history) keep their
+            # existing release instead of rebuilding and republishing it.
+            app=false; bridge=false
+            printf 'Release %s already exists; nothing to publish.\n' "$GITHUB_REF_NAME" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$EVENT_NAME" == workflow_dispatch || -z "$base" ]]; then
+            app=true; bridge=true
+          else
+            # Ignores manifests whose only change is the synced version number.
+            result=$(node scripts/changed-components.mjs "$base" "$GITHUB_SHA")
+            app=$(sed -n 's/^app=//p' <<<"$result")
+            bridge=$(sed -n 's/^bridge=//p' <<<"$result")
+          fi
+          printf 'Base: %s\nApp changed: %s\nBridge changed: %s\n' "${base:-none}" "$app" "$bridge" >> "$GITHUB_STEP_SUMMARY"
+          printf 'app=%s\nbridge=%s\n' "$app" "$bridge" >> "$GITHUB_OUTPUT"
+
   proxy-check:
     name: Verify bridge on Node 24
+    needs: changes
+    if: needs.changes.outputs.bridge == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,15 +74,18 @@ jobs:
           node-version-file: proxy/.nvmrc
           cache: npm
           cache-dependency-path: proxy/package-lock.json
-      - name: Install and check bridge
+      - name: Install, test and audit bridge
         working-directory: proxy
         run: |
           npm ci --ignore-scripts
           node --check server.mjs
+          npm test
           npm audit --omit=dev
 
   build:
     name: Unsigned iOS build
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: macos-latest
     defaults:
       run:
@@ -55,17 +99,47 @@ jobs:
         id: version
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          # version.txt is the source of truth; a release tag must match it.
+          version=$(tr -d '[:space:]' < ../version.txt)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version.txt has an invalid version: $version"; exit 1; }
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || { echo 'Invalid semantic release tag'; exit 1; }
-            version="${tag#v}"
-          else
-            tag=$(git describe --tags --exact-match --match 'v[0-9]*' HEAD 2>/dev/null || true)
-            if [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then version="${tag#v}"; else version=0.1.0; fi
+            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid semantic release tag'; exit 1; }
+            if [[ "${GITHUB_REF_NAME#v}" != "$version" ]]; then
+              echo "::warning::Tag $GITHUB_REF_NAME does not match version.txt ($version); using the tag."
+              version="${GITHUB_REF_NAME#v}"
+            fi
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-      - name: Show selected Xcode
-        run: xcodebuild -version
+      # Uses the newest stable Xcode installed on the runner, so the app links
+      # against the newest iOS/iPadOS SDK available (iOS 27 once the image
+      # ships Xcode 27). Set the repository variable XCODE_VERSION (e.g. 26.6)
+      # to pin a specific installed version instead.
+      - name: Select Xcode
+        shell: bash
+        env:
+          XCODE_VERSION: ${{ vars.XCODE_VERSION }}
+        run: |
+          set -euo pipefail
+          selected=''
+          if [[ -n "$XCODE_VERSION" ]]; then
+            selected="/Applications/Xcode_${XCODE_VERSION}.app"
+            [[ -d "$selected" ]] || { echo "Xcode $XCODE_VERSION is not installed on this runner"; ls -d /Applications/Xcode*.app; exit 1; }
+          else
+            best_version=''
+            for app in /Applications/Xcode_*.app; do
+              [[ -d "$app" && ! -L "$app" ]] || continue
+              name=$(basename "$app" .app)
+              # Only plain version numbers: skips beta and release-candidate builds.
+              [[ "$name" =~ ^Xcode_([0-9]+(\.[0-9]+)*)$ ]] || continue
+              version="${BASH_REMATCH[1]}"
+              if [[ -z "$best_version" || "$(printf '%s\n%s\n' "$best_version" "$version" | sort -V | tail -n 1)" == "$version" ]]; then
+                best_version="$version"; selected="$app"
+              fi
+            done
+          fi
+          if [[ -n "$selected" ]]; then sudo xcode-select -s "$selected/Contents/Developer"; fi
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i 'iphoneos' || true
       - name: Build for physical iPhone/iPad
         run: >-
           xcodebuild
@@ -79,7 +153,7 @@ jobs:
           CURRENT_PROJECT_VERSION="${{ github.run_number }}"
           CODE_SIGNING_ALLOWED=NO
           build
-      - name: Package unsigned IPA for ByteLoader
+      - name: Package unsigned IPA for LiveContainer
         run: |
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           ditto "$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/AirPlaySubtitlePlayer.app" "$RUNNER_TEMP/ipa/Payload/AirPlaySubtitlePlayer.app"
@@ -88,6 +162,7 @@ jobs:
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist"
           /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :DTSDKName' "$app/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Info.plist")" = '${{ steps.version.outputs.version }}'
           test -n "$executable"
           test -f "$app/$executable"
@@ -103,17 +178,28 @@ jobs:
 
   release:
     name: Publish tagged release
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: [build, proxy-check]
+    needs: [changes, build, proxy-check]
+    # Skipped jobs count as success so bridge-only and app-only tags publish too.
+    if: >-
+      ${{ !cancelled()
+      && github.event_name == 'push' && github.ref_type == 'tag'
+      && needs.changes.result == 'success'
+      && (needs.changes.outputs.app == 'true' || needs.changes.outputs.bridge == 'true')
+      && contains(fromJSON('["success","skipped"]'), needs.build.result)
+      && contains(fromJSON('["success","skipped"]'), needs.proxy-check.result) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      HAS_APP: ${{ needs.changes.outputs.app }}
+      HAS_BRIDGE: ${{ needs.changes.outputs.bridge }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.HAS_APP == 'true'
         with:
           name: AirPlaySubtitlePlayer-unsigned
           path: release-assets
@@ -122,6 +208,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          # App releases list everything since the previous release with an IPA,
+          # so the in-app update sheet shows every change the user is missing.
+          if [[ "$HAS_APP" == true ]]; then
+            filter='select(any(.assets[]; .name == "AirPlaySubtitlePlayer-unsigned.ipa"))'
+          else
+            filter='.'
+          fi
           previous=''
           while IFS= read -r candidate; do
             [[ "$candidate" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
@@ -129,16 +223,31 @@ jobs:
               previous="$candidate"
               break
             fi
-          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')
+          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.draft == false and .prerelease == false) | $filter | .tag_name")
+          range="$GITHUB_SHA"
+          [[ -n "$previous" ]] && range="$previous..$GITHUB_SHA"
+          section() {
+            local title="$1"; shift
+            local lines
+            lines=$(git log --no-merges --format='- %s (`%h`)' "$range" -- "$@")
+            if [[ -n "$lines" ]]; then printf '### %s\n\n%s\n\n' "$title" "$lines" >> release-notes.md; fi
+          }
           printf '## Cambios\n\n' > release-notes.md
-          if [[ -n "$previous" ]]; then
-            git log --no-merges --format='- %s (`%h`)' "$previous..$GITHUB_SHA" >> release-notes.md
+          section 'App iOS' ios
+          section 'Bridge' proxy
+          section 'Repositorio y documentación' . ':(exclude)ios' ':(exclude)proxy'
+          if [[ "$HAS_APP" == true ]]; then
+            printf 'El IPA no está firmado; impórtalo en LiveContainer o fírmalo con tu herramienta de sideload.\n' >> release-notes.md
           else
-            git log --no-merges --format='- %s (`%h`)' "$GITHUB_SHA" >> release-notes.md
+            printf 'Release sólo del bridge: no incluye IPA y no reemplaza a la última versión de la app.\n' >> release-notes.md
           fi
-          printf '\nEl IPA no está firmado; impórtalo en LiveContainer o fírmalo con tu herramienta de sideload.\n' >> release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+      # Bridge-only releases are never marked latest, so
+      # releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa keeps working.
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          files: release-assets/AirPlaySubtitlePlayer-unsigned.ipa
+          name: ${{ env.HAS_APP == 'true' && github.ref_name || format('{0} (bridge)', github.ref_name) }}
+          files: ${{ env.HAS_APP == 'true' && 'release-assets/AirPlaySubtitlePlayer-unsigned.ipa' || '' }}
           body_path: release-notes.md
           fail_on_unmatched_files: true
+          make_latest: ${{ env.HAS_APP == 'true' && 'true' || 'false' }}

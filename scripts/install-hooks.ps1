@@ -13,4 +13,4 @@ if (Test-Path -LiteralPath (Join-Path $defaultHooks 'post-commit')) {
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo configurar core.hooksPath.' }
 & git config --local push.followTags true
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo activar push.followTags.' }
-Write-Host 'Hook habilitado. Los commits nuevos reciben una etiqueta anotada vX.Y.Z.'
+Write-Host 'Hook habilitado. Cada commit sube el parche de version.txt (salvo que ya cambie la versión) y recibe la etiqueta vX.Y.Z.'
