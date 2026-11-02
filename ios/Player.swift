@@ -1323,8 +1323,9 @@ final class SystemVolume {
     nonisolated private func observeOutputVolume() -> NSKeyValueObservation {
         AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
             let value = session.outputVolume
+            let volume = self
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.outputVolumeChanged(value) }
+                MainActor.assumeIsolated { volume?.outputVolumeChanged(value) }
             }
         }
     }

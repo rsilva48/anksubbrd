@@ -515,9 +515,9 @@ async function getSeries(watchUrl) {
   const key = randomUUID(); seriesCache.set(key, { ...series, expiresAt: Date.now() + 20 * 60 * 1000 });
   rememberSummary(series);
   console.info(`[bridge] Loaded ${series.title}: ${series.episodes.length} episode(s), ${series.seasons.length} related season(s)`);
-  const { synopsis, rating, adult, status, mediaType, score, totalEpisodes, imageUrl } = series;
+  const { synopsis, rating, adult, status, mediaType, score, totalEpisodes, imageUrl, nextEpisodeAt } = series;
   return {
-    seriesKey: key, title: series.title, titleJp: series.titleJp, synopsis, rating, adult, status, mediaType, score, totalEpisodes, imageUrl,
+    seriesKey: key, title: series.title, titleJp: series.titleJp, synopsis, rating, adult, status, mediaType, score, totalEpisodes, imageUrl, nextEpisodeAt,
     episodes: series.episodes.map(({ number, title, sub, dub }) => ({ number, title, sub, dub })), seasons: series.seasons,
   };
 }
@@ -529,7 +529,7 @@ function seriesSummary(series) {
   const index = series.seasons.findIndex((season) => season.watchUrl === series.watchUrl);
   const following = index >= 0 ? series.seasons.slice(index + 1) : [];
   const nextSeason = following.find((season) => !/\b(?:specials?|mini anime|recap|ova|oad|movie|film)\b/i.test(season.title)) ?? following[0] ?? null;
-  return { watchUrl: series.watchUrl, totalEpisodes: series.totalEpisodes, status: series.status, latestSub: latest('sub'), latestDub: latest('dub'), nextSeason };
+  return { watchUrl: series.watchUrl, totalEpisodes: series.totalEpisodes, status: series.status, latestSub: latest('sub'), latestDub: latest('dub'), nextSeason, nextEpisodeAt: series.nextEpisodeAt ?? null };
 }
 function rememberSummary(series) {
   const summary = seriesSummary(series);
@@ -761,6 +761,8 @@ function createAnkProvider(configuredOrigin) {
     const statusText = (details.get('status') ?? '').toLowerCase();
     const rating = cleanText($('#w-info .meta.icons .rating').first().text()) || null;
     const poster = $('#w-info .poster img').first().attr('src');
+    // "The next episode is predicted to arrive on …" countdown (Unix seconds).
+    const nextEpisodeAt = Number($('.alert.next-episode .count-down').first().attr('data-target'));
     const info = {
       title: cleanText($('#w-info h1, #w-info .film-name, h1').first().text()) || 'Untitled',
       titleJp: cleanText($('#w-info [data-jp], h1[data-jp], .d-title[data-jp]').first().attr('data-jp')) || null,
@@ -772,6 +774,7 @@ function createAnkProvider(configuredOrigin) {
       score: score > 0 ? score : null,
       totalEpisodes: Number.isInteger(total) && total > 0 ? total : null,
       imageUrl: poster ? absoluteUrl(poster, providerOrigin) : null,
+      nextEpisodeAt: Number.isFinite(nextEpisodeAt) && nextEpisodeAt > 0 ? nextEpisodeAt : null,
     };
     const $episodes = load(await providerJson(`/ajax/episode/list/${animeId}`)); const episodes = [];
     $episodes('[data-ids]').each((_, node) => {
@@ -800,6 +803,39 @@ function createAnkProvider(configuredOrigin) {
       result.push({ index, name: cleanText(item.text()) || `Server ${index + 1}`, type, ref: linkId });
     });
     return result;
+  }
+  // Estimated airing times for the next days (one schedule page per UTC
+  // day), cached for 30 minutes. Each card is one episode of one kind.
+  let scheduleCache = null;
+  async function schedule() {
+    if (scheduleCache && scheduleCache.expiresAt > Date.now()) return scheduleCache.entries;
+    const today = Math.floor(Date.now() / 86400000) * 86400;
+    const pages = await Promise.all(Array.from({ length: 8 }, (_, day) => providerJson(`/ajax/schedule/page/date?tz=0&time=${today + day * 86400}`).catch(() => null)));
+    const entries = new Map();
+    for (const html of pages) {
+      if (typeof html !== 'string') continue;
+      const $ = load(html);
+      $('.sc-grp').each((_, group) => {
+        const groupAiring = Number($(group).attr('data-airing'));
+        $(group).find('.sc-card[href]').each((_, node) => {
+          const card = $(node); let watch;
+          try { watch = new URL(watchUrl(card.attr('href'))); } catch { return; }
+          const episode = Number(cleanText(card.find('.sc-ep').text()).match(/\d+/)?.[0] ?? watch.pathname.match(/\/ep-(\d+)\/?$/)?.[1]);
+          const airingAt = Number(card.find('.sc-cd').attr('data-airing')) || groupAiring;
+          if (!Number.isInteger(episode) || !Number.isFinite(airingAt) || airingAt <= 0) return;
+          watch.pathname = watch.pathname.replace(/\/ep-\d+\/?$/, '');
+          const kind = card.attr('data-type') === 'dub' ? 'dub' : 'sub';
+          const name = card.find('.sc-name').first(); const src = card.find('img').first().attr('src');
+          entries.set(`${watch}#${episode}#${kind}`, {
+            watchUrl: watch.toString(), title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null,
+            imageUrl: src ? absoluteUrl(src, providerOrigin) : null, episode, kind, airingAt,
+          });
+        });
+      });
+    }
+    const sorted = [...entries.values()].sort((left, right) => left.airingAt - right.airingAt);
+    if (pages.some((html) => typeof html === 'string')) scheduleCache = { entries: sorted, expiresAt: Date.now() + 30 * 60 * 1000 };
+    return sorted;
   }
   function attachCdnToken(value) {
     const url = new URL(value);
@@ -853,7 +889,7 @@ function createAnkProvider(configuredOrigin) {
     return /(?:ibyteimg\.com|tiktokcdn\.com|ipstatp\.com|yoot\.akirax\.buzz)$/i.test(hostname) && body.length > 252 ? body.subarray(252) : body;
   }
 
-  return { type: 'ANK', origin: providerOrigin, watchUrl, search, latest, series, servers, source, segment };
+  return { type: 'ANK', origin: providerOrigin, watchUrl, search, latest, series, schedule, servers, source, segment };
 }
 
 function rewriteUriLines(textValue, baseUrl, id, source) {
@@ -1012,6 +1048,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { results });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/latest') return json(response, 200, await provider.latest(requestUrl.searchParams));
+    if (request.method === 'GET' && requestUrl.pathname === '/api/schedule') return json(response, 200, { entries: await provider.schedule() });
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
       return json(response, 200, await storedHistory(user.userId));
     }

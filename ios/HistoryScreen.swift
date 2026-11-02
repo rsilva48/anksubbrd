@@ -21,8 +21,9 @@ private enum ContinueState {
     case newEpisodes(count: Int)
     /// The series is complete and the watch order has a season not started yet.
     case nextSeason(Season)
-    /// Watched up to the newest episode of a series that is still airing.
-    case caughtUp
+    /// Watched up to the newest episode of a series that is still airing,
+    /// with the estimated date of the next one when known.
+    case caughtUp(next: Date?)
     case completed
 
     var section: Int {
@@ -151,7 +152,7 @@ private struct HistoryList: View {
         let latest = status?.latest(for: kind)
         if let latest, latest > entry.episode { return .newEpisodes(count: latest - entry.episode) }
         let isFinal = isFinalEpisode(entry.episode, totalEpisodes: status?.totalEpisodes ?? entry.totalEpisodes, status: status?.status, latestEpisode: latest)
-        guard isFinal else { return .caughtUp }
+        guard isFinal else { return .caughtUp(next: status?.nextEpisodeDate) }
         if let next = status?.nextSeason, profile.entry(for: next.watchUrl) == nil { return .nextSeason(next) }
         return .completed
     }
@@ -251,8 +252,8 @@ private struct HistoryRow: View {
         case .nextSeason(let season):
             Label("Nueva temporada: \(season.localizedLabel ?? season.anime.displayTitle(language))", systemImage: "sparkles")
                 .foregroundStyle(.tint)
-        case .caughtUp:
-            Text("Al día · viste el episodio \(entry.episode)")
+        case .caughtUp(let next):
+            Text(next.map { "Al día · episodio \(entry.episode) · próximo: \(airingLabel($0))" } ?? "Al día · viste el episodio \(entry.episode)")
                 .foregroundStyle(.secondary)
         case .completed:
             Label("Completada · \(entry.episode) episodios", systemImage: "checkmark.circle.fill")

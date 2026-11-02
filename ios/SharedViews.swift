@@ -64,6 +64,12 @@ struct SeriesTitle: View {
     }
 }
 
+/// Settings that belong to this device rather than to the bridge identity.
+enum DeviceSettings {
+    /// Translate synopses to the device language as soon as they load.
+    static let translateSynopsisKey = "anksubbrd.translate-synopsis"
+}
+
 /// "+18" marker for R+ and Rx series.
 struct AdultBadge: View {
     var body: some View {

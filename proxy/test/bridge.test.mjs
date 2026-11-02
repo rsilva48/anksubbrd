@@ -163,3 +163,10 @@ test('Sub and Dub recents use the home widgets and flag adult cards', async (con
   assert.deepEqual(results.map(({ episode, adult }) => ({ episode, adult })), [{ episode: 8, adult: true }]);
   assert.equal(hasNext, false);
 });
+
+test('The schedule lists one entry per series, episode and kind with its airing time', async (context) => {
+  const day = '<div class="sc-grp" data-airing="1793896080"><a class="sc-card" href="https://x.example/watch/delta-4/ep-5?type=sub" data-type="sub"><img src="/p.jpg"><span class="sc-tt"><div class="sc-name d-title" data-jp="Delta JP">Delta</div><div class="sc-meta"><span class="sc-ep">Episode 5</span></div></span><span class="sc-go"><span class="sc-cd" data-airing="1793896080"></span></span></a></div>';
+  context.mock.method(globalThis, 'fetch', async () => Response.json({ status: 200, result: day }));
+  const entries = await createAnkProvider('https://catalog.example').schedule();
+  assert.deepEqual(entries, [{ watchUrl: 'https://catalog.example/watch/delta-4', title: 'Delta', titleJp: 'Delta JP', imageUrl: 'https://catalog.example/p.jpg', episode: 5, kind: 'sub', airingAt: 1793896080 }]);
+});

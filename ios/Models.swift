@@ -118,8 +118,13 @@ struct Series: Decodable {
     let score: Double?
     let totalEpisodes: Int?
     let imageUrl: String?
+    /// Estimated airing of the next episode (Unix seconds).
+    var nextEpisodeAt: Double? = nil
 
     var isAdult: Bool { adult == true || ["R+", "Rx"].contains(rating ?? "") }
+
+    /// The estimated next airing, only while it is still ahead.
+    var nextEpisodeDate: Date? { upcomingDate(nextEpisodeAt) }
 
     var statusLabel: String? {
         switch status {
@@ -213,7 +218,7 @@ struct EpisodeServers: Identifiable {
     var id: Int { episode.number }
 }
 
-struct SkipRange: Decodable {
+struct SkipRange: Codable, Hashable {
     let start: Double
     let end: Double
 
@@ -233,6 +238,8 @@ struct PlaybackSession: Identifiable {
     let playback: Playback
     let historyEntry: WatchHistoryEntry
     let kind: StreamKind
+    /// Set when the episode plays from a local download.
+    var downloadID: String? = nil
     var id: String { playback.playbackUrl }
 }
 
@@ -300,6 +307,9 @@ struct SeriesStatus: Decodable {
     let latestSub: Int?
     let latestDub: Int?
     let nextSeason: Season?
+    let nextEpisodeAt: Double?
+
+    var nextEpisodeDate: Date? { upcomingDate(nextEpisodeAt) }
 
     func latest(for kind: StreamKind) -> Int? { kind == .dub ? latestDub : latestSub }
 }
@@ -324,6 +334,18 @@ func catalogPath(of watchUrl: String) -> String {
 func isFinalEpisode(_ episode: Int, totalEpisodes: Int?, status: String?, latestEpisode: Int?) -> Bool {
     if let totalEpisodes { return episode >= totalEpisodes }
     return status == "finished" && episode >= (latestEpisode ?? episode)
+}
+
+/// A Unix timestamp as a date, when it is still in the future.
+func upcomingDate(_ timestamp: Double?) -> Date? {
+    guard let timestamp, timestamp > 0 else { return nil }
+    let date = Date(timeIntervalSince1970: timestamp)
+    return date > Date() ? date : nil
+}
+
+/// "jue 5 nov, 11:28" in the device time zone.
+func airingLabel(_ date: Date) -> String {
+    date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute().locale(Locale(identifier: "es")))
 }
 
 func formatTime(_ seconds: Double) -> String {

@@ -45,6 +45,28 @@ La lista se divide en **En curso** (incluye las series con un episodio nuevo o, 
 
 Con el idioma de catálogo en japonés, la lista muestra el nombre en inglés y debajo el título japonés.
 
+### Descargas sin conexión
+
+En la ficha de una serie, mantén pulsado un episodio (o deslízalo a la derecha) para descargarlo en Sub o Dub, o usa el botón **Descargar** de la barra para bajar los siguientes episodios sin ver. La descarga guarda el HLS completo: vídeo, audio y todas las pistas de subtítulos, en un paquete nativo de iOS que sigue bajando con la app en segundo plano.
+
+- La pestaña **Descargas** funciona sin red y sin bridge configurado. Al reproducir desde ahí, el siguiente episodio es la siguiente descarga de la misma serie y tipo.
+- En la ficha de la serie, un episodio descargado se reproduce desde el dispositivo. **Elegir servidor en línea** fuerza el streaming.
+- El progreso se guarda en **Continuar viendo** y se sincroniza al volver a tener conexión.
+- Con **Configuración → Este dispositivo → Borrar descargas ya vistas** (activado por defecto), una descarga se elimina al terminar ese episodio o al avanzar a uno posterior, también si lo ves desde otro dispositivo con la misma identidad. La limpieza ocurre al cerrar el reproductor y al abrir la app o la pestaña.
+- El bridge debe responder mientras se descarga: cada episodio se resuelve en línea y el bridge conserva la fuente durante dos horas. Una descarga fallida se reintenta deslizando a la derecha en **Descargas**.
+
+### Avisos de nuevos episodios
+
+Con **Configuración → Este dispositivo → Avisar de nuevos episodios**, la app programa notificaciones locales para los episodios que estrenan en los próximos 8 días, según el horario estimado del catálogo. Sólo avisa de las series de **Continuar viendo**, cuando el episodio es posterior al que viste y del mismo tipo (Sub o Dub) que sigues. La notificación llega unos minutos después de la hora estimada y, al tocarla, abre la serie.
+
+- Los avisos se reprograman al abrir o volver a la app (y al sincronizar el historial), así que basta con abrirla de vez en cuando. No requieren servidor de push: el push remoto (APNs) exigiría una app firmada con ese permiso, algo que un IPA sin firmar instalado con LiveContainer no tiene.
+- El horario es una estimación y por ahora el catálogo sólo publica horarios de Sub.
+- La ficha de la serie muestra la fecha del **Próximo episodio**, y las series **Al día** de **Continuar viendo** también la muestran.
+
+### Traducción de la sinopsis
+
+El botón **Traducir** de la sinopsis usa la traducción integrada de iOS (en el dispositivo) para pasarla del inglés al idioma del sistema; la primera vez iOS puede pedir descargar los idiomas. **Configuración → Este dispositivo → Traducir sinopsis automáticamente** la traduce al abrir cada serie.
+
 ### Identidades
 
 Cada token es un usuario distinto del bridge: tiene su propio historial y sus propias preferencias (idioma de títulos, servidores por defecto, subtítulos, siguiente episodio y saltos de intro/outro). Dos dispositivos con el mismo token comparten ambos; otro token queda aislado. El servidor deriva la identidad del token y sólo guarda su hash con salt.
@@ -218,6 +240,7 @@ La app usa estas rutas; no necesitas llamarlas manualmente.
 - `GET /api/search?q=titulo`
 - `GET /api/latest?page=1&language=sub&season=winter&status=currently-airing` (filtros paginados; `q` busca por título; `language` es `sub`, `dub` o `all`)
 - `POST /api/series` con `{ "watchUrl": "…" }` (incluye sinopsis, clasificación, estado, total de episodios, disponibilidad Sub/Dub por episodio y temporadas relacionadas)
+- `GET /api/schedule`: estrenos estimados de los próximos 8 días (serie, episodio, tipo y hora Unix; caché de 30 min)
 - `POST /api/series/status` con `{ "watchUrls": ["…"] }`: último episodio Sub y Dub, total, estado y temporada siguiente de hasta 50 series (caché de 15 min)
 - `GET /api/series/:seriesKey/servers?episode=2`
 - `POST /api/play` con `{ "seriesKey": "…", "episode": 2, "serverIndex": 0 }`

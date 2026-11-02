@@ -1,4 +1,5 @@
 import SwiftUI
+import Translation
 
 /// Turns an episode of a loaded series into a playable session. Shared by the
 /// episode list and the player, which uses it to move between episodes in place.
@@ -31,10 +32,20 @@ final class PlaybackResolver {
         }
     }
 
-    /// Without an explicit server it prefers the given name and kind, then any
+    /// Without an explicit server it plays a local download of that kind when
+    /// there is one; otherwise it prefers the given name and kind, then any
     /// server of that kind, then whatever the episode offers.
-    func session(for episode: Episode, server: Server? = nil, preferredName: String? = nil, kind: StreamKind? = nil) async throws -> PlaybackSession {
-        try await retryingExpiredSession {
+    func session(for episode: Episode, server: Server? = nil, preferredName: String? = nil, kind: StreamKind? = nil, allowDownload: Bool = true) async throws -> PlaybackSession {
+        if server == nil, allowDownload,
+           let local = DownloadStore.shared.localSession(
+               watchUrl: anime.watchUrl,
+               episode: episode.number,
+               kind: kind ?? profile.preferences.defaultTrack,
+               position: profile.position(for: anime.watchUrl, episode: episode.number)
+           ) {
+            return local
+        }
+        return try await retryingExpiredSession {
             let chosen: Server
             if let server {
                 chosen = server
@@ -89,6 +100,7 @@ final class PlaybackResolver {
 
 struct EpisodesScreen: View {
     @Environment(ProfileStore.self) private var profile
+    @Environment(DownloadStore.self) private var downloads
     @State private var current: Anime
     @State private var selectedSeasonURL: String
     @State private var latestEpisode: Int?
@@ -166,8 +178,15 @@ struct EpisodesScreen: View {
                 serverChoice = nil
             }
         }
-        .fullScreenCover(item: $activePlayer) { model in
+        .fullScreenCover(item: $activePlayer, onDismiss: { downloads.cleanUpWatched(profile: profile) }) { model in
             PlayerScreen(model: model)
+        }
+        .toolbar {
+            if let series {
+                ToolbarItem(placement: .topBarTrailing) {
+                    downloadMenu(series)
+                }
+            }
         }
         .overlay {
             if let busyMessage {
@@ -195,6 +214,11 @@ struct EpisodesScreen: View {
                         Text(episodeCountLine(series))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                        if let next = series.nextEpisodeDate {
+                            Label("Próximo episodio: \(airingLabel(next))", systemImage: "calendar.badge.clock")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -290,15 +314,43 @@ struct EpisodesScreen: View {
         return Section("Episodios") {
             ForEach(series.episodes) { episode in
                 Button {
-                    chooseServer(for: episode)
+                    open(episode)
                 } label: {
                     EpisodeRow(
                         episode: episode,
                         progress: entry?.episode == episode.number && entry?.isCompleted == false ? entry?.positionSeconds : nil,
                         watched: entry.map { episode.number < $0.episode || (episode.number == $0.episode && $0.isCompleted) } ?? false,
                         isLatest: episode.number == latestEpisode,
-                        missingKind: episode.isAvailable(for: kind) ? nil : kind
+                        missingKind: episode.isAvailable(for: kind) ? nil : kind,
+                        download: downloads.record(watchUrl: current.watchUrl, episode: episode.number)
                     )
+                }
+                .contextMenu {
+                    ForEach(StreamKind.allCases.filter { episode.isAvailable(for: $0) }) { option in
+                        if downloads.record(watchUrl: current.watchUrl, episode: episode.number, kind: option)?.state != .completed {
+                            Button("Descargar en \(option.displayName)", systemImage: "arrow.down.circle") {
+                                download([episode], kind: option)
+                            }
+                        }
+                    }
+                    Button("Elegir servidor en línea", systemImage: "antenna.radiowaves.left.and.right") {
+                        chooseServer(for: episode)
+                    }
+                    if let record = downloads.record(watchUrl: current.watchUrl, episode: episode.number) {
+                        Button(record.state == .downloading ? "Cancelar descarga" : "Borrar descarga", systemImage: "trash", role: .destructive) {
+                            downloads.remove(record)
+                        }
+                    }
+                }
+                .swipeActions(edge: .leading) {
+                    if episode.isAvailable(for: kind), downloads.record(watchUrl: current.watchUrl, episode: episode.number, kind: kind) == nil {
+                        Button {
+                            download([episode], kind: kind)
+                        } label: {
+                            Label("Descargar", systemImage: "arrow.down.circle")
+                        }
+                        .tint(.indigo)
+                    }
                 }
             }
         }
@@ -326,6 +378,71 @@ struct EpisodesScreen: View {
         } catch {
             guard watchUrl == current.watchUrl else { return }
             errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Downloaded episodes play from disk; the rest ask for a server.
+    private func open(_ episode: Episode) {
+        let preferred = profile.entry(for: current.watchUrl)?.kind ?? profile.preferences.defaultTrack
+        let local = [preferred, preferred == .sub ? .dub : .sub].first {
+            downloads.record(watchUrl: current.watchUrl, episode: episode.number, kind: $0)?.state == .completed
+        }
+        if let local {
+            start { try await $0.session(for: episode, kind: local) }
+        } else {
+            chooseServer(for: episode)
+        }
+    }
+
+    /// Downloads the next episodes the viewer has not watched yet.
+    private func downloadMenu(_ series: Series) -> some View {
+        let entry = profile.entry(for: current.watchUrl)
+        let kind = entry?.kind ?? profile.preferences.defaultTrack
+        let first = entry.map { $0.isCompleted ? $0.episode + 1 : $0.episode } ?? series.episodes.first?.number ?? 1
+        let pending = series.episodes.filter {
+            $0.number >= first && $0.isAvailable(for: kind)
+                && downloads.record(watchUrl: current.watchUrl, episode: $0.number, kind: kind) == nil
+        }
+        return Menu {
+            Section("Descargar en \(kind.displayName) para ver sin conexión") {
+                ForEach([1, 3, 5].filter { $0 <= pending.count }, id: \.self) { count in
+                    Button(count == 1 ? "Episodio \(pending[0].number)" : "Siguientes \(count) episodios") {
+                        download(Array(pending.prefix(count)), kind: kind)
+                    }
+                }
+                if pending.count > 5 {
+                    Button("Los \(pending.count) restantes") {
+                        download(pending, kind: kind)
+                    }
+                }
+            }
+        } label: {
+            Label("Descargar", systemImage: "arrow.down.circle")
+        }
+        .disabled(pending.isEmpty)
+    }
+
+    /// Resolves each episode online (one at a time) and hands it to the
+    /// background download session.
+    private func download(_ episodes: [Episode], kind: StreamKind) {
+        guard let resolver, busyMessage == nil, !episodes.isEmpty else { return }
+        Task {
+            defer { busyMessage = nil }
+            for episode in episodes {
+                busyMessage = "Preparando la descarga del episodio \(episode.number)…"
+                do {
+                    let session = try await resolver.session(for: episode, kind: kind, allowDownload: false)
+                    guard session.kind == kind else {
+                        throw BridgeRequestError(message: "El episodio \(episode.number) no tiene servidores \(kind.displayName).")
+                    }
+                    await downloads.start(session)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    errorMessage = error.localizedDescription
+                    return
+                }
+            }
         }
     }
 
@@ -375,6 +492,7 @@ private struct EpisodeRow: View {
     let isLatest: Bool
     /// Sub/Dub kind the viewer uses that this episode does not have yet.
     let missingKind: StreamKind?
+    let download: DownloadRecord?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -402,6 +520,9 @@ private struct EpisodeRow: View {
                 }
             }
             Spacer(minLength: 0)
+            if let download {
+                DownloadBadge(record: download)
+            }
             Image(systemName: watched ? "checkmark.circle.fill" : "play.circle")
                 .foregroundStyle(watched ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .accessibilityLabel(watched ? "Visto" : "Reproducir")
@@ -410,24 +531,78 @@ private struct EpisodeRow: View {
     }
 }
 
-/// Synopsis clamped to a few lines with a toggle for long texts.
+/// Synopsis clamped to a few lines with a toggle for long texts. Catalog
+/// synopses are in English; Apple's on-device Translation renders them in the
+/// device language (iOS asks to download the languages the first time).
 private struct SynopsisText: View {
     let text: String
+    @AppStorage(DeviceSettings.translateSynopsisKey) private var translateAutomatically = false
     @State private var expanded = false
+    @State private var translated: String?
+    @State private var showsTranslation = false
+    @State private var translating = false
+    @State private var configuration: TranslationSession.Configuration?
+
+    /// Nothing to translate when the device already reads English.
+    private var canTranslate: Bool { Locale.current.language.languageCode?.identifier != "en" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(text)
+            Text(showsTranslation ? translated ?? text : text)
                 .font(.subheadline)
                 .lineLimit(expanded ? nil : 4)
                 .textSelection(.enabled)
-            if text.count > 220 {
-                Button(expanded ? "Menos" : "Más") {
-                    withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+            HStack(spacing: 16) {
+                if text.count > 220 {
+                    Button(expanded ? "Menos" : "Más") {
+                        withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                    }
                 }
-                .font(.subheadline.weight(.semibold))
-                .buttonStyle(.borderless)
+                Spacer(minLength: 0)
+                if canTranslate {
+                    if translating {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Button(showsTranslation ? "Ver original" : "Traducir", systemImage: "translate", action: toggleTranslation)
+                    }
+                }
             }
+            .font(.subheadline.weight(.semibold))
+            .buttonStyle(.borderless)
+        }
+        .translationTask(configuration) { session in
+            do {
+                let response = try await session.translate(text)
+                translated = response.targetText
+                showsTranslation = true
+            } catch {
+                showsTranslation = false
+            }
+            translating = false
+        }
+        .onAppear {
+            if translateAutomatically, canTranslate, translated == nil { requestTranslation() }
+        }
+    }
+
+    private func toggleTranslation() {
+        if showsTranslation {
+            showsTranslation = false
+        } else if translated != nil {
+            showsTranslation = true
+        } else {
+            requestTranslation()
+        }
+    }
+
+    /// English to the device language (`target: nil`).
+    private func requestTranslation() {
+        translating = true
+        if configuration == nil {
+            configuration = TranslationSession.Configuration(source: Locale.Language(identifier: "en"), target: nil)
+        } else {
+            configuration?.invalidate()
         }
     }
 }

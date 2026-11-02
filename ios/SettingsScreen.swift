@@ -9,6 +9,13 @@ struct SettingsScreen: View {
 
     @Environment(ProfileStore.self) private var profile
     @Environment(AppUpdateCenter.self) private var updates
+    @Environment(DownloadStore.self) private var downloads
+    @AppStorage(DownloadStore.autoDeleteKey) private var autoDeleteDownloads = true
+    @AppStorage(DeviceSettings.translateSynopsisKey) private var translateSynopsis = false
+    @AppStorage(ReleaseNotifier.enabledKey) private var releaseNotifications = false
+    @Environment(ReleaseNotifier.self) private var notifier
+    @State private var notificationsDenied = false
+    @State private var showDeleteDownloads = false
     @State private var scheme: BridgeScheme = .https
     @State private var host = ""
     @State private var testing = false
@@ -31,6 +38,7 @@ struct SettingsScreen: View {
                 identitySection
                 catalogSection
                 playbackSection
+                deviceSection
                 aboutSection
             }
             .navigationTitle("Configuración")
@@ -267,6 +275,43 @@ struct SettingsScreen: View {
             Text("Sub declara audio japonés y activa los subtítulos; Dub declara audio en inglés. Estas preferencias pertenecen a la identidad activa y se sincronizan con el bridge en tus otros dispositivos.")
         }
         .disabled(!profile.isBridgeConfigured)
+    }
+
+    /// Per device: downloads live on this device and translation depends on
+    /// the languages installed in it.
+    private var deviceSection: some View {
+        Section {
+            Toggle("Borrar descargas ya vistas", isOn: $autoDeleteDownloads)
+            LabeledContent("Espacio usado", value: ByteCountFormatter.string(fromByteCount: downloads.totalBytes, countStyle: .file))
+            Button("Borrar todas las descargas", role: .destructive) { showDeleteDownloads = true }
+                .disabled(downloads.records.isEmpty)
+                .confirmationDialog("¿Borrar \(downloads.records.count) descargas?", isPresented: $showDeleteDownloads, titleVisibility: .visible) {
+                    Button("Borrar todas", role: .destructive) { downloads.removeAll() }
+                }
+            Toggle("Traducir sinopsis automáticamente", isOn: $translateSynopsis)
+            Toggle("Avisar de nuevos episodios", isOn: $releaseNotifications)
+                .disabled(!profile.isBridgeConfigured)
+                .onChange(of: releaseNotifications) { _, enabled in
+                    Task {
+                        if enabled, !(await notifier.requestAuthorization()) {
+                            notificationsDenied = true
+                            releaseNotifications = false
+                            return
+                        }
+                        notificationsDenied = false
+                        await notifier.refresh(profile: profile)
+                    }
+                }
+            if notificationsDenied {
+                Text("iOS no permite avisos de esta app. Actívalos en Ajustes → Notificaciones.")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("Este dispositivo")
+        } footer: {
+            Text("Una descarga se borra cuando terminas ese episodio o avanzas a uno posterior, también desde otro dispositivo con la misma identidad. La sinopsis se traduce al idioma del dispositivo con la traducción integrada de iOS; la primera vez puede pedir descargar los idiomas. Los avisos usan el horario estimado del catálogo para las series de Continuar viendo (en el tipo Sub o Dub que sigues) y se reprograman cada vez que abres la app.")
+        }
     }
 
     private var subtitleOptions: [(tag: String, label: String)] {
