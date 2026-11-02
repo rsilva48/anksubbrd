@@ -590,10 +590,24 @@ struct DownloadBadge: View {
     var body: some View {
         switch record.state {
         case .downloading:
-            ProgressView(value: record.progress)
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .accessibilityLabel("Descargando")
+            // A determinate ring: the circular ProgressView style ignores the
+            // value on iOS and always spins.
+            ZStack {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
+                Circle()
+                    .trim(from: 0, to: min(max(record.progress, 0.02), 1))
+                    .stroke(.tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.tint)
+            }
+            .frame(width: 22, height: 22)
+            .animation(.linear(duration: 0.3), value: record.progress)
+            .accessibilityElement()
+            .accessibilityLabel("Descargando")
+            .accessibilityValue("\(Int((record.progress * 100).rounded())) %")
         case .completed:
             Image(systemName: "arrow.down.circle.fill")
                 .foregroundStyle(.tint)

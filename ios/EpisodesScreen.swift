@@ -305,7 +305,7 @@ struct EpisodesScreen: View {
                 }
             } else if let episode = series.episodes.first(where: { $0.number == latestEpisode }) ?? series.episodes.first {
                 Button {
-                    chooseServer(for: episode)
+                    open(episode)
                 } label: {
                     Label(episode.number == latestEpisode ? "Ver episodio \(episode.number) (nuevo)" : "Empezar con el episodio \(episode.number)", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
