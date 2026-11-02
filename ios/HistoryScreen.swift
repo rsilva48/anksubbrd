@@ -53,6 +53,13 @@ private struct HistoryList: View {
 
     var body: some View {
         List(selection: $selectedEntryIDs) {
+            if !profile.isOnline {
+                Section {
+                    Label("Sin conexión. Tu progreso se guarda en este dispositivo y se sincroniza con el bridge al volver la conexión. Sin red puedes ver los episodios descargados.", systemImage: "wifi.slash")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if entries.isEmpty {
                 ContentUnavailableView("Nada para continuar", systemImage: "play.circle", description: Text("Las series que reproduzcas con esta identidad aparecerán aquí con el segundo en que las dejaste."))
             } else {

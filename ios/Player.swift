@@ -493,6 +493,12 @@ final class PlayerModel: Identifiable {
         }
     }
 
+    /// A finished episode's download (streamed or not) becomes eligible for
+    /// automatic deletion.
+    private func markDownloadWatched() {
+        DownloadStore.shared.markWatched(watchUrl: session.historyEntry.watchUrl, episode: session.historyEntry.episode)
+    }
+
     /// Watched once the outro starts or within the last stretch of the
     /// episode, so Continue offers the next episode instead of the credits.
     private func reachedEnd(at seconds: Double) -> Bool {
@@ -503,7 +509,11 @@ final class PlayerModel: Identifiable {
 
     private func fail(_ message: String?) {
         isBuffering = false
-        errorMessage = message ?? "No se pudo reproducir este servidor."
+        if session.downloadID == nil, !NetworkStatus.shared.isOnline {
+            errorMessage = "Sin conexión. Este episodio no está descargado; descárgalo para verlo sin red."
+        } else {
+            errorMessage = message ?? "No se pudo reproducir este servidor."
+        }
     }
 
     // MARK: Player observation
@@ -537,14 +547,18 @@ final class PlayerModel: Identifiable {
         let second = Int(seconds)
         guard second != lastSavedSecond, seconds > 0 else { return }
         lastSavedSecond = second
-        profile.update(session.historyEntry, positionSeconds: seconds, durationSeconds: duration, completed: reachedEnd(at: seconds))
+        let finished = reachedEnd(at: seconds)
+        profile.update(session.historyEntry, positionSeconds: seconds, durationSeconds: duration, completed: finished)
+        if finished { markDownloadWatched() }
         Task { await profile.sync() }
     }
 
     private func saveProgress(completed: Bool? = nil) {
         let seconds = player.currentTime().seconds
         guard seconds.isFinite, seconds > 0, player.currentItem != nil else { return }
-        profile.update(session.historyEntry, positionSeconds: seconds, durationSeconds: duration, completed: completed ?? reachedEnd(at: seconds))
+        let finished = completed ?? reachedEnd(at: seconds)
+        profile.update(session.historyEntry, positionSeconds: seconds, durationSeconds: duration, completed: finished)
+        if finished { markDownloadWatched() }
         Task { await profile.sync(force: true) }
     }
 

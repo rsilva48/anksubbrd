@@ -59,6 +59,8 @@ final class CatalogFeed {
     private(set) var hasMore = false
     private(set) var errorMessage: String?
     private(set) var hasLoaded = false
+    /// The last failure was a missing network connection.
+    private(set) var isOffline = false
 
     @ObservationIgnored private var page = 0
     @ObservationIgnored private var generation = 0
@@ -84,6 +86,7 @@ final class CatalogFeed {
         let current = generation
         isLoading = true
         errorMessage = nil
+        isOffline = false
         defer { if current == generation { isLoading = false } }
         do {
             let reply = try await fetch(page + 1)
@@ -102,6 +105,7 @@ final class CatalogFeed {
         } catch {
             guard current == generation else { return }
             errorMessage = error.localizedDescription
+            isOffline = (error as? BridgeRequestError)?.isOffline ?? false
             hasLoaded = true
         }
     }
@@ -136,7 +140,7 @@ struct CatalogGrid<EmptyState: View>: View {
             VStack(spacing: 12) {
                 if feed.isLoading {
                     ProgressView()
-                } else if let errorMessage = feed.errorMessage {
+                } else if let errorMessage = feed.errorMessage, !(feed.isOffline && visible.isEmpty) {
                     ErrorNotice(message: errorMessage)
                     Button("Reintentar") { Task { await feed.loadNextPage() } }
                         .buttonStyle(.glass)
@@ -150,8 +154,19 @@ struct CatalogGrid<EmptyState: View>: View {
             .padding(.vertical, 20)
         }
         .overlay {
-            if feed.hasLoaded, visible.isEmpty, !feed.isLoading, feed.errorMessage == nil {
-                emptyState()
+            if feed.hasLoaded, visible.isEmpty, !feed.isLoading {
+                if feed.isOffline {
+                    ContentUnavailableView {
+                        Label("Sin conexión", systemImage: "wifi.slash")
+                    } description: {
+                        Text("El catálogo necesita internet. Los episodios descargados siguen disponibles en Descargas, y esta lista se carga sola al volver la conexión.")
+                    } actions: {
+                        Button("Reintentar") { Task { await feed.loadNextPage() } }
+                            .buttonStyle(.glass)
+                    }
+                } else if feed.errorMessage == nil {
+                    emptyState()
+                }
             }
         }
     }
@@ -217,6 +232,8 @@ private struct FeedKey: Equatable {
     let query: String
     let filters: CatalogFilters
     var language: CatalogLanguage? = nil
+    /// Reloads a list that failed offline once the connection returns.
+    var online = true
 }
 
 struct LatestScreen: View {
@@ -229,7 +246,7 @@ struct LatestScreen: View {
     @State private var languageOverride: CatalogLanguage?
 
     private var language: CatalogLanguage { languageOverride ?? CatalogLanguage(profile.preferences.defaultTrack) }
-    private var key: FeedKey { FeedKey(scope: profile.scope, query: "", filters: filters, language: language) }
+    private var key: FeedKey { FeedKey(scope: profile.scope, query: "", filters: filters, language: language, online: profile.isOnline) }
 
     var body: some View {
         NavigationStack {
@@ -290,7 +307,7 @@ struct SearchScreen: View {
     @State private var loadedKey: FeedKey?
     @AppStorage("anksubbrd.recent-searches") private var recentSearchesStorage = ""
 
-    private var key: FeedKey { FeedKey(scope: profile.scope, query: submittedQuery, filters: filters) }
+    private var key: FeedKey { FeedKey(scope: profile.scope, query: submittedQuery, filters: filters, online: profile.isOnline) }
 
     private var recentSearches: [String] {
         recentSearchesStorage.split(separator: "\n").map(String.init)

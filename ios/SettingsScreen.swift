@@ -310,7 +310,7 @@ struct SettingsScreen: View {
         } header: {
             Text("Este dispositivo")
         } footer: {
-            Text("Una descarga se borra cuando terminas ese episodio o avanzas a uno posterior, también desde otro dispositivo con la misma identidad. La sinopsis se traduce al idioma del dispositivo con la traducción integrada de iOS; la primera vez puede pedir descargar los idiomas. Los avisos usan el horario estimado del catálogo para las series de Continuar viendo (en el tipo Sub o Dub que sigues) y se reprograman cada vez que abres la app.")
+            Text("Una descarga se borra sólo cuando terminas de ver ese episodio (al llegar al outro o a sus últimos minutos), aquí o en otro dispositivo con la misma identidad. Abrir otro episodio no la borra. La sinopsis se traduce al idioma del dispositivo con la traducción integrada de iOS; la primera vez puede pedir descargar los idiomas. Los avisos usan el horario estimado del catálogo para las series de Continuar viendo (en el tipo Sub o Dub que sigues) y se reprograman cada vez que abres la app.")
         }
     }
 

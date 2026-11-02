@@ -13,6 +13,8 @@ struct AirPlaySubtitlePlayerApp: App {
 
     init() {
         AudioSession.configure()
+        // Starts watching the network path before the first request fails.
+        _ = NetworkStatus.shared
         Task.detached(priority: .background) {
             PosterCache.prune()
             SeriesCache.prune()

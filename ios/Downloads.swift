@@ -35,6 +35,8 @@ struct DownloadRecord: Codable, Identifiable {
     /// Servers that already failed for this episode (optional: records
     /// saved by 0.2.7 do not have it).
     var triedServers: [String]? = nil
+    /// This episode was watched to its outro or last minutes (on this device).
+    var watched: Bool? = nil
 
     /// The package on disk. A system process writes it into the app's real
     /// container, while LiveContainer (and an app update) can change the home
@@ -344,14 +346,27 @@ final class DownloadStore {
         records.forEach(remove)
     }
 
-    /// Runs when no player is open (app launch, Downloads tab, player closed).
+    /// Runs when no player is open (app launch, Downloads tab, player
+    /// closed). Only an episode that was itself finished is deleted: opening
+    /// a later one (which moves Continue forward) does not count as watching.
     func cleanUpWatched(profile: ProfileStore) {
         guard autoDeleteWatched else { return }
         for record in records where record.state == .completed {
-            guard let entry = profile.entry(for: record.watchUrl) else { continue }
-            if entry.episode > record.episode || (entry.episode == record.episode && entry.isCompleted) {
+            let entry = profile.entry(for: record.watchUrl)
+            // Finished here, or finished as the current episode on another device.
+            let finishedElsewhere = entry.map { $0.episode == record.episode && $0.isCompleted } ?? false
+            if record.watched == true || finishedElsewhere {
                 remove(record)
             }
+        }
+    }
+
+    /// Called by the player when an episode reaches its end; the download is
+    /// deleted later, once no player is open.
+    func markWatched(watchUrl: String, episode: Int) {
+        let path = catalogPath(of: watchUrl)
+        for record in records where catalogPath(of: record.watchUrl) == path && record.episode == episode && record.watched != true {
+            update(record.id) { $0.watched = true }
         }
     }
 

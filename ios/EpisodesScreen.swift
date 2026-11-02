@@ -155,7 +155,10 @@ struct EpisodesScreen: View {
             }
             if isOffline {
                 Section {
-                    Label("Sin conexión con el bridge. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados.", systemImage: "wifi.slash")
+                    Label(profile.isOnline
+                          ? "No se pudo conectar con el bridge. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados."
+                          : "Sin conexión. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados.",
+                          systemImage: "wifi.slash")
                         .font(.footnote)
                     Button("Reintentar") { Task { await loadSeries() } }
                         .font(.footnote)
@@ -181,6 +184,12 @@ struct EpisodesScreen: View {
         // The title is shown next to the poster only.
         .navigationBarTitleDisplayMode(.inline)
         .task(id: current.watchUrl) { await loadSeries() }
+        .onChange(of: profile.isOnline) { _, online in
+            // Back online: replace the saved copy (or the error) with fresh data.
+            if online, isOffline || errorMessage != nil {
+                Task { await loadSeries() }
+            }
+        }
         .refreshable { await loadSeries() }
         .onChange(of: selectedSeasonURL) { _, url in
             // Seasons switch in place, so going back always returns to where
@@ -421,6 +430,8 @@ struct EpisodesScreen: View {
                 series = saved
                 seasons = saved.seasons
                 resolver = PlaybackResolver(series: saved, anime: current, profile: profile)
+            } else if (error as? BridgeRequestError)?.isOffline == true {
+                errorMessage = "Sin conexión. Esta serie aún no está guardada en el dispositivo: ábrela una vez con conexión para verla sin red. Se cargará sola al volver la conexión."
             } else {
                 errorMessage = error.localizedDescription
             }

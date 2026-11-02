@@ -1,6 +1,41 @@
 import CryptoKit
 import Foundation
+import Network
 import Security
+
+/// Whether the device has a usable network path. iOS reports a missing
+/// connection and a denied local network permission with the same error, so
+/// messages check this to tell them apart.
+final class NetworkStatus: @unchecked Sendable {
+    static let shared = NetworkStatus()
+
+    private let monitor = NWPathMonitor()
+    private let lock = NSLock()
+    private var satisfied = true
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            self?.update(path.status == .satisfied)
+        }
+        monitor.start(queue: DispatchQueue(label: "anksubbrd.network-status"))
+    }
+
+    var isOnline: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return satisfied
+    }
+
+    private func update(_ value: Bool) {
+        lock.lock()
+        satisfied = value
+        lock.unlock()
+    }
+}
+
+enum OfflineMessage {
+    static let general = "Sin conexión a internet. Los episodios descargados siguen disponibles en Descargas."
+}
 
 enum BridgeScheme: String, CaseIterable, Identifiable {
     case https
@@ -71,6 +106,8 @@ enum BridgeEndpoint {
 struct BridgeRequestError: LocalizedError {
     let message: String
     var statusCode: Int? = nil
+    /// The device has no network connection.
+    var isOffline = false
     var errorDescription: String? { message }
     var isExpiredSession: Bool { statusCode == 410 }
     var isUnauthorized: Bool { statusCode == 401 }
@@ -152,7 +189,10 @@ enum BridgeClient {
             result = try await URLSession.shared.data(for: request)
         } catch let error as URLError {
             if error.code == .cancelled { throw CancellationError() }
-            throw BridgeRequestError(message: message(for: error))
+            if !NetworkStatus.shared.isOnline {
+                throw BridgeRequestError(message: OfflineMessage.general, isOffline: true)
+            }
+            throw BridgeRequestError(message: message(for: error, host: request.url?.host))
         }
         let (data, response) = result
         guard let http = response as? HTTPURLResponse else {
@@ -172,7 +212,22 @@ enum BridgeClient {
         }
     }
 
-    private static func message(for error: URLError) -> String {
+    /// IPs and names that only resolve inside the home network, where iOS
+    /// asks for the local network permission.
+    private static func isLocalNetwork(_ host: String?) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        if host.hasSuffix(".local") || host == "localhost" || !host.contains(".") { return true }
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        switch (parts[0], parts[1]) {
+        case (10, _), (127, _), (192, 168), (169, 254): return true
+        case (172, 16...31): return true
+        default: return false
+        }
+    }
+
+    /// The device is online here (see `send`).
+    private static func message(for error: URLError, host: String?) -> String {
         switch error.code {
         case .appTransportSecurityRequiresSecureConnection:
             return "iOS sólo permite HTTP dentro de tu red local. Usa HTTPS para un dominio público."
@@ -180,10 +235,12 @@ enum BridgeClient {
             return "El bridge no respondió a tiempo."
         case .cannotFindHost, .dnsLookupFailed:
             return "No se encontró el host del bridge. Revisa el dominio o la IP."
-        case .cannotConnectToHost, .networkConnectionLost:
-            return "No se pudo conectar con el bridge. Comprueba que esté encendido y accesible."
-        case .notConnectedToInternet:
-            return "Sin conexión. Si iOS pidió acceso a la red local, permítelo y vuelve a intentarlo."
+        case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
+            // Online but unreachable: for a bridge on the home network the
+            // usual cause is the local network permission.
+            return isLocalNetwork(host)
+                ? "No se pudo llegar al bridge en tu red local. Comprueba que esté encendido y que la app tenga permiso en Ajustes → Privacidad y seguridad → Red local."
+                : "No se pudo conectar con el bridge. Comprueba que esté encendido y accesible."
         case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot:
             return "Falló la conexión HTTPS. Revisa el certificado del dominio o usa HTTP si es una IP local."
         default:

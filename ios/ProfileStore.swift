@@ -34,7 +34,8 @@ final class ProfileStore {
     @ObservationIgnored private var lastSync = Date.distantPast
     @ObservationIgnored private var syncing = false
     @ObservationIgnored private let pathMonitor = NWPathMonitor()
-    @ObservationIgnored private var isOnline = true
+    /// Whether the device has a network connection (observable for banners).
+    private(set) var isOnline = true
     private let defaults: UserDefaults
 
     var isBridgeConfigured: Bool { !bridgeURL.isEmpty }

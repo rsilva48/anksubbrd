@@ -114,7 +114,9 @@ final class AppUpdateCenter {
         } catch is CancellationError {
             return
         } catch {
-            statusMessage = "No se pudo consultar GitHub: \(error.localizedDescription)"
+            statusMessage = NetworkStatus.shared.isOnline
+                ? "No se pudo consultar GitHub: \(error.localizedDescription)"
+                : "Sin conexión: no se pudo buscar actualizaciones."
         }
     }
 
