@@ -288,6 +288,17 @@ jobs:
             printf 'Release sólo del bridge: no incluye IPA y no reemplaza a la última versión de la app.\n' >> release-notes.md
           fi
           cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Generate LiveContainer source
+        if: env.HAS_APP == 'true'
+        run: |
+          python3 scripts/test-generate-source.py
+          python3 scripts/generate-source.py \
+            --ipa release-assets/AirPlaySubtitlePlayer-unsigned.ipa \
+            --notes release-notes.md \
+            --output release-assets/source.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --commit "$GITHUB_SHA"
       # Bridge-only releases are never marked latest, so
       # releases/latest/download/AirPlaySubtitlePlayer-unsigned.ipa keeps working.
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3

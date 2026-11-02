@@ -56,6 +56,18 @@ Al abrirse, la app consulta las releases de GitHub. Si hay una versión con IPA 
 
 También puedes buscar actualizaciones desde **Configuración → Acerca de**.
 
+### Fuente para LiveContainer
+
+Para añadir el catálogo de esta app, abre **Sources → +** en LiveContainer y pega:
+
+```text
+https://github.com/rsilva48/anksubbrd/releases/latest/download/source.json
+```
+
+También puedes usar **Añadir fuente a LiveContainer** desde la página de instalación. Una vez publicada una release de app con la fuente, LiveContainer podrá cargar su ficha e iniciar la instalación desde Sources. Para buscar cambios, actualiza la fuente en LiveContainer; la instalación o sustitución seguirá requiriendo confirmación. La compatibilidad de actualización sobre una instalación existente y la conservación de datos dependen de LiveContainer y aún deben probarse en el dispositivo; respalda el token antes de reemplazar o borrar la app.
+
+El workflow genera `source.json` junto al IPA de cada release de app, leyendo su `Info.plist`, tamaño y SHA-256 reales. El JSON apunta al IPA de esa versión y el enlace estable apunta al source de la última release de app. Las releases que solo cambian el bridge no sustituyen esa release. La URL del source comenzará a funcionar cuando se publique la primera release que incluya este cambio; no se añade retroactivamente a releases anteriores.
+
 El flujo con `open-web-page` y `itms-services` está pendiente de validación en iPhone/iPad cuando la app se ejecuta dentro de LiveContainer. No se debe dar por garantizado que el traspaso instale la actualización ni que conserve los datos: confirma en LiveContainer qué opción aparece antes de reemplazar la instalación y mantén un respaldo del token.
 
 ## Bridge

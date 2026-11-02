@@ -33,6 +33,9 @@
       <a class="button" id="direct" href="#">Instalación directa (LiveContainer cerrado)</a>
       <a class="button" id="download" href="#">Descargar IPA</a>
       <a class="button" id="release" href="#">Ver la release en GitHub</a>
+      <a class="button" id="source" href="#">Añadir fuente a LiveContainer</a>
+      <p class="note">También puedes pegar la URL de la fuente en la pestaña Sources de LiveContainer:</p>
+      <p class="note"><a id="source-url" href="#">source.json</a></p>
     </div>
 
     <div class="card">
@@ -63,6 +66,10 @@
     document.getElementById('direct').href = `livecontainer://install?url=${encodeURIComponent(ipa)}`;
     document.getElementById('download').href = ipa;
     document.getElementById('release').href = tag ? `${releases}/tag/${tag}` : `${releases}/latest`;
+    const source = `${releases}/latest/download/source.json`;
+    document.getElementById('source').href = `livecontainer://source?url=${encodeURIComponent(source)}`;
+    document.getElementById('source-url').href = source;
+    document.getElementById('source-url').textContent = source;
     document.getElementById('version').textContent = tag ? `Versión ${tag.slice(1)}` : 'Última versión';
   </script>
 </body>

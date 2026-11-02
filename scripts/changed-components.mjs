@@ -16,7 +16,8 @@ const show = (revision, file) => { try { return git('show', `${revision}:${file}
 
 const changed = { app: false, bridge: false };
 for (const file of git('diff', '--name-only', base, head).split(/\r?\n/).filter(Boolean)) {
-  const component = file.startsWith('ios/') ? 'app' : file.startsWith('proxy/') ? 'bridge' : null;
+  // Publishing-source changes need a freshly packaged IPA and a new app release.
+  const component = file.startsWith('ios/') || file === 'scripts/generate-source.py' ? 'app' : file.startsWith('proxy/') ? 'bridge' : null;
   if (!component || changed[component]) continue;
   if (syncedFiles.includes(file) && sameIgnoringVersion(file, show(base, file), show(head, file))) continue;
   changed[component] = true;
