@@ -2,5 +2,7 @@ proxy/node_modules/
 proxy/data/
 # Docker client config used by deploy/update-bridge.sh on the server.
 .docker/
+# Local secrets, such as the bridge's .env on the server.
+.env
 # Session handoff notes for future assistant sessions (local only).
 .session/
