@@ -63,6 +63,7 @@ final class PlayerModel: Identifiable {
     /// Per item: media options are loaded once and a failure is reported once.
     @ObservationIgnored private var mediaOptionsRequested = false
     @ObservationIgnored private var failureReported = false
+    @ObservationIgnored private var loadWatchdog: Task<Void, Never>?
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var pictureInPicture: AVPictureInPictureController?
     @ObservationIgnored private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
@@ -103,6 +104,7 @@ final class PlayerModel: Identifiable {
     func close() {
         guard started, !closed else { return }
         closed = true
+        loadWatchdog?.cancel()
         saveProgress()
         playerObservations.forEach { $0.invalidate() }
         playerObservations = []
@@ -117,7 +119,9 @@ final class PlayerModel: Identifiable {
         player.replaceCurrentItem(with: nil)
         unregisterRemoteCommands()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-        AudioSession.setActive(false)
+        // The audio session stays active (as before 0.2.0): deactivating it
+        // while AVFoundation tears the item down could leave the next player
+        // or the AirPlay route in a bad state.
     }
 
     func attach(_ layer: AVPlayerLayer) {
@@ -234,10 +238,35 @@ final class PlayerModel: Identifiable {
         errorMessage = nil
     }
 
+    /// Resolves the same episode and server again (fresh playback URL and CDN
+    /// token) and resumes from the saved position.
+    func retry() {
+        guard !isChangingEpisode, !closed,
+              let episode = resolver.series.episodes.first(where: { $0.number == session.historyEntry.episode }) else { return }
+        saveProgress()
+        player.pause()
+        isChangingEpisode = true
+        errorMessage = nil
+        let current = session
+        Task {
+            defer { isChangingEpisode = false }
+            do {
+                let fresh = try await resolver.session(for: episode, preferredName: current.playback.serverName, kind: current.kind)
+                guard !closed else { return }
+                load(fresh)
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = "No se pudo reintentar. \(error.localizedDescription)"
+            }
+        }
+    }
+
     // MARK: Item
 
     private func load(_ session: PlaybackSession) {
         stopObservingItem()
+        loadWatchdog?.cancel()
         mediaOptionsRequested = false
         failureReported = false
         self.session = session
@@ -267,6 +296,15 @@ final class PlayerModel: Identifiable {
             player.seek(to: CMTime(seconds: resumeAt, preferredTimescale: 600))
         }
         observe(item)
+        // Never spin forever: a server that does not answer becomes an error
+        // with a retry button.
+        loadWatchdog = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(25))
+            guard !Task.isCancelled, let self, !self.closed, self.player.currentItem === item,
+                  item.status != .readyToPlay, self.errorMessage == nil else { return }
+            self.failureReported = true
+            self.fail("El servidor no respondió a tiempo. Reintenta o elige otro servidor.")
+        }
         updateNowPlaying()
         player.defaultRate = speed.rawValue
         player.play()
@@ -846,9 +884,12 @@ struct PlayerScreen: View {
             HStack(spacing: 12) {
                 Button("Cerrar reproductor", action: close)
                     .buttonStyle(.glass)
-                Button("Continuar") { model.dismissError() }
+                Button("Reintentar") { model.retry() }
                     .buttonStyle(.glassProminent)
             }
+            Button("Ocultar aviso") { model.dismissError() }
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.8))
         }
         .foregroundStyle(.white)
         .padding(24)

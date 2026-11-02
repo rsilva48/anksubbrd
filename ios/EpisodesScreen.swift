@@ -97,6 +97,7 @@ struct EpisodesScreen: View {
     @State private var loading = false
     @State private var errorMessage: String?
     @State private var serverChoice: EpisodeServers?
+    @State private var pendingServer: (episode: Episode, server: Server)?
     @State private var activePlayer: PlayerModel?
     @State private var busyMessage: String?
 
@@ -151,10 +152,12 @@ struct EpisodesScreen: View {
             resolver = nil
             current = season.anime
         }
-        .sheet(item: $serverChoice) { choice in
+        // The player is presented only once the server sheet has finished
+        // dismissing; presenting during that animation is silently dropped.
+        .sheet(item: $serverChoice, onDismiss: startPendingServer) { choice in
             ServerPicker(choice: choice, defaultKind: profile.preferences.defaultTrack) { server in
+                pendingServer = (episode: choice.episode, server: server)
                 serverChoice = nil
-                start { try await $0.session(for: choice.episode, server: server) }
             }
         }
         .fullScreenCover(item: $activePlayer) { model in
@@ -275,8 +278,14 @@ struct EpisodesScreen: View {
         }
     }
 
+    private func startPendingServer() {
+        guard let pending = pendingServer else { return }
+        pendingServer = nil
+        start { try await $0.session(for: pending.episode, server: pending.server) }
+    }
+
     private func start(_ resolve: @escaping (PlaybackResolver) async throws -> PlaybackSession) {
-        guard let resolver, busyMessage == nil else { return }
+        guard let resolver, busyMessage == nil, activePlayer == nil else { return }
         Task {
             busyMessage = "Preparando reproducción…"
             defer { busyMessage = nil }

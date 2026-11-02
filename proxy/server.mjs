@@ -11,6 +11,9 @@ const port = Number(process.env.BRIDGE_PORT ?? 8787);
 const bridgeVersion = (() => {
   try { return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version ?? null; } catch { return null; }
 })();
+// DECLARE_AUDIO_LANGUAGE=false stops announcing the audio language in the
+// master playlist (useful to compare subtitle timing with and without it).
+const declareAudioLanguage = process.env.DECLARE_AUDIO_LANGUAGE !== 'false';
 const sources = new Map();
 const seriesCache = new Map();
 const bridgeUsers = configuredBridgeUsers();
@@ -200,9 +203,11 @@ function subtitleDetails(track, index) {
   addQualifier('Dubtitle', /(?:^|[\s_./-])dubtitle(?=$|[\s_./-])/);
   addQualifier('SDH', /(?:^|[\s_./-])sdh(?=$|[\s_./-])/);
   addQualifier('CC', /(?:^|[\s_./-])cc(?=$|[\s_./-])|closed[\s_-]*captions?/);
+  // Forced tracks only carry signs and songs; Dubtitle tracks follow the dub script.
+  const kind = { forced: qualifiers.includes('Forced'), dubtitle: qualifiers.includes('Dubtitle') };
   const named = (name, language, extra = []) => {
     const descriptors = [...extra, ...qualifiers];
-    return { name: descriptors.length ? `${name} (${descriptors.join(', ')})` : name, language };
+    return { name: descriptors.length ? `${name} (${descriptors.join(', ')})` : name, language, ...kind };
   };
 
   const chinese = hasText(/chinese|中文/) || hasToken('chi', 'zho', 'cmn', 'yue', 'zht', 'zhs', 'cht');
@@ -250,16 +255,28 @@ function subtitleDetails(track, index) {
   }
 
   const usableLabel = /^(?:unknown(?: language)?|subtitles?(?:\s+\d+)?)$/i.test(suppliedLabel) ? '' : suppliedLabel;
-  return { name: usableLabel || `Subtitles ${index + 1}`, language: 'und' };
+  return { name: usableLabel || `Subtitles ${index + 1}`, language: 'und', ...kind };
 }
-// Subtitle tracks from a player: readable names, BCP-47 tags and an English default.
+// Subtitle tracks from a player: readable, unique names, BCP-47 tags and a
+// full English track as default (never a Forced one, which is nearly empty).
 function subtitleTracks(tracks, baseUrl) {
   const subtitles = (Array.isArray(tracks) ? tracks : [])
     .filter((track) => /^(captions|subtitles)$/i.test(cleanText(track?.kind)))
     .map((track, index) => ({ ...subtitleDetails(track, index), vttUrl: absoluteUrl(track?.file ?? '', baseUrl) }))
     .filter((track) => track.vttUrl && new URL(track.vttUrl).pathname.toLowerCase().endsWith('.vtt'));
-  const defaultIndex = subtitles.findIndex((track) => track.language === 'en');
-  subtitles.forEach((track, index) => { track.default = index === (defaultIndex >= 0 ? defaultIndex : 0); });
+  const seen = new Map();
+  for (const track of subtitles) {
+    const count = (seen.get(track.name) ?? 0) + 1;
+    seen.set(track.name, count);
+    if (count > 1) track.name = `${track.name} ${count}`;
+  }
+  const preferences = [
+    (track) => track.language === 'en' && !track.forced && !track.dubtitle,
+    (track) => track.language === 'en' && !track.forced,
+    (track) => !track.forced,
+  ];
+  const defaultTrack = preferences.map((matches) => subtitles.find(matches)).find(Boolean) ?? subtitles[0];
+  subtitles.forEach((track) => { track.default = track === defaultTrack; });
   return subtitles;
 }
 function validSkipRange(value) {
@@ -512,7 +529,7 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, playbackOri
   console.info(`[bridge] HLS candidate: ${playlistDescriptor(media.hlsUrl)}`);
   // Dub audio is English, so no subtitle is forced on; Sub keeps its default track.
   if (server.type === 'dub') media.subtitles.forEach((track) => { track.default = false; });
-  const id = randomUUID(); sources.set(id, { ...media, kind: server.type, userId: user.userId, accessToken: user.token });
+  const id = randomUUID(); sources.set(id, { ...media, kind: server.type, declareAudio: declareAudioLanguage, userId: user.userId, accessToken: user.token });
   const expiry = setTimeout(() => { sources.delete(id); }, 2 * 60 * 60 * 1000);
   expiry.unref();
   console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
@@ -735,7 +752,9 @@ function injectRenditions(master, source, id) {
   const audio = source.kind === 'dub' ? { name: 'English', language: 'en' } : { name: 'Japanese', language: 'ja' };
   const declarations = [];
   let playlist = master;
-  if (/TYPE=AUDIO/.test(playlist)) {
+  if (source.declareAudio === false) {
+    // DECLARE_AUDIO_LANGUAGE=false: leave the audio as the provider sent it.
+  } else if (/TYPE=AUDIO/.test(playlist)) {
     playlist = playlist.replace(/^#EXT-X-MEDIA:([^\r\n]*)$/gm, (line, attrs) => /(?:^|,)TYPE=AUDIO(?:,|$)/.test(attrs) && !/(?:^|,)LANGUAGE=/.test(attrs) ? `${line},LANGUAGE="${audio.language}"` : line);
   } else {
     declarations.push(`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="bridge-audio",NAME="${audio.name}",LANGUAGE="${audio.language}",DEFAULT=YES,AUTOSELECT=YES`);
@@ -743,7 +762,9 @@ function injectRenditions(master, source, id) {
   }
   const tracks = source.subtitles ?? [];
   if (tracks.length && !/TYPE=SUBTITLES/.test(playlist)) {
-    declarations.push(...tracks.map((track, index) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="bridge-subs",NAME="${track.name.replaceAll('"', '')}",LANGUAGE="${track.language.replaceAll('"', '')}",DEFAULT=${track.default ? 'YES' : 'NO'},AUTOSELECT=YES,URI="${protectedPath(`/subtitle/${id}/${index}.m3u8`, source.accessToken)}"`));
+    // FORCED=YES makes Apple players treat signs/songs tracks as forced
+    // subtitles: shown automatically when needed, not listed as a choice.
+    declarations.push(...tracks.map((track, index) => `#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="bridge-subs",NAME="${track.name.replaceAll('"', '')}",LANGUAGE="${track.language.replaceAll('"', '')}",DEFAULT=${track.default && !track.forced ? 'YES' : 'NO'},AUTOSELECT=YES,${track.forced ? 'FORCED=YES,' : ''}URI="${protectedPath(`/subtitle/${id}/${index}.m3u8`, source.accessToken)}"`));
     playlist = withStreamAttribute(playlist, 'SUBTITLES', 'bridge-subs');
   }
   return declarations.length ? playlist.replace(/^#EXTM3U\s*$/m, '#EXTM3U\n' + declarations.join('\n')) : playlist;
@@ -754,16 +775,86 @@ function durationFromVtt(vtt) {
   for (const match of vtt.matchAll(pattern)) duration = Math.max(duration, secondsInVttTimestamp([, match[4], match[5], match[6]]));
   return Math.ceil(duration);
 }
-async function fetchUpstream(url, source, range) {
+// The timeout covers the headers and the body: a stalled CDN must fail the
+// request (so the player can report it and retry) instead of hanging forever.
+async function fetchUpstream(url, source, range, timeoutMs = 30000) {
   const headers = { ...source.requestHeaders, ...(range ? { range } : {}) };
-  const response = await fetch(url, { redirect: 'follow', headers });
-  if (!response.ok) throw new Error(`Upstream responded ${response.status}`);
-  return { url: response.url, type: response.headers.get('content-type') ?? '', body: Buffer.from(await response.arrayBuffer()) };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { redirect: 'follow', headers, signal: controller.signal });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`Upstream responded ${response.status}`);
+    }
+    return { url: response.url, type: response.headers.get('content-type') ?? '', body: Buffer.from(await response.arrayBuffer()) };
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`Upstream request timed out after ${timeoutMs / 1000} seconds`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+// First presentation timestamp (90 kHz ticks) among the audio/video PES
+// packets of an MPEG-TS segment, or null for other containers.
+function transportStreamStartPts(buffer) {
+  let start = null;
+  for (let offset = 0; offset + 188 <= buffer.length && offset < 188 * 2000; offset += 188) {
+    if (buffer[offset] !== 0x47) return start;
+    if (!(buffer[offset + 1] & 0x40)) continue;
+    const adaptation = (buffer[offset + 3] >> 4) & 0x3;
+    const payload = offset + 4 + (adaptation >= 2 ? 1 + buffer[offset + 4] : 0);
+    if (adaptation === 2 || payload + 14 > offset + 188) continue;
+    const isPes = buffer[payload] === 0 && buffer[payload + 1] === 0 && buffer[payload + 2] === 1;
+    const streamId = buffer[payload + 3];
+    if (!isPes || streamId < 0xc0 || streamId > 0xef || !(buffer[payload + 7] & 0x80)) continue;
+    const b = buffer.subarray(payload + 9, payload + 14);
+    const pts = ((b[0] >> 1) & 0x07) * 2 ** 30 + (((b[1] << 8) | b[2]) >> 1) * 2 ** 15 + (((b[3] << 8) | b[4]) >> 1);
+    start = start === null ? pts : Math.min(start, pts);
+  }
+  return start;
+}
+// Apple players place WebVTT cues by timestamp: without X-TIMESTAMP-MAP a cue
+// at 0 is pinned to PTS 0, while the provider's web player measures cues from
+// the first frame. Mapping LOCAL 0 to the stream's first PTS matches it.
+function withTimestampMap(vtt, startPts) {
+  if (startPts === null || /X-TIMESTAMP-MAP/.test(vtt) || !/^﻿?WEBVTT/.test(vtt)) return vtt;
+  return vtt.replace(/^(﻿?WEBVTT[^\r\n]*)/, `$1\nX-TIMESTAMP-MAP=MPEGTS:${startPts},LOCAL:00:00:00.000`);
+}
+// Started while serving the master playlist, whose CDN token is still fresh.
+async function detectStartPts(source, masterUrl, masterText) {
+  try {
+    const firstUri = (text) => text.split(/\r?\n/).map((line) => line.trim()).find((line) => line && !line.startsWith('#'));
+    const master = masterText === undefined ? await fetchUpstream(source.hlsUrl, source, null, 15000) : null;
+    let playlistUrl = master ? master.url : masterUrl;
+    let playlist = master ? master.body.toString('utf8') : masterText;
+    if (/#EXT-X-STREAM-INF:/.test(playlist)) {
+      playlistUrl = absoluteUrl(firstUri(playlist), playlistUrl);
+      const variant = await fetchUpstream(playlistUrl, source, null, 15000);
+      playlistUrl = variant.url; playlist = variant.body.toString('utf8');
+    }
+    const segment = await fetchUpstream(absoluteUrl(firstUri(playlist), playlistUrl), source, 'bytes=0-262143', 15000);
+    return transportStreamStartPts(provider.segment(segment.url, segment.body));
+  } catch (error) {
+    console.warn(`[bridge] Stream start time unavailable: ${error.message}`);
+    return null;
+  }
 }
 async function sendUpstream(response, upstreamUrl, id, source, inject, range) {
   const upstream = await fetchUpstream(upstreamUrl, source, range); upstream.body = provider.segment(upstream.url, upstream.body); const type = upstream.type;
-  if (!isPlaylist(upstream.url, type)) { response.writeHead(200, { 'content-type': upstream.url.toLowerCase().includes('.vtt') ? 'text/vtt; charset=utf-8' : type || 'application/octet-stream' }); response.end(upstream.body); return; }
-  let playlist = upstream.body.toString('utf8'); const manifestStart = playlist.indexOf('#EXTM3U'); if (manifestStart > 0) playlist = playlist.slice(manifestStart); if (inject) playlist = injectRenditions(playlist, source, id); playlist = rewriteUriLines(playlist, upstream.url, id, source);
+  const isVtt = upstream.url.toLowerCase().includes('.vtt') || /text\/vtt/i.test(type);
+  if (isVtt) {
+    source.startPts ??= detectStartPts(source);
+    text(response, 200, withTimestampMap(upstream.body.toString('utf8'), await source.startPts), 'text/vtt; charset=utf-8');
+    return;
+  }
+  if (!isPlaylist(upstream.url, type)) { response.writeHead(200, { 'content-type': type || 'application/octet-stream' }); response.end(upstream.body); return; }
+  let playlist = upstream.body.toString('utf8'); const manifestStart = playlist.indexOf('#EXTM3U'); if (manifestStart > 0) playlist = playlist.slice(manifestStart);
+  if (inject) {
+    source.startPts ??= detectStartPts(source, upstream.url, playlist);
+    playlist = injectRenditions(playlist, source, id);
+  }
+  playlist = rewriteUriLines(playlist, upstream.url, id, source);
   text(response, 200, playlist, 'application/vnd.apple.mpegurl; charset=utf-8');
 }
 async function sendSingleVttPlaylist(response, track, id, source) {
@@ -832,4 +923,4 @@ const server = http.createServer(async (request, response) => {
 // Tests import the pure helpers without opening a port.
 if (!process.env.BRIDGE_NO_LISTEN) server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));
 
-export { createAnkProvider, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleDetails };
+export { createAnkProvider, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };

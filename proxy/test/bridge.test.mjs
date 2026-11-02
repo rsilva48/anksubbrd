@@ -3,7 +3,15 @@ import { test } from 'node:test';
 
 process.env.BRIDGE_NO_LISTEN = '1';
 process.env.PROVIDER_ORIGIN = 'https://catalog.example';
-const { createAnkProvider, injectRenditions, normalizePreferences, normalizeHistoryEntry } = await import('../server.mjs');
+const { createAnkProvider, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
+
+// One 188-byte MPEG-TS packet starting a PES with only a PTS.
+function pesPacket(streamId, pts) {
+  const packet = Buffer.alloc(188, 0xff);
+  packet.set([0x47, 0x40, 0x100 & 0xff, 0x10, 0x00, 0x00, 0x01, streamId, 0x00, 0x00, 0x80, 0x80, 0x05]);
+  packet.set([0x21 | ((pts >>> 29) & 0x0e), (pts >>> 22) & 0xff, ((pts >>> 14) & 0xfe) | 1, (pts >>> 7) & 0xff, ((pts << 1) & 0xfe) | 1], 13);
+  return packet;
+}
 
 const master = [
   '#EXTM3U',
@@ -34,6 +42,48 @@ test('Dub sources declare English audio', () => {
   const playlist = injectRenditions(master, { kind: 'dub', subtitles: [], accessToken: '' }, 'abc');
   assert.match(playlist, /NAME="English",LANGUAGE="en",DEFAULT=YES/);
   assert.doesNotMatch(playlist, /TYPE=SUBTITLES/);
+});
+
+test('Forced tracks are flagged and never the default; repeated names get a number', () => {
+  const vtt = (file) => ({ kind: 'captions', label: '', file: `https://cdn.example/subs/${file}` });
+  const tracks = subtitleTracks([
+    vtt('track_0_Forced_eng.vtt'), vtt('track_1_eng.vtt'), vtt('track_2_Dubtitle_eng.vtt'),
+    vtt('track_13_Latin_American__Forced__spa.vtt'), vtt('track_14_Latin_American_spa.vtt'),
+    vtt('spa-1.vtt'), vtt('spa-2.vtt'),
+  ], 'https://cdn.example/');
+  assert.deepEqual(tracks.map(({ name, language, forced, default: isDefault }) => [name, language, forced, isDefault]), [
+    ['English (Forced)', 'en', true, false],
+    ['English', 'en', false, true],
+    ['English (Dubtitle)', 'en', false, false],
+    ['Spanish (Latin American, Forced)', 'es-419', true, false],
+    ['Spanish (Latin American)', 'es-419', false, false],
+    ['Spanish', 'es', false, false],
+    ['Spanish 2', 'es', false, false],
+  ]);
+  const playlist = injectRenditions(master, { kind: 'sub', subtitles: tracks, accessToken: '' }, 'abc');
+  assert.match(playlist, /NAME="English \(Forced\)",LANGUAGE="en",DEFAULT=NO,AUTOSELECT=YES,FORCED=YES,URI=/);
+  assert.match(playlist, /NAME="English",LANGUAGE="en",DEFAULT=YES,AUTOSELECT=YES,URI=/);
+  assert.doesNotMatch(playlist, /NAME="English",[^\n]*FORCED/);
+});
+
+test('The audio declaration can be switched off', () => {
+  const playlist = injectRenditions(master, { kind: 'sub', declareAudio: false, subtitles, accessToken: '' }, 'abc');
+  assert.doesNotMatch(playlist, /TYPE=AUDIO|AUDIO="/);
+  assert.match(playlist, /TYPE=SUBTITLES/);
+});
+
+test('Stream start is the earliest audio/video PTS of the first segment', () => {
+  const segment = Buffer.concat([pesPacket(0xe0, 16290), pesPacket(0xc0, 9090), pesPacket(0xe0, 19890)]);
+  assert.equal(transportStreamStartPts(segment), 9090);
+  assert.equal(transportStreamStartPts(Buffer.from('not a transport stream')), null);
+});
+
+test('WebVTT gets a timestamp map anchored to the stream start', () => {
+  const vtt = 'WEBVTT\n\n00:20.240 --> 00:29.210\nHello\n';
+  assert.equal(withTimestampMap(vtt, 9090), 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:9090,LOCAL:00:00:00.000\n\n00:20.240 --> 00:29.210\nHello\n');
+  assert.equal(withTimestampMap(vtt, null), vtt);
+  const mapped = 'WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:900000,LOCAL:00:00:00.000\n\n';
+  assert.equal(withTimestampMap(mapped, 9090), mapped);
 });
 
 test('Existing audio renditions only receive a missing language', () => {

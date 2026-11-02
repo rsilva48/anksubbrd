@@ -12,7 +12,7 @@ Bridge: metadatos públicos del reproductor → HLS + VTT + idioma de audio
 AVPlayer en iPhone/iPad ───────── AirPlay ─────────► TV
 ```
 
-No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor con las mismas solicitudes AJAX públicas que usa la página de origen, descifra la fuente temporal y sirve un manifiesto HLS que declara cada VTT como subtítulo y el idioma del audio (japonés para Sub, inglés para Dub) para que `AVPlayer` active los subtítulos correctos.
+No se pega una URL HLS o VTT en la app. El bridge obtiene los metadatos de episodio y servidor con las mismas solicitudes AJAX públicas que usa la página de origen, descifra la fuente temporal y sirve un manifiesto HLS que declara cada VTT como subtítulo y el idioma del audio (japonés para Sub, inglés para Dub) para que `AVPlayer` active los subtítulos correctos. Las pistas *Forced* (sólo carteles y canciones) se marcan como forzadas y no aparecen como opción. Cada VTT recibe un `X-TIMESTAMP-MAP` anclado al primer instante real del vídeo: los reproductores de Apple ubican los subtítulos por marca de tiempo y, sin él, se desfasan tanto como tarde en arrancar el stream (más de un segundo en algunos episodios).
 
 Las URLs y tokens temporales del proveedor no se registran en disco y desaparecen al reiniciar el bridge. Si usas identidades, la app incluye su propio token en las URLs HLS temporales que necesita el receptor AirPlay; por eso deben viajar siempre por HTTPS fuera de tu red local.
 
@@ -72,6 +72,7 @@ También puedes buscar actualizaciones desde **Configuración → Acerca de**.
 | `BRIDGE_ADMIN_TOKEN` | — | Activa las identidades: se usa una vez desde la app para registrar cada token. |
 | `PROVIDER_TYPE` | `ANK` | Implementación del proveedor de catálogo (ver [Proveedores](#proveedores)). |
 | `PROVIDER_ORIGIN` | origen incluido para `ANK` | Dominio del proveedor, por si el sitio se muda. |
+| `DECLARE_AUDIO_LANGUAGE` | `true` | Con `false` deja de anunciar el idioma del audio en el manifiesto (para comparar comportamientos). |
 | `HISTORY_STORE_PATH` | `proxy/data/history.json` | Historial por usuario. |
 | `PREFERENCES_STORE_PATH` | junto a `history.json` | Preferencias por usuario. |
 | `BRIDGE_USER_STORE_PATH` | `proxy/data/users.json` | Hash y salt de los tokens registrados. |
@@ -143,6 +144,13 @@ Apache publica HTTPS en `:443` y reenvía al puerto interno. `X-Forwarded-Proto`
     ProxyPassReverse / http://127.0.0.1:8787/
     CustomLog ${APACHE_LOG_DIR}/bridge.log "%h %t \"%m %U\" %>s %b"
 </VirtualHost>
+```
+
+Para ver la consola del bridge dentro del contenedor (Ctrl+C sale sin detenerlo):
+
+```sh
+cd /opt/anksubbrd
+DOCKER_CONFIG="$PWD/.docker" docker compose logs -f --tail 100   # o: docker logs -f --tail 100 ani-bridge
 ```
 
 ### Actualización automática del bridge
