@@ -1,0 +1,282 @@
+package com.personal.anksubbrd.tv
+
+import java.io.IOException
+import java.net.URI
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+
+// Payloads of the bridge API (the same ones the iOS app uses).
+
+@Serializable
+data class Health(val ok: Boolean, val provider: String? = null, val version: String? = null)
+
+@Serializable
+data class Anime(
+    val title: String,
+    val watchUrl: String,
+    val imageUrl: String? = null,
+    val meta: String = "",
+    val rating: String? = null,
+    val score: Double? = null,
+    val mediaType: String? = null,
+    val year: Int? = null,
+    val titleJp: String? = null,
+    val episode: Int? = null,
+    val subEpisodes: Int? = null,
+    val dubEpisodes: Int? = null,
+    val totalEpisodes: Int? = null,
+    val adult: Boolean? = null,
+) {
+    val isAdult: Boolean get() = adult == true || rating == "R+" || rating == "Rx"
+
+    fun displayTitle(japanese: Boolean): String = if (japanese && !titleJp.isNullOrBlank()) titleJp else title
+}
+
+@Serializable
+data class LatestResponse(val results: List<Anime>, val page: Int = 1, val hasNext: Boolean = false)
+
+@Serializable
+data class Episode(val number: Int, val title: String = "", val sub: Boolean? = null, val dub: Boolean? = null) {
+    fun isAvailable(kind: String): Boolean = if (kind == "dub") dub ?: true else sub ?: true
+
+    /** The bridge falls back to "Episode N"; that adds nothing next to the number. */
+    val subtitle: String? get() = title.trim().takeUnless { it.isEmpty() || it == "Episode $number" }
+}
+
+@Serializable
+data class Season(
+    val title: String,
+    val titleJp: String? = null,
+    val watchUrl: String,
+    val imageUrl: String? = null,
+    val seasonNumber: Int = 1,
+    val label: String? = null,
+) {
+    val displayLabel: String
+        get() = label?.replace("Season", "Temporada")?.replace("Part", "parte")?.replace("Special", "Especial") ?: title
+
+    fun asAnime() = Anime(title = title, watchUrl = watchUrl, imageUrl = imageUrl, titleJp = titleJp)
+}
+
+@Serializable
+data class Series(
+    val seriesKey: String,
+    val title: String,
+    val titleJp: String? = null,
+    val episodes: List<Episode>,
+    val seasons: List<Season> = emptyList(),
+    val synopsis: String? = null,
+    val rating: String? = null,
+    val adult: Boolean? = null,
+    val status: String? = null,
+    val mediaType: String? = null,
+    val score: Double? = null,
+    val totalEpisodes: Int? = null,
+    val imageUrl: String? = null,
+) {
+    fun episodeAfter(number: Int, kind: String): Episode? = episodes.firstOrNull { it.number > number && it.isAvailable(kind) }
+
+    fun episodeBefore(number: Int): Episode? = episodes.lastOrNull { it.number < number }
+}
+
+@Serializable
+data class Server(val index: Int, val name: String, val type: String)
+
+@Serializable
+data class ServersResponse(val episode: Int, val servers: List<Server>)
+
+@Serializable
+data class SkipRange(val start: Double, val end: Double)
+
+@Serializable
+data class Playback(
+    val playbackUrl: String,
+    val subtitleTracks: Int = 0,
+    val serverName: String,
+    val serverKind: String? = null,
+    val intro: SkipRange? = null,
+    val outro: SkipRange? = null,
+)
+
+/** One row of the shared watch history; `updatedAt` is seconds since 2001 (as iOS stores it). */
+@Serializable
+data class HistoryEntry(
+    val seriesTitle: String,
+    val watchUrl: String,
+    val imageUrl: String? = null,
+    val episode: Int,
+    val episodeTitle: String = "",
+    val serverName: String = "",
+    val positionSeconds: Double = 0.0,
+    val updatedAt: Double = 0.0,
+    val titleJp: String? = null,
+    val serverKind: String? = null,
+    val durationSeconds: Double? = null,
+    val completed: Boolean? = null,
+    val totalEpisodes: Int? = null,
+) {
+    val isCompleted: Boolean get() = completed == true
+
+    fun asAnime() = Anime(title = seriesTitle, watchUrl = watchUrl, imageUrl = imageUrl, titleJp = titleJp)
+
+    companion object {
+        /** Seconds between 1970 and 2001, the reference date of iOS dates. */
+        private const val APPLE_EPOCH_OFFSET = 978_307_200.0
+
+        fun now(): Double = System.currentTimeMillis() / 1000.0 - APPLE_EPOCH_OFFSET
+    }
+}
+
+@Serializable
+data class HistoryDeletion(val watchUrl: String, val updatedAt: Double)
+
+@Serializable
+data class HistoryPayload(val entries: List<HistoryEntry>, val deletions: List<HistoryDeletion> = emptyList())
+
+@Serializable
+data class Preferences(
+    val titleLanguage: String = "en",
+    val defaultTrackType: String = "sub",
+    val subtitleLanguage: String = "",
+    val autoNext: Boolean = true,
+    val autoSkipIntro: Boolean = false,
+    val autoSkipOutro: Boolean = false,
+    val hideAdult: Boolean = false,
+)
+
+@Serializable
+data class PreferencesEnvelope(val preferences: Preferences? = null)
+
+@Serializable
+data class PairingStart(val pairingId: String, val code: String, val expiresAt: String)
+
+@Serializable
+data class PairingStatus(val status: String, val token: String? = null, val label: String? = null)
+
+@Serializable
+private data class WatchRequest(val watchUrl: String)
+
+@Serializable
+private data class PlayRequest(val seriesKey: String, val episode: Int, val serverIndex: Int)
+
+@Serializable
+private data class ErrorResponse(val error: String? = null)
+
+class BridgeException(message: String, val status: Int? = null, val offline: Boolean = false) : Exception(message)
+
+/** The `/watch/…` path that identifies a series across catalog domains. */
+fun catalogPath(watchUrl: String): String = runCatching { URI(watchUrl).path }.getOrNull()?.takeIf { it.isNotEmpty() } ?: watchUrl
+
+fun formatTime(seconds: Double): String {
+    val value = if (seconds.isFinite()) seconds.toLong().coerceAtLeast(0) else 0
+    val hours = value / 3600
+    val minutes = (value % 3600) / 60
+    val rest = value % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, rest) else "%d:%02d".format(minutes, rest)
+}
+
+/** Calls to one bridge with one identity (token). */
+class BridgeClient(val baseUrl: String, private val token: String) {
+    companion object {
+        val json = Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+            encodeDefaults = true
+        }
+
+        val http: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(90, TimeUnit.SECONDS)
+            .build()
+
+        /** `https://host[:port]` from what the user typed, or null. */
+        fun canonicalUrl(scheme: String, host: String): String? {
+            val cleaned = host.trim().removePrefix("https://").removePrefix("http://").trimEnd('/')
+            if (cleaned.isEmpty()) return null
+            val url = "$scheme://$cleaned".toHttpUrlOrNull() ?: return null
+            val port = if ((url.scheme == "https" && url.port == 443) || (url.scheme == "http" && url.port == 80)) "" else ":${url.port}"
+            return "${url.scheme}://${url.host}$port"
+        }
+    }
+
+    suspend fun health(): Health = get("/health")
+
+    suspend fun latest(page: Int, language: String? = null, keyword: String? = null): LatestResponse {
+        val query = buildList {
+            add("page" to page.toString())
+            if (language != null) add("language" to language)
+            if (!keyword.isNullOrBlank()) add("q" to keyword)
+        }
+        return get("/api/latest", query)
+    }
+
+    suspend fun series(watchUrl: String): Series = post("/api/series", json.encodeToString(WatchRequest.serializer(), WatchRequest(watchUrl)))
+
+    suspend fun servers(seriesKey: String, episode: Int): List<Server> =
+        get<ServersResponse>("/api/series/$seriesKey/servers", listOf("episode" to episode.toString())).servers
+
+    suspend fun play(seriesKey: String, episode: Int, serverIndex: Int): Playback =
+        post("/api/play", json.encodeToString(PlayRequest.serializer(), PlayRequest(seriesKey, episode, serverIndex)))
+
+    suspend fun history(): HistoryPayload = get("/api/history")
+
+    suspend fun saveHistory(entries: List<HistoryEntry>): HistoryPayload =
+        send("PUT", "/api/history", emptyList(), json.encodeToString(HistoryPayload.serializer(), HistoryPayload(entries)))
+
+    suspend fun preferences(): Preferences = get<PreferencesEnvelope>("/api/preferences").preferences ?: Preferences()
+
+    suspend fun startPairing(): PairingStart = post("/api/pair/start", "{}")
+
+    suspend fun pairingStatus(pairingId: String): PairingStatus = get("/api/pair/status", listOf("pairingId" to pairingId))
+
+    private suspend inline fun <reified T> get(path: String, query: List<Pair<String, String>> = emptyList()): T =
+        send("GET", path, query, null)
+
+    private suspend inline fun <reified T> post(path: String, body: String): T = send("POST", path, emptyList(), body)
+
+    private suspend inline fun <reified T> send(method: String, path: String, query: List<Pair<String, String>>, body: String?): T {
+        val text = sendRaw(method, path, query, body)
+        return try {
+            json.decodeFromString<T>(text)
+        } catch (error: Exception) {
+            throw BridgeException("El bridge devolvió una respuesta que la app no pudo leer. ¿Está actualizado?")
+        }
+    }
+
+    private suspend fun sendRaw(method: String, path: String, query: List<Pair<String, String>>, body: String?): String = withContext(Dispatchers.IO) {
+        val url = ("$baseUrl$path").toHttpUrlOrNull()?.newBuilder()?.apply {
+            query.forEach { (name, value) -> addQueryParameter(name, value) }
+        }?.build() ?: throw BridgeException("La dirección del bridge no es válida.")
+        val request = Request.Builder()
+            .url(url)
+            .method(method, body?.toRequestBody("application/json".toMediaType()))
+            .apply { if (token.isNotEmpty()) header("X-Bridge-Token", token) }
+            .build()
+        val response = try {
+            http.newCall(request).execute()
+        } catch (error: IOException) {
+            throw if (!Connectivity.isOnline) {
+                BridgeException("Sin conexión a internet.", offline = true)
+            } else {
+                BridgeException("No se pudo conectar con el bridge. Comprueba que esté encendido y accesible.")
+            }
+        }
+        response.use {
+            val text = it.body.string()
+            if (!it.isSuccessful) {
+                if (it.code == 401) throw BridgeException("El bridge requiere una identidad válida. Vuelve a vincular este perfil.", 401)
+                val message = runCatching { json.decodeFromString(ErrorResponse.serializer(), text).error }.getOrNull()
+                throw BridgeException(message ?: "El bridge respondió HTTP ${it.code}.", it.code)
+            }
+            text
+        }
+    }
+}

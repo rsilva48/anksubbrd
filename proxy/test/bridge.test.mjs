@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 process.env.BRIDGE_NO_LISTEN = '1';
 process.env.PROVIDER_ORIGIN = 'https://catalog.example';
-const { createAnkProvider, fetchUpstream, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
+const { approvePairing, createAnkProvider, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
 
 // One 188-byte MPEG-TS packet starting a PES with only a PTS.
 function pesPacket(streamId, pts) {
@@ -223,4 +223,15 @@ test('Catalog filters accept several values per category', async (context) => {
 test('Preferences keep the hide-adult setting', () => {
   assert.equal(normalizePreferences({ hideAdult: true }).hideAdult, true);
   assert.equal(normalizePreferences({}).hideAdult, false);
+});
+
+test('QR pairing hands the approving identity to the TV exactly once', () => {
+  const { pairingId, code } = startPairing();
+  assert.equal(pairingStatus(pairingId).status, 'pending');
+  assert.throws(() => approvePairing('wrong-code', 'Sala', { token: 'abc' }), (error) => error.status === 404);
+  assert.deepEqual(approvePairing(code, 'Sala', { token: 'abc' }), { ok: true });
+  assert.throws(() => approvePairing(code, 'Otra', { token: 'xyz' }), (error) => error.status === 404 || error.status === 409);
+  assert.deepEqual(pairingStatus(pairingId), { status: 'approved', token: 'abc', label: 'Sala' });
+  assert.equal(pairingStatus(pairingId).status, 'expired');
+  assert.equal(pairingStatus('unknown').status, 'expired');
 });

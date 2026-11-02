@@ -588,3 +588,119 @@ private struct TokenBackupSheet: View {
         }
     }
 }
+
+/// A pairing QR shown by a TV app: `anksubbrd://pair?bridge=<url>&code=<code>`.
+struct TVPairingRequest: Identifiable {
+    let code: String
+    let bridge: String
+    var id: String { code }
+
+    init?(url: URL) {
+        guard url.scheme?.lowercased() == "anksubbrd", url.host?.lowercased() == "pair",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty,
+              let bridge = items.first(where: { $0.name == "bridge" })?.value, !bridge.isEmpty else { return nil }
+        self.code = code
+        self.bridge = bridge
+    }
+}
+
+/// Approves a TV pairing with the active identity: the TV gets this
+/// identity's token, so it shares Continue and the preferences.
+struct TVPairingSheet: View {
+    private enum Phase: Equatable {
+        case idle
+        case working
+        case done
+        case failed(String)
+    }
+
+    private struct ApproveRequest: Encodable {
+        let code: String
+        let label: String
+    }
+
+    private struct ApproveResponse: Decodable {
+        let ok: Bool
+    }
+
+    let request: TVPairingRequest
+    @Environment(ProfileStore.self) private var profile
+    @Environment(\.dismiss) private var dismiss
+    @State private var label = ""
+    @State private var phase: Phase = .idle
+
+    private var matchesBridge: Bool {
+        profile.isBridgeConfigured && BridgeEndpoint.canonicalURL(request.bridge) == profile.bridgeURL
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Label("Vincular una TV", systemImage: "tv")
+                        .font(.headline)
+                    Text("La TV usará la identidad activa de este dispositivo: el mismo historial de Continuar viendo y las mismas preferencias. En la TV aparecerá como un perfil.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                if !matchesBridge {
+                    Section {
+                        ErrorNotice(message: "La TV usa el bridge \(request.bridge), que no es el configurado aquí. Configura y prueba ese mismo bridge en Configuración y vuelve a escanear el código.")
+                    }
+                } else if phase == .done {
+                    Section {
+                        Label("Listo: la TV ya tiene el perfil «\(profileName)».", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.tint)
+                    }
+                } else {
+                    Section("Nombre del perfil en la TV") {
+                        TextField("Por ejemplo, tu nombre", text: $label)
+                            .textInputAutocapitalization(.words)
+                    }
+                    Section {
+                        Button {
+                            approve()
+                        } label: {
+                            if phase == .working {
+                                ProgressView()
+                            } else {
+                                Text("Vincular TV")
+                            }
+                        }
+                        .disabled(phase == .working)
+                    } footer: {
+                        if case .failed(let message) = phase {
+                            ErrorNotice(message: message)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Vincular TV")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(phase == .done ? "Listo" : "Cerrar") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private var profileName: String {
+        let value = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? "Perfil" : value
+    }
+
+    private func approve() {
+        phase = .working
+        Task {
+            do {
+                let _: ApproveResponse = try await BridgeClient.post(base: profile.bridgeURL, path: "/api/pair/approve", body: ApproveRequest(code: request.code, label: profileName))
+                phase = .done
+            } catch {
+                phase = .failed(error.localizedDescription)
+            }
+        }
+    }
+}

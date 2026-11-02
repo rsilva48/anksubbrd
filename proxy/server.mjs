@@ -510,6 +510,36 @@ function seasonRecord(anime) {
   return { ...anime, seasonNumber: seasonIdentity(anime.title).seasonNumber ?? 1 };
 }
 
+// QR pairing for devices without a keyboard (TV apps). The TV starts a
+// pairing and shows its one-time code in a QR; an app that already has an
+// identity approves it, and the TV collects that identity's token once.
+// Pending pairings live in memory for 10 minutes.
+const pairings = new Map();
+function startPairing() {
+  for (const [id, pairing] of pairings) if (pairing.expiresAt < Date.now()) pairings.delete(id);
+  if (pairings.size >= 50) throw new HttpError(429, 'Too many pending pairings; try again in a few minutes');
+  const pairingId = randomBytes(16).toString('hex');
+  const code = randomBytes(12).toString('base64url');
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  pairings.set(pairingId, { code, expiresAt, approved: null });
+  return { pairingId, code, expiresAt: new Date(expiresAt).toISOString() };
+}
+function pairingStatus(pairingId) {
+  const id = cleanText(pairingId); const pairing = pairings.get(id);
+  if (!pairing || pairing.expiresAt < Date.now()) { pairings.delete(id); return { status: 'expired' }; }
+  if (!pairing.approved) return { status: 'pending' };
+  pairings.delete(id);
+  return { status: 'approved', token: pairing.approved.token, label: pairing.approved.label };
+}
+function approvePairing(code, label, user) {
+  const value = cleanText(code);
+  const pairing = [...pairings.values()].find((candidate) => candidate.expiresAt > Date.now() && sameSecret(candidate.code, value));
+  if (!pairing) throw new HttpError(404, 'The pairing code was not found or has expired');
+  if (pairing.approved) throw new HttpError(409, 'This pairing was already approved');
+  pairing.approved = { token: user.token, label: historyText(label, 'Perfil', 40) };
+  return { ok: true };
+}
+
 async function getSeries(watchUrl) {
   const series = await provider.series(provider.watchUrl(watchUrl));
   if (!series.episodes.length) throw new Error('No episodes were returned');
@@ -1118,6 +1148,9 @@ const server = http.createServer(async (request, response) => {
         return json(response, /already registered/.test(error.message) ? 409 : 400, { error: error.message });
       }
     }
+    // Pairing start and status are open: the TV has no identity yet.
+    if (request.method === 'POST' && requestUrl.pathname === '/api/pair/start') return json(response, 201, startPairing());
+    if (request.method === 'GET' && requestUrl.pathname === '/api/pair/status') return json(response, 200, pairingStatus(requestUrl.searchParams.get('pairingId')));
     const user = await authenticatedUser(request, requestUrl);
     if (!user) return json(response, 401, { error: 'A valid bridge access token is required' });
     if (request.method === 'GET' && requestUrl.pathname === '/api/search') {
@@ -1126,6 +1159,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { results });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/latest') return json(response, 200, await provider.latest(requestUrl.searchParams));
+    if (request.method === 'POST' && requestUrl.pathname === '/api/pair/approve') { const body = JSON.parse(await readBody(request)); return json(response, 200, approvePairing(body.code, body.label, user)); }
     if (request.method === 'GET' && requestUrl.pathname === '/api/schedule') return json(response, 200, { entries: await provider.schedule() });
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
       return json(response, 200, await storedHistory(user.userId));
@@ -1162,4 +1196,4 @@ const server = http.createServer(async (request, response) => {
 // Tests import the pure helpers without opening a port.
 if (!process.env.BRIDGE_NO_LISTEN) server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));
 
-export { createAnkProvider, fetchUpstream, injectRenditions, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
+export { approvePairing, createAnkProvider, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
