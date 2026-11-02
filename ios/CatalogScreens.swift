@@ -144,14 +144,15 @@ struct PosterCard: View {
         VStack(alignment: .leading, spacing: 6) {
             PosterImage(imageURL: anime.imageUrl)
                 .overlay(alignment: .topLeading) {
-                    if let episode = anime.episode {
-                        Text("EP \(episode)")
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .padding(6)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let badge = anime.episodeBadge {
+                            PosterBadge(text: badge)
+                        }
+                        if let dub = anime.dubEpisodes {
+                            PosterBadge(text: "DUB \(dub)")
+                        }
                     }
+                    .padding(6)
                 }
             Text(anime.displayTitle(language))
                 .font(.subheadline.weight(.semibold))
@@ -168,6 +169,19 @@ struct PosterCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct PosterBadge: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .monospacedDigit()
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(.ultraThinMaterial, in: Capsule())
     }
 }
 
@@ -220,9 +234,13 @@ struct LatestScreen: View {
 }
 
 struct SearchScreen: View {
+    /// Changes every time the Search tab is selected.
+    let activation: Int
     @Environment(ProfileStore.self) private var profile
     @State private var feed = CatalogFeed()
     @State private var query = ""
+    @State private var searchPresented = false
+    @State private var handledActivation = -1
     @State private var submittedQuery = ""
     @State private var filters = CatalogFilters()
     @State private var showFilters = false
@@ -247,7 +265,16 @@ struct SearchScreen: View {
             .navigationTitle("Buscar")
             .modifier(AdaptableTabRootTitleStyle())
             .navigationDestination(for: Anime.self) { EpisodesScreen(anime: $0) }
-            .searchable(text: $query, prompt: "Título de la serie")
+            .searchable(text: $query, isPresented: $searchPresented, prompt: "Título de la serie")
+            .task(id: activation) {
+                // Focus the field when the tab is selected, but not when the
+                // screen reappears after going back from a series.
+                guard activation != handledActivation else { return }
+                handledActivation = activation
+                try? await Task.sleep(for: .milliseconds(150))
+                guard !Task.isCancelled else { return }
+                searchPresented = true
+            }
             .searchSuggestions {
                 if query.isEmpty {
                     ForEach(recentSearches, id: \.self) { recent in

@@ -73,8 +73,19 @@ struct Anime: Codable, Hashable, Identifiable {
     let mediaType: String?
     let year: Int?
     var titleJp: String? = nil
+    /// Newest available episode (Recents); Sub/Dub/total counts when known.
     var episode: Int? = nil
+    var subEpisodes: Int? = nil
+    var dubEpisodes: Int? = nil
+    var totalEpisodes: Int? = nil
     var id: String { watchUrl }
+
+    /// "EP 32" or "EP 32/34" when the total is known and not reached yet.
+    var episodeBadge: String? {
+        guard let episode else { return nil }
+        if let totalEpisodes, totalEpisodes > episode { return "EP \(episode)/\(totalEpisodes)" }
+        return "EP \(episode)"
+    }
 
     func displayTitle(_ language: TitleLanguage) -> String {
         if language == .jp, let titleJp, !titleJp.isEmpty { return titleJp }

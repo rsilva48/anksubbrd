@@ -22,13 +22,13 @@ Las URLs y tokens temporales del proveedor no se registran en disco y desaparece
 2. En el primer uso, **Buscar**, **Recientes** y **Continuar** permanecen bloqueados y ofrecen un acceso directo a **Configuración**.
 3. En **Configuración → Bridge** elige `https://` (predeterminado) o `http://` y escribe sólo el dominio o la IP, con puerto si hace falta (`bridge.midominio.com` o `192.168.1.20:8787`). Si pegas una dirección con `http://` o `https://`, el prefijo se quita del campo y el selector adopta ese protocolo. **Probar y guardar** activa la dirección únicamente si `/health` responde.
 4. Si el bridge requiere identidad, créala, restáurala desde el Llavero de iCloud o importa un token (ver [Identidades](#identidades)).
-5. Busca una serie, elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
+5. Busca una serie (al abrir **Buscar** el campo se activa con el teclado) o entra en **Recientes**, donde cada póster muestra el episodio más reciente, el total si se conoce y los episodios en Dub. Elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
 
 ### Reproductor
 
 - El vídeo ocupa siempre toda la pantalla; los controles flotan encima con Liquid Glass y nunca lo redimensionan.
 - Un toque muestra u oculta todos los controles a la vez; se ocultan solos tras unos segundos de reproducción.
-- Incluye AirPlay, imagen dentro de imagen, ±10 s, episodio anterior/siguiente sin cerrar el reproductor, menú de subtítulos y audio, velocidad, ajuste/relleno de pantalla (también con gesto de pellizco) y botones **Saltar intro/outro**.
+- Incluye AirPlay, imagen dentro de imagen, ±10 s, episodio anterior/siguiente sin cerrar el reproductor, un panel de subtítulos, audio y velocidad, ajuste/relleno de pantalla (también con gesto de pellizco) y botones **Saltar intro/outro**.
 - Sub activa los subtítulos automáticamente: el idioma elegido en **Subtítulos en Sub**, si no el idioma del dispositivo y, si no existe, la pista predeterminada del bridge (inglés). Cambiar de subtítulo durante un episodio Sub actualiza esa preferencia.
 - Los controles de la pantalla bloqueada y del Centro de control funcionan mientras se reproduce por AirPlay.
 

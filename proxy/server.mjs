@@ -598,11 +598,15 @@ function createAnkProvider(configuredOrigin) {
       if (!href) return;
       let watch;
       try { watch = new URL(watchUrl(href)); } catch { return; }
-      const episode = Number(watch.pathname.match(/\/ep-(\d+)\/?$/)?.[1]) || null;
+      // Card links always point at /ep-1; the newest episode is in the
+      // `ep-status` badges (Sub, Dub and total counts).
+      const count = (kind) => Number(cleanText($(node).find(`.ep-status.${kind}`).first().text())) || null;
+      const subEpisodes = count('sub'), dubEpisodes = count('dub'), totalEpisodes = count('total');
+      const episode = Math.max(subEpisodes ?? 0, dubEpisodes ?? 0) || Number(watch.pathname.match(/\/ep-(\d+)\/?$/)?.[1]) || null;
       watch.pathname = watch.pathname.replace(/\/ep-\d+\/?$/, '');
       const src = $(node).find('img').first().attr('src');
       const scoreValue = Number(cleanText(card.find('.info .meta .rated span').first().text()));
-      results.push({ title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: watch.toString(), imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta: cleanText(card.find('.info .meta').text()), rating: null, score: scoreValue > 0 ? scoreValue : null, mediaType: cleanText($(node).find('.right').text()) || null, year: null, episode });
+      results.push({ title: cleanText(name.text()) || 'Untitled', titleJp: cleanText(name.attr('data-jp')) || null, watchUrl: watch.toString(), imageUrl: src ? absoluteUrl(src, providerOrigin) : null, meta: cleanText(card.find('.info .meta').text()), rating: null, score: scoreValue > 0 ? scoreValue : null, mediaType: cleanText($(node).find('.right').text()) || null, year: null, episode, subEpisodes, dubEpisodes, totalEpisodes });
     });
     return { results, page, hasNext: $('a[rel=next]').length > 0 };
   }

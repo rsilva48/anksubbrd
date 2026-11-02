@@ -70,6 +70,20 @@ test('ANK watch URLs are rebased onto the configured origin', () => {
   assert.throws(() => provider.watchUrl('https://new-domain.example/user/settings'), /Only catalog watch URLs/);
 });
 
+test('Recent episodes come from the card badges, not the /ep-1 link', async (context) => {
+  const card = (slug, badges) => `<div class="item"><div class="ani poster tip"><a href="/watch/${slug}/ep-1"><img src="/p.jpg"><div class="meta"><div class="inner"><div class="left">${badges}</div><div class="right">TV</div></div></div></a></div><div class="info"><div class="b1"><a class="name d-title" href="/watch/${slug}/ep-1" data-jp="JP ${slug}">Title ${slug}</a></div><div class="meta"><div class="m-item rated"><span>7.5</span></div></div></div></div>`;
+  const html = card('alpha-1', '<span class="ep-status sub"><span> 32</span></span><span class="ep-status total"><span>34</span></span>')
+    + card('beta-2', '<span class="ep-status sub"><span>4</span></span><span class="ep-status dub"><span>6</span></span>')
+    + card('gamma-3', '');
+  context.mock.method(globalThis, 'fetch', async () => new Response(html, { status: 200 }));
+  const { results } = await createAnkProvider('https://catalog.example').latest(new URLSearchParams());
+  assert.deepEqual(results.map(({ watchUrl, episode, subEpisodes, dubEpisodes, totalEpisodes }) => ({ watchUrl, episode, subEpisodes, dubEpisodes, totalEpisodes })), [
+    { watchUrl: 'https://catalog.example/watch/alpha-1', episode: 32, subEpisodes: 32, dubEpisodes: null, totalEpisodes: 34 },
+    { watchUrl: 'https://catalog.example/watch/beta-2', episode: 6, subEpisodes: 4, dubEpisodes: 6, totalEpisodes: null },
+    { watchUrl: 'https://catalog.example/watch/gamma-3', episode: 1, subEpisodes: null, dubEpisodes: null, totalEpisodes: null },
+  ]);
+});
+
 test('History saved before a domain move keeps resuming', () => {
   const entry = normalizeHistoryEntry({ watchUrl: 'https://old-domain.example/watch/series-1', episode: 2, positionSeconds: 90 });
   assert.equal(entry.watchUrl, 'https://catalog.example/watch/series-1');

@@ -45,6 +45,8 @@ struct RootView: View {
     @Environment(ProfileStore.self) private var profile
     @Environment(AppUpdateCenter.self) private var updates
     @State private var selection: AppTab = .latest
+    /// Increments each time the Search tab is selected to focus its field.
+    @State private var searchActivation = 0
 
     var body: some View {
         @Bindable var updates = updates
@@ -59,8 +61,11 @@ struct RootView: View {
                 SettingsScreen()
             }
             Tab(value: AppTab.search, role: .search) {
-                requiringBridge { SearchScreen() }
+                requiringBridge { SearchScreen(activation: searchActivation) }
             }
+        }
+        .onChange(of: selection) { _, tab in
+            if tab == .search { searchActivation += 1 }
         }
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)

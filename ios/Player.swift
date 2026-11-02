@@ -1,6 +1,5 @@
 import AVFoundation
 import AVKit
-import Combine
 import MediaPlayer
 import Observation
 import SwiftUI
@@ -43,6 +42,7 @@ final class PlayerModel: Identifiable {
     private(set) var selectedLegible: AVMediaSelectionOption?
     private(set) var audibleOptions: [AVMediaSelectionOption] = []
     private(set) var selectedAudible: AVMediaSelectionOption?
+    private(set) var hasLoadedMediaOptions = false
     private(set) var canUsePictureInPicture = false
     private(set) var isPictureInPictureActive = false
     private(set) var isChangingEpisode = false
@@ -57,8 +57,12 @@ final class PlayerModel: Identifiable {
     @ObservationIgnored private var audibleGroup: AVMediaSelectionGroup?
     /// Subtitle choice made during a Dub episode; kept only for this session.
     @ObservationIgnored private var dubSubtitleChoice = ""
-    @ObservationIgnored private var playerTasks: [Task<Void, Never>] = []
-    @ObservationIgnored private var itemTasks: [Task<Void, Never>] = []
+    @ObservationIgnored private var playerObservations: [NSKeyValueObservation] = []
+    @ObservationIgnored private var itemObservations: [NSKeyValueObservation] = []
+    @ObservationIgnored private var itemNotifications: [NSObjectProtocol] = []
+    /// Per item: media options are loaded once and a failure is reported once.
+    @ObservationIgnored private var mediaOptionsRequested = false
+    @ObservationIgnored private var failureReported = false
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var pictureInPicture: AVPictureInPictureController?
     @ObservationIgnored private var remoteCommandTargets: [(MPRemoteCommand, Any)] = []
@@ -100,8 +104,9 @@ final class PlayerModel: Identifiable {
         guard started, !closed else { return }
         closed = true
         saveProgress()
-        playerTasks.forEach { $0.cancel() }
-        itemTasks.forEach { $0.cancel() }
+        playerObservations.forEach { $0.invalidate() }
+        playerObservations = []
+        stopObservingItem()
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -121,16 +126,10 @@ final class PlayerModel: Identifiable {
         guard let controller else { return }
         controller.canStartPictureInPictureAutomaticallyFromInline = true
         pictureInPicture = controller
-        playerTasks.append(Task { [weak self] in
-            for await possible in controller.publisher(for: \.isPictureInPicturePossible).values {
-                self?.canUsePictureInPicture = possible
-            }
-        })
-        playerTasks.append(Task { [weak self] in
-            for await active in controller.publisher(for: \.isPictureInPictureActive).values {
-                self?.isPictureInPictureActive = active
-            }
-        })
+        playerObservations += [
+            refreshOnChange(of: controller, \.isPictureInPicturePossible),
+            refreshOnChange(of: controller, \.isPictureInPictureActive),
+        ]
     }
 
     // MARK: Controls
@@ -238,8 +237,9 @@ final class PlayerModel: Identifiable {
     // MARK: Item
 
     private func load(_ session: PlaybackSession) {
-        itemTasks.forEach { $0.cancel() }
-        itemTasks = []
+        stopObservingItem()
+        mediaOptionsRequested = false
+        failureReported = false
         self.session = session
         didFinish = false
         errorMessage = nil
@@ -252,6 +252,7 @@ final class PlayerModel: Identifiable {
         audibleOptions = []
         selectedLegible = nil
         selectedAudible = nil
+        hasLoadedMediaOptions = false
         lastSavedSecond = -1
         guard let url = URL(string: session.playback.playbackUrl) else {
             errorMessage = "La URL de reproducción no es válida."
@@ -272,49 +273,104 @@ final class PlayerModel: Identifiable {
     }
 
     private func observe(_ item: AVPlayerItem) {
-        itemTasks = [
-            Task { [weak self] in
-                for await status in item.publisher(for: \.status).values {
-                    self?.itemStatusChanged(status, item: item)
-                }
-            },
-            Task { [weak self] in
-                for await value in item.publisher(for: \.duration).values {
-                    self?.durationChanged(value)
-                }
-            },
-            Task { [weak self] in
-                for await _ in NotificationCenter.default.notifications(named: .AVPlayerItemDidPlayToEndTime, object: item) {
+        itemObservations = [
+            refreshOnChange(of: item, \.status),
+            refreshOnChange(of: item, \.duration),
+        ]
+        itemNotifications = observeEnd(of: item)
+    }
+
+    private func stopObservingItem() {
+        itemObservations.forEach { $0.invalidate() }
+        itemObservations = []
+        itemNotifications.forEach { NotificationCenter.default.removeObserver($0) }
+        itemNotifications = []
+    }
+
+    // MARK: State
+
+    /// KVO can fire on any thread. Every change hops to the main queue in
+    /// order and the whole state is re-read there, so no transition (such as
+    /// readyToPlay arriving together with the duration) can be lost.
+    nonisolated private func refreshOnChange<Object: NSObject, Value>(of object: Object, _ keyPath: KeyPath<Object, Value>) -> NSKeyValueObservation {
+        object.observe(keyPath, options: [.initial, .new]) { [weak self] _, _ in
+            self?.refreshOnMain()
+        }
+    }
+
+    nonisolated private func refreshOnMain() {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.refreshState() }
+        }
+    }
+
+    nonisolated private func observeEnd(of item: AVPlayerItem) -> [NSObjectProtocol] {
+        let center = NotificationCenter.default
+        return [
+            center.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { () -> Void in
                     self?.playbackEnded()
                 }
             },
-            Task { [weak self] in
-                for await notification in NotificationCenter.default.notifications(named: .AVPlayerItemFailedToPlayToEndTime, object: item) {
-                    let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-                    self?.fail(error)
+            center.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: item, queue: .main) { [weak self] notification in
+                let message = (notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error)?.localizedDescription
+                MainActor.assumeIsolated { () -> Void in
+                    self?.fail(message)
                 }
             },
         ]
     }
 
-    private func itemStatusChanged(_ status: AVPlayerItem.Status, item: AVPlayerItem) {
-        guard player.currentItem === item else { return }
-        switch status {
+    private func refreshState() {
+        guard started, !closed else { return }
+        let status = player.timeControlStatus
+        let playing = status != .paused
+        let buffering = status == .waitingToPlayAtSpecifiedRate
+        if isPlaying != playing { isPlaying = playing }
+        if isBuffering != buffering { isBuffering = buffering }
+        let external = player.isExternalPlaybackActive
+        if isExternalPlayback != external {
+            isExternalPlayback = external
+            externalRouteName = external
+                ? AVAudioSession.sharedInstance().currentRoute.outputs.first(where: { $0.portType == .airPlay })?.portName
+                : nil
+        }
+        if let pictureInPicture {
+            if canUsePictureInPicture != pictureInPicture.isPictureInPicturePossible { canUsePictureInPicture = pictureInPicture.isPictureInPicturePossible }
+            if isPictureInPictureActive != pictureInPicture.isPictureInPictureActive { isPictureInPictureActive = pictureInPicture.isPictureInPictureActive }
+        }
+        refreshItem()
+        updateNowPlaying()
+    }
+
+    /// Also runs on every time tick as a safety net.
+    private func refreshItem() {
+        guard let item = player.currentItem else { return }
+        switch item.status {
         case .readyToPlay:
-            durationChanged(item.duration)
-            Task { await loadMediaOptions(for: item) }
+            updateDuration(from: item)
+            if !mediaOptionsRequested {
+                mediaOptionsRequested = true
+                Task { await loadMediaOptions(for: item) }
+            }
         case .failed:
-            fail(item.error)
+            if !failureReported {
+                failureReported = true
+                fail(item.error?.localizedDescription)
+            }
         default:
             break
         }
     }
 
-    private func durationChanged(_ value: CMTime) {
-        let seconds = value.seconds
-        guard seconds.isFinite, seconds > 0, seconds != duration else { return }
+    /// VOD playlists report a duration; otherwise the seekable range is used.
+    private func updateDuration(from item: AVPlayerItem) {
+        var seconds = item.duration.seconds
+        if !seconds.isFinite || seconds <= 0, let range = item.seekableTimeRanges.last?.timeRangeValue {
+            seconds = range.end.seconds
+        }
+        guard seconds.isFinite, seconds > 0, abs(seconds - duration) >= 0.5 else { return }
         duration = seconds
-        updateNowPlaying()
     }
 
     private func loadMediaOptions(for item: AVPlayerItem) async {
@@ -327,6 +383,7 @@ final class PlayerModel: Identifiable {
         audibleOptions = audible?.options ?? []
         applySubtitleChoice(to: item)
         refreshSelection()
+        hasLoadedMediaOptions = true
     }
 
     /// Sub sources carry Japanese audio, so subtitles are switched on: the
@@ -377,26 +434,18 @@ final class PlayerModel: Identifiable {
         }
     }
 
-    private func fail(_ error: Error?) {
+    private func fail(_ message: String?) {
         isBuffering = false
-        errorMessage = error?.localizedDescription ?? "No se pudo reproducir este servidor."
+        errorMessage = message ?? "No se pudo reproducir este servidor."
     }
 
     // MARK: Player observation
 
     private func observePlayer() {
-        let player = self.player
-        playerTasks = [
-            Task { [weak self] in
-                for await status in player.publisher(for: \.timeControlStatus).values {
-                    self?.timeControlChanged(status)
-                }
-            },
-            Task { [weak self] in
-                for await active in player.publisher(for: \.isExternalPlaybackActive).values {
-                    self?.externalPlaybackChanged(active)
-                }
-            },
+        // `+=`: attach(_:) may already have added the PiP observations.
+        playerObservations += [
+            refreshOnChange(of: player, \.timeControlStatus),
+            refreshOnChange(of: player, \.isExternalPlaybackActive),
         ]
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             MainActor.assumeIsolated { () -> Void in
@@ -405,22 +454,10 @@ final class PlayerModel: Identifiable {
         }
     }
 
-    private func timeControlChanged(_ status: AVPlayer.TimeControlStatus) {
-        isPlaying = status != .paused
-        isBuffering = status == .waitingToPlayAtSpecifiedRate
-        updateNowPlaying()
-    }
-
-    private func externalPlaybackChanged(_ active: Bool) {
-        isExternalPlayback = active
-        externalRouteName = active
-            ? AVAudioSession.sharedInstance().currentRoute.outputs.first(where: { $0.portType == .airPlay })?.portName
-            : nil
-    }
-
     private func tick(_ seconds: Double) {
         guard seconds.isFinite, seconds >= 0, !isChangingEpisode, !closed else { return }
         currentTime = seconds
+        refreshItem()
         let preferences = profile.preferences
         if preferences.autoSkipIntro, let intro = session.playback.intro, intro.contains(seconds) {
             seek(to: intro.end)
@@ -514,6 +551,7 @@ struct PlayerScreen: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
+    @State private var showMediaOptions = false
 
     private var entry: WatchHistoryEntry { model.session.historyEntry }
     private var compact: Bool { horizontalSizeClass == .compact }
@@ -581,6 +619,9 @@ struct PlayerScreen: View {
         }
         .onChange(of: model.didFinish) { _, finished in
             if finished { showControls(autoHide: false) }
+        }
+        .sheet(isPresented: $showMediaOptions, onDismiss: scheduleAutoHide) {
+            MediaOptionsSheet(model: model)
         }
     }
 
@@ -725,8 +766,7 @@ struct PlayerScreen: View {
                 Spacer()
                 GlassEffectContainer(spacing: 10) {
                     HStack(spacing: 10) {
-                        mediaMenu
-                        speedMenu
+                        mediaOptionsButton
                         Button {
                             withAnimation(.easeInOut(duration: 0.25)) {
                                 model.videoGravity = model.videoGravity == .resizeAspect ? .resizeAspectFill : .resizeAspect
@@ -743,68 +783,17 @@ struct PlayerScreen: View {
         }
     }
 
-    private var mediaMenu: some View {
-        Menu {
-            Section("Subtítulos") {
-                Button {
-                    model.selectLegible(nil)
-                    bumpControls()
-                } label: {
-                    selectionLabel("Desactivados", selected: model.selectedLegible == nil)
-                }
-                ForEach(model.legibleOptions, id: \.self) { option in
-                    Button {
-                        model.selectLegible(option)
-                        bumpControls()
-                    } label: {
-                        selectionLabel(option.displayName, selected: model.selectedLegible == option)
-                    }
-                }
-            }
-            if model.audibleOptions.count > 1 {
-                Section("Audio") {
-                    ForEach(model.audibleOptions, id: \.self) { option in
-                        Button {
-                            model.selectAudible(option)
-                            bumpControls()
-                        } label: {
-                            selectionLabel(option.displayName, selected: model.selectedAudible == option)
-                        }
-                    }
-                }
-            }
+    /// Opens a sheet rather than a menu: it is always tappable (even before
+    /// the tracks load) and auto-hiding the controls cannot dismiss it.
+    private var mediaOptionsButton: some View {
+        Button {
+            hideTask?.cancel()
+            showMediaOptions = true
         } label: {
             GlassIcon(systemName: model.selectedLegible == nil ? "captions.bubble" : "captions.bubble.fill")
         }
-        .disabled(model.legibleOptions.isEmpty && model.audibleOptions.count < 2)
-        .accessibilityLabel("Subtítulos y audio")
-    }
-
-    private var speedMenu: some View {
-        Menu {
-            Section("Velocidad") {
-                ForEach(PlaybackSpeed.allCases) { speed in
-                    Button {
-                        model.setSpeed(speed)
-                        bumpControls()
-                    } label: {
-                        selectionLabel(speed.label, selected: model.speed == speed)
-                    }
-                }
-            }
-        } label: {
-            GlassIcon(systemName: "gauge.with.dots.needle.67percent")
-        }
-        .accessibilityLabel("Velocidad de reproducción")
-    }
-
-    @ViewBuilder
-    private func selectionLabel(_ title: String, selected: Bool) -> some View {
-        if selected {
-            Label(title, systemImage: "checkmark")
-        } else {
-            Text(title)
-        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Subtítulos, audio y velocidad")
     }
 
     @ViewBuilder
@@ -897,12 +886,70 @@ struct PlayerScreen: View {
 
     private func scheduleAutoHide() {
         hideTask?.cancel()
-        guard model.isPlaying, !scrubbing else { return }
+        guard model.isPlaying, !scrubbing, !showMediaOptions else { return }
         hideTask = Task {
             try? await Task.sleep(for: .seconds(4))
-            guard !Task.isCancelled, model.isPlaying, !scrubbing else { return }
+            guard !Task.isCancelled, model.isPlaying, !scrubbing, !showMediaOptions else { return }
             withAnimation(.easeOut(duration: 0.3)) { controlsVisible = false }
         }
+    }
+}
+
+private struct MediaOptionsSheet: View {
+    let model: PlayerModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Subtítulos") {
+                    option("Desactivados", selected: model.selectedLegible == nil) { model.selectLegible(nil) }
+                    ForEach(model.legibleOptions, id: \.self) { track in
+                        option(track.displayName, selected: model.selectedLegible == track) { model.selectLegible(track) }
+                    }
+                    if model.legibleOptions.isEmpty {
+                        Text(model.hasLoadedMediaOptions ? "Este servidor no publicó subtítulos." : "Cargando pistas…")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if model.audibleOptions.count > 1 {
+                    Section("Audio") {
+                        ForEach(model.audibleOptions, id: \.self) { track in
+                            option(track.displayName, selected: model.selectedAudible == track) { model.selectAudible(track) }
+                        }
+                    }
+                }
+                Section("Velocidad") {
+                    ForEach(PlaybackSpeed.allCases) { speed in
+                        option(speed.label, selected: model.speed == speed) { model.setSpeed(speed) }
+                    }
+                }
+            }
+            .navigationTitle("Subtítulos y audio")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Listo") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func option(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.tint)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
 
