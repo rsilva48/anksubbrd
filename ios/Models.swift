@@ -30,6 +30,8 @@ struct UserPreferences: Codable, Equatable {
     var autoNext = true
     var autoSkipIntro = false
     var autoSkipOutro = false
+    /// Hides R+ and Rx series from Recents and Search.
+    var hideAdult = false
     var updatedAt = Date.distantPast
 
     enum CodingKeys: String, CodingKey {
@@ -39,6 +41,7 @@ struct UserPreferences: Codable, Equatable {
         case autoNext
         case autoSkipIntro
         case autoSkipOutro
+        case hideAdult
         case updatedAt
     }
 
@@ -52,6 +55,7 @@ struct UserPreferences: Codable, Equatable {
         autoNext = (try? container.decode(Bool.self, forKey: .autoNext)) ?? true
         autoSkipIntro = (try? container.decode(Bool.self, forKey: .autoSkipIntro)) ?? false
         autoSkipOutro = (try? container.decode(Bool.self, forKey: .autoSkipOutro)) ?? false
+        hideAdult = (try? container.decode(Bool.self, forKey: .hideAdult)) ?? false
         updatedAt = (try? container.decode(Date.self, forKey: .updatedAt)) ?? .distantPast
     }
 

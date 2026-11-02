@@ -1,23 +1,35 @@
 import Observation
 import SwiftUI
 
+/// Catalog filters. Each category takes several values, like the catalog's
+/// own filter page: a series matches when it has any of them.
 struct CatalogFilters: Equatable {
-    var season = ""
-    var status = ""
-    var rating = ""
-    var mediaType = ""
-    var year = ""
+    var seasons: Set<String> = []
+    var statuses: Set<String> = []
+    var ratings: Set<String> = []
+    var mediaTypes: Set<String> = []
+    var years: Set<String> = []
     var minimumScore = 0
 
     /// Filters the bridge applies; the minimum score is applied on device.
-    var hasServerFilters: Bool { !season.isEmpty || !status.isEmpty || !rating.isEmpty || !mediaType.isEmpty || !year.isEmpty }
+    var hasServerFilters: Bool { !seasons.isEmpty || !statuses.isEmpty || !ratings.isEmpty || !mediaTypes.isEmpty || !years.isEmpty }
     var isActive: Bool { hasServerFilters || minimumScore > 0 }
+
+    /// Chosen values, shown on the filter button.
+    var activeCount: Int {
+        seasons.count + statuses.count + ratings.count + mediaTypes.count + years.count + (minimumScore > 0 ? 1 : 0)
+    }
 
     func queryItems(page: Int, keyword: String? = nil) -> [URLQueryItem] {
         var items = [URLQueryItem(name: "page", value: String(page))]
         if let keyword { items.append(URLQueryItem(name: "q", value: keyword)) }
-        for (name, value) in [("season", season), ("status", status), ("rating", rating), ("mediaType", mediaType), ("year", year)] where !value.isEmpty {
-            items.append(URLQueryItem(name: name, value: value))
+        let groups: [(name: String, values: Set<String>)] = [
+            ("season", seasons), ("status", statuses), ("rating", ratings), ("mediaType", mediaTypes), ("year", years),
+        ]
+        for group in groups {
+            for value in group.values.sorted() {
+                items.append(URLQueryItem(name: group.name, value: value))
+            }
         }
         return items
     }
@@ -115,9 +127,15 @@ struct CatalogGrid<EmptyState: View>: View {
     let feed: CatalogFeed
     let filters: CatalogFilters
     let language: TitleLanguage
+    var hideAdult = false
+    /// Shows a filter button above the results (where the navigation bar,
+    /// and its toolbar button, can be hidden by the search field).
+    var onShowFilters: (() -> Void)? = nil
     @ViewBuilder let emptyState: () -> EmptyState
 
-    private var visible: [Anime] { feed.items.filter(filters.allows) }
+    private var visible: [Anime] {
+        feed.items.filter { filters.allows($0) && !(hideAdult && $0.isAdult) }
+    }
 
     var body: some View {
         ScrollView {
@@ -167,6 +185,19 @@ struct CatalogGrid<EmptyState: View>: View {
                 } else if feed.errorMessage == nil {
                     emptyState()
                 }
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let onShowFilters {
+                HStack {
+                    Button(action: onShowFilters) {
+                        Label(filters.activeCount > 0 ? "Filtros (\(filters.activeCount))" : "Filtros", systemImage: filters.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    }
+                    .buttonStyle(.glass)
+                    Spacer()
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 6)
             }
         }
     }
@@ -250,7 +281,7 @@ struct LatestScreen: View {
 
     var body: some View {
         NavigationStack {
-            CatalogGrid(feed: feed, filters: filters, language: profile.preferences.titleLanguage) {
+            CatalogGrid(feed: feed, filters: filters, language: profile.preferences.titleLanguage, hideAdult: profile.preferences.hideAdult) {
                 ContentUnavailableView("Sin resultados", systemImage: "sparkles", description: Text(filters.isActive ? "Cambia o limpia los filtros." : "El catálogo no devolvió novedades."))
             }
             .navigationTitle("Recientes")
@@ -306,6 +337,7 @@ struct SearchScreen: View {
     @State private var showFilters = false
     @State private var loadedKey: FeedKey?
     @AppStorage("anksubbrd.recent-searches") private var recentSearchesStorage = ""
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var key: FeedKey { FeedKey(scope: profile.scope, query: submittedQuery, filters: filters, online: profile.isOnline) }
 
@@ -315,7 +347,15 @@ struct SearchScreen: View {
 
     var body: some View {
         NavigationStack {
-            CatalogGrid(feed: feed, filters: filters, language: profile.preferences.titleLanguage) {
+            // On iPhone the search field replaces the navigation bar, so the
+            // filter button sits above the results instead of in the toolbar.
+            CatalogGrid(
+                feed: feed,
+                filters: filters,
+                language: profile.preferences.titleLanguage,
+                hideAdult: profile.preferences.hideAdult,
+                onShowFilters: horizontalSizeClass == .compact ? { showFilters = true } : nil
+            ) {
                 if submittedQuery.isEmpty {
                     ContentUnavailableView("Busca una serie", systemImage: "magnifyingglass", description: Text("Escribe un título y pulsa Buscar. Los filtros también se aplican a la búsqueda."))
                 } else {
@@ -345,8 +385,10 @@ struct SearchScreen: View {
             }
             .onSubmit(of: .search, submit)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    FiltersButton(isActive: filters.isActive) { showFilters = true }
+                if horizontalSizeClass != .compact {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        FiltersButton(isActive: filters.isActive) { showFilters = true }
+                    }
                 }
             }
             .sheet(isPresented: $showFilters) { CatalogFilterSheet(filters: $filters) }
@@ -377,13 +419,11 @@ struct SearchScreen: View {
             await feed.reset(nil)
             return
         }
+        // The catalog's filter page, paged: its quick search returns only the
+        // first five matches.
         await feed.reset { page in
-            if filters.hasServerFilters {
-                let reply: LatestResponse = try await BridgeClient.get(base: base, path: "/api/latest", query: filters.queryItems(page: page, keyword: keyword))
-                return (reply.results, reply.hasNext)
-            }
-            let reply: SearchResponse = try await BridgeClient.get(base: base, path: "/api/search", query: [URLQueryItem(name: "q", value: keyword)])
-            return (reply.results, false)
+            let reply: LatestResponse = try await BridgeClient.get(base: base, path: "/api/latest", query: filters.queryItems(page: page, keyword: keyword))
+            return (reply.results, reply.hasNext)
         }
     }
 }
@@ -399,48 +439,51 @@ private struct FiltersButton: View {
     }
 }
 
+struct FilterOption: Hashable {
+    let tag: String
+    let label: String
+}
+
+enum FilterOptions {
+    static let seasons = [
+        FilterOption(tag: "winter", label: "Invierno"),
+        FilterOption(tag: "spring", label: "Primavera"),
+        FilterOption(tag: "summer", label: "Verano"),
+        FilterOption(tag: "fall", label: "Otoño"),
+    ]
+    static let statuses = [
+        FilterOption(tag: "currently-airing", label: "En emisión"),
+        FilterOption(tag: "finished-airing", label: "Finalizado"),
+        FilterOption(tag: "not-yet-aired", label: "Próximamente"),
+    ]
+    static let ratings = ["G", "PG", "PG-13", "R", "R+", "Rx"].map { FilterOption(tag: $0, label: $0) }
+    static let mediaTypes = ["TV", "Movie", "ONA", "OVA", "Special"].map { FilterOption(tag: $0, label: $0) }
+    static var years: [FilterOption] {
+        let next = Calendar.current.component(.year, from: Date()) + 1
+        return (1980...next).reversed().map { FilterOption(tag: String($0), label: String($0)) }
+    }
+}
+
 struct CatalogFilterSheet: View {
     @Binding var filters: CatalogFilters
     @State private var draft = CatalogFilters()
     @Environment(\.dismiss) private var dismiss
 
-    private let years = Array((1980...(Calendar.current.component(.year, from: Date()) + 1)).reversed())
-
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Temporada", selection: $draft.season) {
-                        Text("Todas").tag("")
-                        Text("Invierno").tag("winter")
-                        Text("Primavera").tag("spring")
-                        Text("Verano").tag("summer")
-                        Text("Otoño").tag("fall")
-                    }
-                    Picker("Estado", selection: $draft.status) {
-                        Text("Todos").tag("")
-                        Text("En emisión").tag("currently-airing")
-                        Text("Finalizado").tag("finished-airing")
-                        Text("Próximamente").tag("not-yet-aired")
-                    }
-                    Picker("Clasificación", selection: $draft.rating) {
-                        Text("Todas").tag("")
-                        ForEach(["G", "PG", "PG-13", "R", "R+", "Rx"], id: \.self) { Text($0).tag($0) }
-                    }
-                    Picker("Tipo", selection: $draft.mediaType) {
-                        Text("Todos").tag("")
-                        ForEach(["TV", "Movie", "ONA", "OVA", "Special"], id: \.self) { Text($0).tag($0) }
-                    }
-                    Picker("Año", selection: $draft.year) {
-                        Text("Todos").tag("")
-                        ForEach(years, id: \.self) { Text(String($0)).tag(String($0)) }
-                    }
+                    MultiSelectLink(title: "Temporada", options: FilterOptions.seasons, selection: $draft.seasons)
+                    MultiSelectLink(title: "Año", options: FilterOptions.years, selection: $draft.years)
+                    MultiSelectLink(title: "Estado", options: FilterOptions.statuses, selection: $draft.statuses)
+                    MultiSelectLink(title: "Tipo", options: FilterOptions.mediaTypes, selection: $draft.mediaTypes)
+                    MultiSelectLink(title: "Clasificación", options: FilterOptions.ratings, selection: $draft.ratings)
                     Picker("Puntuación mínima", selection: $draft.minimumScore) {
                         Text("Cualquiera").tag(0)
                         ForEach([5, 6, 7, 8, 9], id: \.self) { Text("\($0).0+").tag($0) }
                     }
                 } footer: {
-                    Text("La puntuación mínima se aplica a los resultados ya cargados.")
+                    Text("Puedes elegir varias opciones en cada filtro: aparecen las series que cumplan cualquiera de ellas. La puntuación mínima se aplica a los resultados ya cargados.")
                 }
                 Section {
                     Button("Limpiar filtros", role: .destructive) { draft = CatalogFilters() }
@@ -463,5 +506,66 @@ struct CatalogFilterSheet: View {
             .onAppear { draft = filters }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+/// A filter row that opens a checklist; several values can be chosen.
+private struct MultiSelectLink: View {
+    let title: String
+    let options: [FilterOption]
+    @Binding var selection: Set<String>
+
+    private var summary: String {
+        let chosen = options.filter { selection.contains($0.tag) }.map { $0.label }
+        return chosen.isEmpty ? "Todos" : chosen.joined(separator: ", ")
+    }
+
+    var body: some View {
+        NavigationLink {
+            List {
+                Section {
+                    ForEach(options, id: \.self) { option in
+                        Button {
+                            if selection.contains(option.tag) {
+                                selection.remove(option.tag)
+                            } else {
+                                selection.insert(option.tag)
+                            }
+                        } label: {
+                            HStack {
+                                Text(option.label)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                if selection.contains(option.tag) {
+                                    Image(systemName: "checkmark")
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(.tint)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .accessibilityAddTraits(selection.contains(option.tag) ? [.isSelected] : [])
+                    }
+                } footer: {
+                    Text("Elige una o varias opciones.")
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if !selection.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Limpiar") { selection.removeAll() }
+                    }
+                }
+            }
+        } label: {
+            LabeledContent {
+                Text(summary)
+                    .lineLimit(1)
+            } label: {
+                Text(title)
+            }
+        }
     }
 }

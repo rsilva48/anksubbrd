@@ -61,6 +61,8 @@ struct RootView: View {
     @Environment(DownloadStore.self) private var downloads
     @Environment(ReleaseNotifier.self) private var notifier
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(ReleaseNotifier.promptedKey) private var promptedNotifications = false
+    @State private var showNotificationPrompt = false
     @State private var selection: AppTab = .latest
     /// Increments each time the Search tab is selected to focus its field.
     @State private var searchActivation = 0
@@ -105,6 +107,28 @@ struct RootView: View {
                     await notifier.refresh(profile: profile)
                 }
             }
+        }
+        // Offers release reminders once, after a bridge is configured and
+        // without competing with the update sheet.
+        .task(id: profile.isBridgeConfigured && updates.pendingUpdate == nil) {
+            guard profile.isBridgeConfigured, updates.pendingUpdate == nil, !promptedNotifications else { return }
+            if notifier.isEnabled {
+                promptedNotifications = true
+                return
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            showNotificationPrompt = true
+        }
+        .alert("¿Avisarte de nuevos episodios?", isPresented: $showNotificationPrompt) {
+            Button("Activar avisos") {
+                Task { await notifier.enableFromPrompt(profile: profile) }
+            }
+            Button("Ahora no", role: .cancel) {
+                promptedNotifications = true
+            }
+        } message: {
+            Text("La app puede avisarte cuando salga un episodio nuevo de las series que sigues en Continuar viendo. Puedes cambiarlo cuando quieras en Configuración.")
         }
         .sheet(item: $notifier.openedSeries) { anime in
             NavigationStack {

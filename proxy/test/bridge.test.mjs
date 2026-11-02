@@ -102,7 +102,7 @@ test('Preferences are coerced to the supported values', () => {
   const swiftEpoch = 978307200;
   const value = normalizePreferences({ titleLanguage: 'jp', defaultTrackType: 'dub', subtitleLanguage: 'es-419', autoNext: false, autoSkipIntro: 'yes', updatedAt: 1000 });
   assert.deepEqual(value, {
-    titleLanguage: 'jp', defaultTrackType: 'dub', subtitleLanguage: 'es-419', autoNext: false, autoSkipIntro: false, autoSkipOutro: false,
+    titleLanguage: 'jp', defaultTrackType: 'dub', subtitleLanguage: 'es-419', autoNext: false, autoSkipIntro: false, autoSkipOutro: false, hideAdult: false,
     updatedAt: new Date((1000 + swiftEpoch) * 1000).toISOString(),
   });
   assert.equal(normalizePreferences({ titleLanguage: 'fr' }).titleLanguage, 'en');
@@ -204,4 +204,23 @@ test('Rate-limited playlists are retried after Retry-After and then served from 
 test('A 429 that persists after the retries becomes a temporary 503', async (context) => {
   context.mock.method(globalThis, 'fetch', async () => new Response('', { status: 429, headers: { 'retry-after': '1' } }));
   await assert.rejects(fetchUpstream('https://cdn.example/seg.ts', { hlsUrl: 'https://cdn.example/m.m3u8', requestHeaders: {} }, null, 3000), (error) => error.status === 503);
+});
+
+test('Catalog filters accept several values per category', async (context) => {
+  const requested = [];
+  context.mock.method(globalThis, 'fetch', async (url) => { requested.push(new URL(String(url))); return new Response('', { status: 200 }); });
+  const params = new URLSearchParams([['season', 'fall'], ['season', 'summer'], ['year', '2026'], ['year', '2025'], ['status', 'finished-airing'], ['status', 'currently-airing'], ['language', 'sub']]);
+  await createAnkProvider('https://catalog.example').latest(params);
+  const url = requested[0];
+  assert.equal(url.pathname, '/filter');
+  assert.deepEqual(url.searchParams.getAll('season[]'), ['fall', 'summer']);
+  assert.deepEqual(url.searchParams.getAll('year[]'), ['2026', '2025']);
+  assert.deepEqual(url.searchParams.getAll('status[]'), ['finished-airing', 'currently-airing']);
+  assert.deepEqual(url.searchParams.getAll('language[]'), ['sub']);
+  await assert.rejects(createAnkProvider('https://catalog.example').latest(new URLSearchParams([['season', 'fall'], ['season', 'monsoon']])), (error) => error.status === 400);
+});
+
+test('Preferences keep the hide-adult setting', () => {
+  assert.equal(normalizePreferences({ hideAdult: true }).hideAdult, true);
+  assert.equal(normalizePreferences({}).hideAdult, false);
 });

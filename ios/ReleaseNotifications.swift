@@ -26,6 +26,8 @@ struct ScheduleResponse: Decodable { let entries: [ScheduleEntry] }
 final class ReleaseNotifier {
     static let shared = ReleaseNotifier()
     static let enabledKey = "anksubbrd.release-notifications"
+    /// The launch prompt was answered (or reminders were enabled before it).
+    static let promptedKey = "anksubbrd.release-notifications.prompted"
     private static let identifierPrefix = "anksubbrd.release."
     /// The catalog needs a few minutes after the estimated time to publish.
     private static let publishingDelay: TimeInterval = 5 * 60
@@ -41,6 +43,15 @@ final class ReleaseNotifier {
     }
 
     var isEnabled: Bool { UserDefaults.standard.bool(forKey: Self.enabledKey) }
+
+    /// Answer to the launch prompt: asks iOS for permission and, if granted,
+    /// turns the reminders on and schedules them.
+    func enableFromPrompt(profile: ProfileStore) async {
+        UserDefaults.standard.set(true, forKey: Self.promptedKey)
+        guard await requestAuthorization() else { return }
+        UserDefaults.standard.set(true, forKey: Self.enabledKey)
+        await refresh(profile: profile)
+    }
 
     /// Asks for permission; false when the user declined (now or before).
     func requestAuthorization() async -> Bool {

@@ -22,7 +22,7 @@ Las URLs y tokens temporales del proveedor no se registran en disco y desaparece
 2. En el primer uso, **Buscar**, **Recientes** y **Continuar** permanecen bloqueados y ofrecen un acceso directo a **Configuración**.
 3. En **Configuración → Bridge** elige `https://` (predeterminado) o `http://` y escribe sólo el dominio o la IP, con puerto si hace falta (`bridge.midominio.com` o `192.168.1.20:8787`). Si pegas una dirección con `http://` o `https://`, el prefijo se quita del campo y el selector adopta ese protocolo. **Probar y guardar** activa la dirección únicamente si `/health` responde.
 4. Si el bridge requiere identidad, créala, restáurala desde el Llavero de iCloud o importa un token (ver [Identidades](#identidades)).
-5. Busca una serie (al abrir **Buscar** el campo se activa con el teclado) o entra en **Recientes**, que sigue los estrenos del tipo configurado (`Sub` o `Dub`; el selector de la barra permite cambiar a Sub, Dub o ambos). Cada póster muestra el episodio más reciente, el total si se conoce, los episodios en Dub y una marca **+18** en series R+ o Rx. La ficha de la serie muestra la sinopsis, el estado de emisión y las temporadas relacionadas según el orden de visionado del catálogo. Elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
+5. Busca una serie (al abrir **Buscar** el campo se activa con el teclado) o entra en **Recientes**, que sigue los estrenos del tipo configurado (`Sub` o `Dub`; el selector de la barra permite cambiar a Sub, Dub o ambos). Cada póster muestra el episodio más reciente, el total si se conoce, los episodios en Dub y una marca **+18** en series R+ o Rx (**Configuración → Catálogo → Ocultar series +18** las quita de Recientes y Buscar). La búsqueda usa la página de filtros del catálogo, con todos los resultados paginados. Los **Filtros** (temporada, año, estado, tipo y clasificación) admiten varias opciones por categoría; en iPhone el botón está sobre los resultados de la búsqueda. La ficha de la serie muestra la sinopsis, el estado de emisión y las temporadas relacionadas según el orden de visionado del catálogo. Elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
 
 ### Reproductor
 
@@ -64,7 +64,7 @@ Cada episodio de la ficha tiene su botón de descarga (también al mantenerlo pu
 
 ### Avisos de nuevos episodios
 
-Con **Configuración → Este dispositivo → Avisar de nuevos episodios**, la app programa notificaciones locales para los episodios que estrenan en los próximos 8 días, según el horario estimado del catálogo. Sólo avisa de las series de **Continuar viendo**, cuando el episodio es posterior al que viste y del mismo tipo (Sub o Dub) que sigues. La notificación llega unos minutos después de la hora estimada y, al tocarla, abre la serie.
+La primera vez que abres la app con un bridge configurado, te pregunta si quieres estos avisos; también se activan o desactivan en **Configuración → Este dispositivo → Avisar de nuevos episodios**. La app programa notificaciones locales para los episodios que estrenan en los próximos 8 días, según el horario estimado del catálogo. Sólo avisa de las series de **Continuar viendo**, cuando el episodio es posterior al que viste y del mismo tipo (Sub o Dub) que sigues. La notificación llega unos minutos después de la hora estimada y, al tocarla, abre la serie.
 
 - Los avisos se reprograman al abrir o volver a la app (y al sincronizar el historial), así que basta con abrirla de vez en cuando. No requieren servidor de push: el push remoto (APNs) exigiría una app firmada con ese permiso, algo que un IPA sin firmar instalado con LiveContainer no tiene.
 - El horario es una estimación y por ahora el catálogo sólo publica horarios de Sub.
@@ -247,7 +247,7 @@ La app usa estas rutas; no necesitas llamarlas manualmente.
 
 - `GET /health`
 - `GET /api/search?q=titulo`
-- `GET /api/latest?page=1&language=sub&season=winter&status=currently-airing` (filtros paginados; `q` busca por título; `language` es `sub`, `dub` o `all`)
+- `GET /api/latest?page=1&language=sub&season=fall&season=summer&year=2026&status=currently-airing` (filtros paginados; cada filtro se puede repetir para elegir varios valores; `q` busca por título; `language` es `sub`, `dub` o `all`)
 - `POST /api/series` con `{ "watchUrl": "…" }` (incluye sinopsis, clasificación, estado, total de episodios, disponibilidad Sub/Dub por episodio y temporadas relacionadas)
 - `GET /api/schedule`: estrenos estimados de los próximos 8 días (serie, episodio, tipo y hora Unix; caché de 30 min)
 - `POST /api/series/status` con `{ "watchUrls": ["…"] }`: último episodio Sub y Dub, total, estado y temporada siguiente de hasta 50 series (caché de 15 min)

@@ -440,6 +440,7 @@ function normalizePreferences(value) {
     autoNext: value.autoNext !== false,
     autoSkipIntro: value.autoSkipIntro === true,
     autoSkipOutro: value.autoSkipOutro === true,
+    hideAdult: value.hideAdult === true,
     updatedAt: historyDate(value.updatedAt).toISOString(),
   };
 }
@@ -634,18 +635,26 @@ function createAnkProvider(configuredOrigin) {
   async function search(keyword) {
     return parseSearch((await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(cleanText(keyword).slice(0, 200))}`)).html ?? '');
   }
+  // Filters accept several values each (`season=fall&season=summer`), sent to
+  // the catalog as `season[]=fall&season[]=summer` like its filter page.
+  function filterValues(params, name, allowed) {
+    const values = [...new Set(params.getAll(name).map(cleanText).filter(Boolean))];
+    const invalid = values.find((value) => !allowed(value));
+    if (invalid !== undefined) throw new HttpError(400, `Invalid ${name}`);
+    return values;
+  }
   async function latest(params) {
     const page = Math.max(1, Math.min(10000, Number.parseInt(params.get('page') || '1', 10) || 1));
-    const season = params.get('season') || '', status = params.get('status') || '';
-    const rating = params.get('rating') || '', mediaType = params.get('mediaType') || '', year = params.get('year') || '';
-    const keyword = cleanText(params.get('q')).slice(0, 200), language = params.get('language') || 'all';
-    if (!['sub', 'dub', 'all'].includes(language)) throw new HttpError(400, 'Invalid language');
-    if (season && !['winter', 'spring', 'summer', 'fall'].includes(season)) throw new HttpError(400, 'Invalid season');
-    if (status && !['finished-airing', 'currently-airing', 'not-yet-aired'].includes(status)) throw new HttpError(400, 'Invalid status');
-    if (rating && !['G', 'PG', 'PG-13', 'R', 'R+', 'Rx'].includes(rating)) throw new HttpError(400, 'Invalid rating');
-    if (mediaType && !['TV', 'Movie', 'ONA', 'OVA', 'Special'].includes(mediaType)) throw new HttpError(400, 'Invalid media type');
-    if (year && !/^\d{4}$/.test(year)) throw new HttpError(400, 'Invalid year');
-    const filtered = Boolean(season || status || keyword || rating || mediaType || year);
+    const keyword = cleanText(params.get('q')).slice(0, 200);
+    const seasons = filterValues(params, 'season', (value) => ['winter', 'spring', 'summer', 'fall'].includes(value));
+    const statuses = filterValues(params, 'status', (value) => ['finished-airing', 'currently-airing', 'not-yet-aired'].includes(value));
+    const ratings = filterValues(params, 'rating', (value) => ['G', 'PG', 'PG-13', 'R', 'R+', 'Rx'].includes(value));
+    const mediaTypes = filterValues(params, 'mediaType', (value) => ['TV', 'Movie', 'ONA', 'OVA', 'Special'].includes(value));
+    const years = filterValues(params, 'year', (value) => /^\d{4}$/.test(value));
+    // Sub and Dub together (or `all`) means no language filter.
+    const languages = filterValues(params, 'language', (value) => ['sub', 'dub', 'all'].includes(value));
+    const language = languages.length === 1 ? languages[0] : 'all';
+    const filtered = Boolean(keyword || seasons.length || statuses.length || ratings.length || mediaTypes.length || years.length);
     // Plain Sub or Dub recents come from the home widgets, which order series
     // by their newest episode of that kind (12 per page, no pager).
     if (!filtered && language !== 'all') {
@@ -658,11 +667,11 @@ function createAnkProvider(configuredOrigin) {
     if (filtered || language !== 'all') {
       url.searchParams.set('sort', keyword ? 'default' : 'latest-updated');
       if (keyword) url.searchParams.set('keyword', keyword);
-      if (season) url.searchParams.append('season[]', season);
-      if (status) url.searchParams.append('status[]', status);
-      if (rating) url.searchParams.append('rating[]', rating);
-      if (mediaType) url.searchParams.append('term_type[]', mediaType);
-      if (year) url.searchParams.append('year[]', year);
+      for (const value of seasons) url.searchParams.append('season[]', value);
+      for (const value of statuses) url.searchParams.append('status[]', value);
+      for (const value of ratings) url.searchParams.append('rating[]', value);
+      for (const value of mediaTypes) url.searchParams.append('term_type[]', value);
+      for (const value of years) url.searchParams.append('year[]', value);
       if (language !== 'all') url.searchParams.append('language[]', language);
     }
     const response = await fetchWithTimeout(url, { headers: { Accept: 'text/html' } }, 15000, 'Latest catalog request');

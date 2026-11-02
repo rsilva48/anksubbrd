@@ -248,10 +248,11 @@ struct SettingsScreen: View {
             Picker("Idioma de los títulos", selection: $preferences.titleLanguage) {
                 ForEach(TitleLanguage.allCases) { Text($0.displayName).tag($0) }
             }
+            Toggle("Ocultar series +18", isOn: $preferences.hideAdult)
         } header: {
             Text("Catálogo")
         } footer: {
-            Text("En japonés, Continuar viendo mantiene el nombre en inglés y muestra debajo el título japonés.")
+            Text("En japonés, Continuar viendo mantiene el nombre en inglés y muestra debajo el título japonés. Ocultar series +18 quita de Recientes y Buscar las clasificadas R+ o Rx.")
         }
         .disabled(!profile.isBridgeConfigured)
     }
