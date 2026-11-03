@@ -277,6 +277,17 @@ test('Remote control: a TV reports itself and receives commands from the same id
   const subtitles = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
   assert.deepEqual(subtitles.commands.map(({ track }) => track), ['3:1', 'off']);
 
+  // Acknowledged delivery: a command answered to a poll stays queued until a
+  // later poll acknowledges it (a TV restarted behind a proxy loses nothing).
+  const fresh = () => Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false });
+  sendCommand(tv, deviceId, { type: 'pause' });
+  const first = await waitForCommands(tv, deviceId, fresh(), 50, 0);
+  assert.deepEqual(first.commands.map(({ type }) => type), ['pause']);
+  const again = await waitForCommands(tv, deviceId, fresh(), 50, 0);
+  assert.deepEqual(again.commands.map(({ seq }) => seq), first.commands.map(({ seq }) => seq));
+  const acknowledged = await waitForCommands(tv, deviceId, fresh(), 50, first.commands.at(-1).seq);
+  assert.deepEqual(acknowledged.commands, []);
+
   // Commands queued while the TV is away are delivered on its next poll.
   sendCommand(tv, deviceId, { type: 'play', watchUrl: '/watch/delta-4', episode: 5, kind: 'dub' });
   const next = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);

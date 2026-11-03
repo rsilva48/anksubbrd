@@ -83,9 +83,11 @@ suspend fun runRemoteControl(
         }
     }
     launch {
+        // The bridge keeps each command until a later poll acknowledges it.
+        var handled = 0L
         while (isActive) {
             val commands = try {
-                client.waitForCommands(deviceId)
+                client.waitForCommands(deviceId, handled).filter { it.seq == 0L || it.seq > handled }
             } catch (error: BridgeException) {
                 // Offline or a bridge without remote control: try again later.
                 delay(if (error.status == 404) 60_000L else 5_000L)
@@ -98,6 +100,7 @@ suspend fun runRemoteControl(
                     else -> Remote.playerCommands.emit(command)
                 }
             }
+            commands.maxOfOrNull { it.seq }?.let { handled = maxOf(handled, it) }
             if (commands.isNotEmpty()) Remote.handled.value = System.currentTimeMillis()
         }
     }

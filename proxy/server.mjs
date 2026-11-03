@@ -554,7 +554,7 @@ function deviceFor(user, deviceId, create = true) {
   const key = `${user.userId}:${id}`;
   let device = devices.get(key);
   if (!device && create) {
-    device = { id, userId: user.userId, name: 'TV', state: null, stateAt: 0, canOpen: false, lastSeen: 0, queue: [], waiters: new Set() };
+    device = { id, userId: user.userId, name: 'TV', state: null, stateAt: 0, canOpen: false, lastSeen: 0, queue: [], seq: 0, waiters: new Set() };
     devices.set(key, device);
   }
   return device;
@@ -605,7 +605,8 @@ function sendCommand(user, deviceId, body) {
   if (!device || device.lastSeen < Date.now() - deviceTimeout) throw new HttpError(404, 'The TV is not connected');
   const type = cleanText(body?.type);
   if (!commandTypes.includes(type)) throw new HttpError(400, 'Invalid command');
-  const command = { id: randomUUID(), type };
+  // `seq` orders the commands of a TV; it acknowledges them with `after`.
+  const command = { id: randomUUID(), seq: ++device.seq, at: Date.now(), type };
   if (type === 'play') {
     command.watchUrl = provider.watchUrl(historyText(body.watchUrl, '', 2000));
     command.episode = Number.isInteger(body.episode) && body.episode > 0 ? body.episode : null;
@@ -635,11 +636,22 @@ function sendCommand(user, deviceId, body) {
   return { ok: true, id: command.id };
 }
 // Long poll: answers as soon as a command is queued, or empty after 25 s.
-// Commands stay queued if the TV disconnected before they could be sent.
-async function waitForCommands(user, deviceId, response, waitMs = 25 * 1000) {
+// With `after` (the last seq the TV handled) commands stay queued until a
+// later poll acknowledges them: behind a proxy a TV that restarted may leave
+// an old poll open, and a command answered there would be lost. Commands
+// older than two minutes are dropped so a stale "play" never replays. TVs
+// without `after` (older apps) take the commands when they are answered.
+const commandLifetime = 2 * 60 * 1000;
+async function waitForCommands(user, deviceId, response, waitMs = 25 * 1000, after = null) {
   const device = deviceFor(user, deviceId);
   device.lastSeen = Date.now();
-  if (!device.queue.length) {
+  const acknowledged = Number.isSafeInteger(after) && after >= 0 ? after : null;
+  const pending = () => {
+    const now = Date.now();
+    device.queue = device.queue.filter((command) => now - command.at < commandLifetime && (acknowledged === null || command.seq > acknowledged));
+    return device.queue;
+  };
+  if (!pending().length) {
     await new Promise((resolve) => {
       const done = () => {
         clearTimeout(timer);
@@ -654,7 +666,8 @@ async function waitForCommands(user, deviceId, response, waitMs = 25 * 1000) {
   }
   if (response.destroyed || response.writableEnded) return null;
   device.lastSeen = Date.now();
-  return { commands: device.queue.splice(0) };
+  if (acknowledged === null) return { commands: device.queue.splice(0) };
+  return { commands: pending().map(({ at, ...command }) => command) };
 }
 
 async function getSeries(watchUrl) {
@@ -1281,7 +1294,11 @@ const server = http.createServer(async (request, response) => {
     const deviceRoute = requestUrl.pathname.match(/^\/api\/devices\/([\w-]+)(\/commands)?$/);
     if (deviceRoute && request.method === 'PUT' && !deviceRoute[2]) return json(response, 200, reportDevice(user, deviceRoute[1], JSON.parse(await readBody(request))));
     if (deviceRoute && request.method === 'POST' && deviceRoute[2]) return json(response, 201, sendCommand(user, deviceRoute[1], JSON.parse(await readBody(request))));
-    if (deviceRoute && request.method === 'GET' && deviceRoute[2]) { const reply = await waitForCommands(user, deviceRoute[1], response); return reply ? json(response, 200, reply) : undefined; }
+    if (deviceRoute && request.method === 'GET' && deviceRoute[2]) {
+      const after = requestUrl.searchParams.has('after') ? Number(requestUrl.searchParams.get('after')) : null;
+      const reply = await waitForCommands(user, deviceRoute[1], response, undefined, after);
+      return reply ? json(response, 200, reply) : undefined;
+    }
     if (request.method === 'POST' && requestUrl.pathname === '/api/pair/approve') { const body = JSON.parse(await readBody(request)); return json(response, 200, approvePairing(body.code, body.label, user)); }
     if (request.method === 'GET' && requestUrl.pathname === '/api/schedule') return json(response, 200, { entries: await provider.schedule() });
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {

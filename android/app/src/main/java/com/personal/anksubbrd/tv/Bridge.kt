@@ -186,6 +186,8 @@ data class PairingStatus(val status: String, val token: String? = null, val labe
 @Serializable
 data class RemoteCommand(
     val id: String = "",
+    /** Order of the TV's commands; the next poll acknowledges it. */
+    val seq: Long = 0,
     val type: String,
     val watchUrl: String? = null,
     val episode: Int? = null,
@@ -317,7 +319,8 @@ class BridgeClient(val baseUrl: String, private val token: String) {
     }
 
     /** Long poll: returns when a command arrives, or empty after about 25 s. */
-    suspend fun waitForCommands(deviceId: String): List<RemoteCommand> = get<RemoteCommands>("/api/devices/$deviceId/commands").commands
+    suspend fun waitForCommands(deviceId: String, after: Long): List<RemoteCommand> =
+        get<RemoteCommands>("/api/devices/$deviceId/commands", listOf("after" to after.toString())).commands
 
     private suspend inline fun <reified T> get(path: String, query: List<Pair<String, String>> = emptyList()): T =
         send("GET", path, query, null)
