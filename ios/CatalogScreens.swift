@@ -9,15 +9,26 @@ struct CatalogFilters: Equatable {
     var ratings: Set<String> = []
     var mediaTypes: Set<String> = []
     var years: Set<String> = []
+    var genres: Set<String> = []
+    var sources: Set<String> = []
+    /// Catalog order ("" = the bridge's default).
+    var sort = ""
+    var minEpisodes: Int?
+    var maxEpisodes: Int?
     var minimumScore = 0
 
     /// Filters the bridge applies; the minimum score is applied on device.
-    var hasServerFilters: Bool { !seasons.isEmpty || !statuses.isEmpty || !ratings.isEmpty || !mediaTypes.isEmpty || !years.isEmpty }
+    var hasServerFilters: Bool {
+        !seasons.isEmpty || !statuses.isEmpty || !ratings.isEmpty || !mediaTypes.isEmpty || !years.isEmpty
+            || !genres.isEmpty || !sources.isEmpty || !sort.isEmpty || minEpisodes != nil || maxEpisodes != nil
+    }
     var isActive: Bool { hasServerFilters || minimumScore > 0 }
 
     /// Chosen values, shown on the filter button.
     var activeCount: Int {
-        seasons.count + statuses.count + ratings.count + mediaTypes.count + years.count + (minimumScore > 0 ? 1 : 0)
+        let lists = seasons.count + statuses.count + ratings.count + mediaTypes.count + years.count + genres.count + sources.count
+        let singles = [!sort.isEmpty, minEpisodes != nil || maxEpisodes != nil, minimumScore > 0].filter { $0 }.count
+        return lists + singles
     }
 
     func queryItems(page: Int, keyword: String? = nil) -> [URLQueryItem] {
@@ -25,12 +36,16 @@ struct CatalogFilters: Equatable {
         if let keyword { items.append(URLQueryItem(name: "q", value: keyword)) }
         let groups: [(name: String, values: Set<String>)] = [
             ("season", seasons), ("status", statuses), ("rating", ratings), ("mediaType", mediaTypes), ("year", years),
+            ("genre", genres), ("source", sources),
         ]
         for group in groups {
             for value in group.values.sorted() {
                 items.append(URLQueryItem(name: group.name, value: value))
             }
         }
+        if !sort.isEmpty { items.append(URLQueryItem(name: "sort", value: sort)) }
+        if let minEpisodes { items.append(URLQueryItem(name: "minEpisodes", value: String(minEpisodes))) }
+        if let maxEpisodes { items.append(URLQueryItem(name: "maxEpisodes", value: String(maxEpisodes))) }
         return items
     }
 
@@ -444,6 +459,33 @@ struct FilterOption: Hashable {
     let label: String
 }
 
+/// Option lists published by the bridge (`GET /api/catalog/filters`): the
+/// genre ids belong to the catalog. Older bridges answer 404; their
+/// filters fall back to the built-in lists and genres are not offered.
+struct CatalogFilterOptions: Decodable {
+    struct Option: Decodable {
+        let id: String
+        let label: String
+        var adult: Bool?
+    }
+
+    var genres: [Option] = []
+    var mediaTypes: [Option] = []
+    var sources: [Option] = []
+    var sorts: [Option] = []
+
+    @MainActor private static var cached: (base: String, options: CatalogFilterOptions)?
+
+    @MainActor
+    static func load(base: String) async -> CatalogFilterOptions? {
+        if let cached, cached.base == base { return cached.options }
+        guard let options: CatalogFilterOptions = try? await BridgeClient.get(base: base, path: "/api/catalog/filters", timeoutInterval: 10),
+              !options.genres.isEmpty else { return nil }
+        cached = (base, options)
+        return options
+    }
+}
+
 enum FilterOptions {
     static let seasons = [
         FilterOption(tag: "winter", label: "Invierno"),
@@ -467,7 +509,23 @@ enum FilterOptions {
 struct CatalogFilterSheet: View {
     @Binding var filters: CatalogFilters
     @State private var draft: CatalogFilters
+    @State private var options: CatalogFilterOptions?
+    @Environment(ProfileStore.self) private var profile
     @Environment(\.dismiss) private var dismiss
+
+    private func choices(_ list: [CatalogFilterOptions.Option]) -> [FilterOption] {
+        list.filter { !(profile.preferences.hideAdult && $0.adult == true) }.map { FilterOption(tag: $0.id, label: $0.label) }
+    }
+
+    private func episodeBinding(_ keyPath: WritableKeyPath<CatalogFilters, Int?>) -> Binding<String> {
+        Binding(
+            get: { draft[keyPath: keyPath].map(String.init) ?? "" },
+            set: { text in
+                let digits = text.filter(\.isNumber).prefix(5)
+                draft[keyPath: keyPath] = Int(digits).flatMap { $0 > 0 ? $0 : nil }
+            }
+        )
+    }
 
     // The draft starts from the applied filters once. Copying them in
     // onAppear lost the choices: the form appears again on every return
@@ -481,10 +539,16 @@ struct CatalogFilterSheet: View {
         NavigationStack {
             Form {
                 Section {
+                    if let options {
+                        MultiSelectLink(title: "Género", options: choices(options.genres), selection: $draft.genres)
+                    }
                     MultiSelectLink(title: "Temporada", options: FilterOptions.seasons, selection: $draft.seasons)
                     MultiSelectLink(title: "Año", options: FilterOptions.years, selection: $draft.years)
                     MultiSelectLink(title: "Estado", options: FilterOptions.statuses, selection: $draft.statuses)
-                    MultiSelectLink(title: "Tipo", options: FilterOptions.mediaTypes, selection: $draft.mediaTypes)
+                    MultiSelectLink(title: "Tipo", options: options.map { choices($0.mediaTypes) } ?? FilterOptions.mediaTypes, selection: $draft.mediaTypes)
+                    if let options {
+                        MultiSelectLink(title: "Origen", options: choices(options.sources), selection: $draft.sources)
+                    }
                     MultiSelectLink(title: "Clasificación", options: FilterOptions.ratings, selection: $draft.ratings)
                     Picker("Puntuación mínima", selection: $draft.minimumScore) {
                         Text("Cualquiera").tag(0)
@@ -493,6 +557,24 @@ struct CatalogFilterSheet: View {
                 } footer: {
                     Text("Puedes elegir varias opciones en cada filtro: aparecen las series que cumplan cualquiera de ellas. La puntuación mínima se aplica a los resultados ya cargados.")
                 }
+                if let options {
+                    Section("Orden y episodios") {
+                        Picker("Ordenar por", selection: $draft.sort) {
+                            Text("Predeterminado").tag("")
+                            ForEach(options.sorts, id: \.id) { Text($0.label).tag($0.id) }
+                        }
+                        LabeledContent("Episodios mínimo") {
+                            TextField("Cualquiera", text: episodeBinding(\.minEpisodes))
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                        }
+                        LabeledContent("Episodios máximo") {
+                            TextField("Cualquiera", text: episodeBinding(\.maxEpisodes))
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
                 Section {
                     Button("Limpiar filtros", role: .destructive) { draft = CatalogFilters() }
                         .disabled(!draft.isActive)
@@ -500,6 +582,7 @@ struct CatalogFilterSheet: View {
             }
             .navigationTitle("Filtros")
             .navigationBarTitleDisplayMode(.inline)
+            .task { options = await CatalogFilterOptions.load(base: profile.bridgeURL) }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancelar", role: .cancel) { dismiss() }

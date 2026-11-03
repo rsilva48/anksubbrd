@@ -221,12 +221,21 @@ private fun PosterGrid(content: androidx.compose.foundation.lazy.grid.LazyGridSc
     )
 }
 
-/** Recents (Sub/Dub/both, the configured kind first) or search results, paged. */
+/**
+ * Recents (Sub/Dub/both, the configured kind first) or search results, paged.
+ * Search starts from the filters: pick them, optionally type a title, and
+ * search; filters alone browse the catalog.
+ */
 @Composable
 private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boolean) {
     var language by remember { mutableStateOf(session.preferences.defaultTrackType) }
     var query by remember { mutableStateOf("") }
-    var submitted by remember { mutableStateOf("") }
+    var filters by remember { mutableStateOf(CatalogFilters()) }
+    var options by remember { mutableStateOf<CatalogFilterOptions?>(null) }
+    var showFilters by remember { mutableStateOf(false) }
+    /** The search that ran (title and filters); null before the first one. */
+    var searched by remember { mutableStateOf<Pair<String, CatalogFilters>?>(null) }
+    LaunchedEffect(session) { options = session.client.catalogFilterOptions() }
     var items by remember { mutableStateOf<List<Anime>>(emptyList()) }
     var page by remember { mutableIntStateOf(0) }
     var hasNext by remember { mutableStateOf(false) }
@@ -235,14 +244,15 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
     val scope = rememberCoroutineScope()
 
     suspend fun load(next: Int) {
-        if (searching && submitted.isBlank()) return
+        val search = searched
+        if (searching && search == null) return
         loading = true
         error = null
         try {
-            val reply = if (searching) {
-                session.client.latest(next, keyword = submitted)
+            val reply = if (searching && search != null) {
+                session.client.latest(next, keyword = search.first, filters = search.second)
             } else {
-                session.client.latest(next, language = language)
+                session.client.latest(next, language = language, filters = filters)
             }
             items = if (next == 1) reply.results else (items + reply.results).distinctBy { it.watchUrl }
             page = next
@@ -254,35 +264,75 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
         }
     }
 
-    LaunchedEffect(language, submitted) {
+    LaunchedEffect(language, if (searching) searched else filters) {
         items = emptyList()
         load(1)
     }
 
-    val visible = items.filter { !(session.preferences.hideAdult && it.isAdult) }
+    val applied = if (searching) searched?.second ?: filters else filters
+    val visible = items.filter { !(session.preferences.hideAdult && it.isAdult) && applied.allows(it) }
+
+    fun search() {
+        val title = query.trim()
+        if (title.isEmpty() && !filters.isActive) return
+        searched = title to filters
+    }
+
+    @Composable
+    fun FiltersButton() {
+        OutlinedButton(onClick = { showFilters = true }) { Text(if (filters.isActive) "Filtros (${filters.activeCount})" else "Filtros") }
+    }
+
+    @Composable
+    fun FiltersSummary() {
+        if (filters.isActive) {
+            Text(filters.summary(options), color = Color.White.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         if (searching) {
-            TvTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = "Título de la serie",
-                imeAction = ImeAction.Search,
-                onSubmit = { submitted = query.trim() },
-                modifier = Modifier.width(640.dp),
-            )
+            // Filters first, on the left of the title.
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                FiltersButton()
+                TvTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "Título de la serie (opcional con filtros)",
+                    imeAction = ImeAction.Search,
+                    onSubmit = ::search,
+                    modifier = Modifier.width(640.dp),
+                )
+                Button(onClick = ::search, enabled = query.isNotBlank() || filters.isActive) { Text("Buscar") }
+            }
+            FiltersSummary()
         } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 listOf("sub" to "Sub", "dub" to "Dub", "all" to "Sub y Dub").forEach { (value, label) ->
                     if (language == value) Button(onClick = { language = value }) { Text(label) }
                     else OutlinedButton(onClick = { language = value }) { Text(label) }
                 }
+                Spacer(Modifier.width(12.dp))
+                FiltersButton()
+                FiltersSummary()
             }
         }
+        if (showFilters) CatalogFiltersDialog(
+            current = filters,
+            options = options,
+            hideAdult = session.preferences.hideAdult,
+            onApply = { chosen ->
+                filters = chosen
+                showFilters = false
+                // A search with the new filters runs right away once there is one.
+                if (searching && searched != null) searched = searched!!.first to chosen
+            },
+            onDismiss = { showFilters = false },
+        )
         when {
             visible.isEmpty() && loading -> Message("Cargando…")
             visible.isEmpty() && error != null -> Message(error.orEmpty())
-            visible.isEmpty() && searching && submitted.isBlank() -> Message("Escribe un título y pulsa Buscar en el teclado.")
+            visible.isEmpty() && searching && searched == null -> Message("Elige filtros, escribe un título o ambos, y pulsa Buscar.")
             visible.isEmpty() -> Message("Sin resultados.")
             else -> PosterGrid {
                 itemsIndexed(visible, key = { _, anime -> anime.watchUrl }) { index, anime ->

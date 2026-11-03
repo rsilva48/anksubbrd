@@ -878,7 +878,31 @@ function createAnkProvider(configuredOrigin) {
     return parseSearch((await providerJson(`/ajax/anime/search?keyword=${encodeURIComponent(cleanText(keyword).slice(0, 200))}`)).html ?? '');
   }
   // Filters accept several values each (`season=fall&season=summer`), sent to
-  // the catalog as `season[]=fall&season[]=summer` like its filter page.
+  // the catalog as `season[]=fall&season[]=summer` like its filter page. The
+  // option lists (GET /api/catalog/filters) carry Spanish labels; genre ids
+  // belong to the catalog, so the apps take them from there.
+  const catalogFilters = {
+    genres: [
+      [1, 'Acción'], [2344, 'Acción y aventura'], [2, 'Aventura'], [2345, 'Animación'], [538, 'Autos'], [2330, 'Boys Love'],
+      [12, 'Ciencia ficción'], [2352, 'Ciencia ficción y fantasía'], [8, 'Comedia'], [453, 'Demencia'], [119, 'Demonios'],
+      [29, 'Deportes'], [62, 'Drama'], [214, 'Ecchi'], [2322, 'Erótico', true], [14, 'Escolar'], [124, 'Espacio'], [3, 'Fantasía'],
+      [2326, 'Gastronomía'], [2328, 'Girls Love'], [215, 'Harem'], [2374, 'Hentai', true], [70, 'Histórico'], [46, 'Infantil'],
+      [74, 'Isekai'], [404, 'Josei'], [180, 'Juegos'], [203, 'Magia'], [2310, 'Mahou Shoujo'], [114, 'Artes marciales'],
+      [123, 'Mecha'], [125, 'Militar'], [57, 'Misterio'], [242, 'Música'], [162, 'Parodia'], [136, 'Policial'], [2357, 'Premiada'],
+      [73, 'Psicológico'], [35, 'Recuentos de la vida'], [28, 'Romance'], [163, 'Samurái'], [50, 'Seinen'], [252, 'Shoujo'],
+      [235, 'Shoujo Ai'], [15, 'Shounen'], [233, 'Shounen Ai'], [9, 'Sobrenatural'], [16, 'Superpoderes'], [2316, 'Suspenso'],
+      [222, 'Terror'], [54, 'Thriller'], [58, 'Vampiros'],
+    ].map(([id, label, adult]) => ({ id: String(id), label, ...(adult ? { adult: true } : {}) })),
+    mediaTypes: [['TV', 'TV'], ['Movie', 'Película'], ['ONA', 'ONA'], ['OVA', 'OVA'], ['Special', 'Especial'], ['TV Special', 'Especial de TV'],
+      ['TV_SHORT', 'TV corto'], ['Music', 'Música'], ['PV', 'PV'], ['CM', 'CM']].map(([id, label]) => ({ id, label })),
+    sources: [['manga', 'Manga'], ['light_novel', 'Novela ligera'], ['original', 'Original'], ['web_manga', 'Manga web'],
+      ['web_novel', 'Novela web'], ['novel', 'Novela'], ['visual_novel', 'Novela visual'], ['video_game', 'Videojuego'],
+      ['game', 'Juego'], ['4-koma_manga', 'Manga 4-koma'], ['book', 'Libro'], ['picture_book', 'Libro ilustrado'],
+      ['card_game', 'Juego de cartas'], ['mixed_media', 'Multimedia'], ['music', 'Música'], ['radio', 'Radio'], ['other', 'Otro']].map(([id, label]) => ({ id, label })),
+    sorts: [['latest-updated', 'Actualizados recientemente'], ['latest-added', 'Añadidos recientemente'], ['score', 'Puntuación'],
+      ['most-viewed', 'Más vistos'], ['release-date', 'Fecha de estreno'], ['name-az', 'Nombre (A-Z)'],
+      ['number_of_episodes', 'Número de episodios'], ['default', 'Relevancia']].map(([id, label]) => ({ id, label })),
+  };
   function filterValues(params, name, allowed) {
     const values = [...new Set(params.getAll(name).map(cleanText).filter(Boolean))];
     const invalid = values.find((value) => !allowed(value));
@@ -891,12 +915,26 @@ function createAnkProvider(configuredOrigin) {
     const seasons = filterValues(params, 'season', (value) => ['winter', 'spring', 'summer', 'fall'].includes(value));
     const statuses = filterValues(params, 'status', (value) => ['finished-airing', 'currently-airing', 'not-yet-aired'].includes(value));
     const ratings = filterValues(params, 'rating', (value) => ['G', 'PG', 'PG-13', 'R', 'R+', 'Rx'].includes(value));
-    const mediaTypes = filterValues(params, 'mediaType', (value) => ['TV', 'Movie', 'ONA', 'OVA', 'Special'].includes(value));
+    const mediaTypes = filterValues(params, 'mediaType', (value) => catalogFilters.mediaTypes.some((option) => option.id === value));
     const years = filterValues(params, 'year', (value) => /^\d{4}$/.test(value));
+    const genres = filterValues(params, 'genre', (value) => catalogFilters.genres.some((option) => option.id === value));
+    const sources = filterValues(params, 'source', (value) => catalogFilters.sources.some((option) => option.id === value));
+    const sorts = filterValues(params, 'sort', (value) => catalogFilters.sorts.some((option) => option.id === value));
+    // Episode count range; either end may be left out.
+    const episodeBound = (name) => {
+      const value = cleanText(params.get(name));
+      if (!value) return null;
+      const number = Number(value);
+      if (!Number.isInteger(number) || number < 1 || number > 10000) throw new HttpError(400, `Invalid ${name}`);
+      return number;
+    };
+    const minEpisodes = episodeBound('minEpisodes');
+    const maxEpisodes = episodeBound('maxEpisodes');
     // Sub and Dub together (or `all`) means no language filter.
     const languages = filterValues(params, 'language', (value) => ['sub', 'dub', 'all'].includes(value));
     const language = languages.length === 1 ? languages[0] : 'all';
-    const filtered = Boolean(keyword || seasons.length || statuses.length || ratings.length || mediaTypes.length || years.length);
+    const filtered = Boolean(keyword || seasons.length || statuses.length || ratings.length || mediaTypes.length || years.length
+      || genres.length || sources.length || sorts.length || minEpisodes || maxEpisodes);
     // Plain Sub or Dub recents come from the home widgets, which order series
     // by their newest episode of that kind (12 per page, no pager).
     if (!filtered && language !== 'all') {
@@ -907,13 +945,17 @@ function createAnkProvider(configuredOrigin) {
     const url = new URL(filtered || language !== 'all' ? '/filter' : '/latest-updated', providerOrigin);
     url.searchParams.set('page', String(page));
     if (filtered || language !== 'all') {
-      url.searchParams.set('sort', keyword ? 'default' : 'latest-updated');
+      url.searchParams.set('sort', sorts[0] ?? (keyword ? 'default' : 'latest-updated'));
       if (keyword) url.searchParams.set('keyword', keyword);
       for (const value of seasons) url.searchParams.append('season[]', value);
       for (const value of statuses) url.searchParams.append('status[]', value);
       for (const value of ratings) url.searchParams.append('rating[]', value);
       for (const value of mediaTypes) url.searchParams.append('term_type[]', value);
       for (const value of years) url.searchParams.append('year[]', value);
+      for (const value of genres) url.searchParams.append('genre[]', value);
+      for (const value of sources) url.searchParams.append('source[]', value);
+      if (minEpisodes) url.searchParams.set('ep_min', String(minEpisodes));
+      if (maxEpisodes) url.searchParams.set('ep_max', String(maxEpisodes));
       if (language !== 'all') url.searchParams.append('language[]', language);
     }
     const response = await fetchWithTimeout(url, { headers: { Accept: 'text/html' } }, 15000, 'Latest catalog request');
@@ -1154,7 +1196,7 @@ function createAnkProvider(configuredOrigin) {
     return /(?:ibyteimg\.com|tiktokcdn\.com|ipstatp\.com|yoot\.akirax\.buzz)$/i.test(hostname) && body.length > 252 ? body.subarray(252) : body;
   }
 
-  return { type: 'ANK', origin: providerOrigin, watchUrl, search, latest, series, schedule, servers, source, segment, signUpstream };
+  return { type: 'ANK', origin: providerOrigin, watchUrl, search, latest, filters: catalogFilters, series, schedule, servers, source, segment, signUpstream };
 }
 
 function rewriteUriLines(textValue, baseUrl, id, source) {
@@ -1389,6 +1431,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { results });
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/latest') return json(response, 200, await provider.latest(requestUrl.searchParams));
+    if (request.method === 'GET' && requestUrl.pathname === '/api/catalog/filters') return json(response, 200, provider.filters ?? {});
     if (request.method === 'GET' && requestUrl.pathname === '/api/devices') return json(response, 200, listDevices(user));
     const deviceRoute = requestUrl.pathname.match(/^\/api\/devices\/([\w-]+)(\/commands)?$/);
     if (deviceRoute && request.method === 'PUT' && !deviceRoute[2]) return json(response, 200, reportDevice(user, deviceRoute[1], JSON.parse(await readBody(request))));

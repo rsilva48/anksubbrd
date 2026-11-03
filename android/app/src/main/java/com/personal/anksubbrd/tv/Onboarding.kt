@@ -5,6 +5,7 @@ package com.personal.anksubbrd.tv
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,7 +36,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -394,17 +399,58 @@ fun TvTextField(
     imeAction: ImeAction = ImeAction.Done,
     onSubmit: () -> Unit = {},
 ) {
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    var focused by remember { mutableStateOf(false) }
+    // Read-only until OK: focusing the field must not open the keyboard,
+    // which would take over the D-pad.
+    var editing by remember { mutableStateOf(false) }
     BasicTextField(
+        readOnly = !editing,
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
         textStyle = TextStyle(color = Color.White, fontSize = 22.sp),
         cursorBrush = SolidColor(Color.White),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
-        keyboardActions = KeyboardActions(onAny = { onSubmit() }),
-        modifier = modifier.fillMaxWidth(),
+        keyboardActions = KeyboardActions(onAny = {
+            editing = false
+            keyboard?.hide()
+            onSubmit()
+        }),
+        // Single line: up and down leave the field (the D-pad would stay in
+        // it otherwise), and right does too while it is empty.
+        modifier = modifier.fillMaxWidth()
+            .onFocusChanged {
+                focused = it.isFocused
+                if (!it.isFocused) editing = false
+            }
+            .onPreviewKeyEvent { event ->
+                val key = event.nativeKeyEvent
+                val confirm = key.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || key.keyCode == android.view.KeyEvent.KEYCODE_ENTER
+                if (confirm && !editing) {
+                    if (key.action == android.view.KeyEvent.ACTION_UP) {
+                        editing = true
+                        keyboard?.show()
+                    }
+                    return@onPreviewKeyEvent true
+                }
+                if (key.action != android.view.KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                when (key.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_UP -> focusManager.moveFocus(FocusDirection.Up)
+                    android.view.KeyEvent.KEYCODE_DPAD_DOWN -> focusManager.moveFocus(FocusDirection.Down)
+                    // Not typing (or nothing typed), left and right leave too.
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> (!editing || value.isEmpty()) && focusManager.moveFocus(FocusDirection.Right)
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT -> (!editing || value.isEmpty()) && focusManager.moveFocus(FocusDirection.Left)
+                    else -> false
+                }
+            },
         decorationBox = { inner ->
-            Box(Modifier.background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(12.dp)).padding(horizontal = 20.dp, vertical = 16.dp)) {
+            Box(
+                Modifier.background(Color.White.copy(alpha = if (focused) 0.16f else 0.1f), RoundedCornerShape(12.dp))
+                    .border(2.dp, if (focused) Color.White.copy(alpha = 0.8f) else Color.Transparent, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+            ) {
                 if (value.isEmpty()) Text(placeholder, color = Color.White.copy(alpha = 0.4f), fontSize = 22.sp)
                 inner()
             }

@@ -223,6 +223,25 @@ test('Catalog filters accept several values per category', async (context) => {
   await assert.rejects(createAnkProvider('https://catalog.example').latest(new URLSearchParams([['season', 'fall'], ['season', 'monsoon']])), (error) => error.status === 400);
 });
 
+test('Genre, source, sort and episode-count filters reach the catalog', async (context) => {
+  const requested = [];
+  context.mock.method(globalThis, 'fetch', async (url) => { requested.push(new URL(String(url))); return new Response('', { status: 200 }); });
+  const provider = createAnkProvider('https://catalog.example');
+  const genre = provider.filters.genres.find((option) => option.label === 'Comedia').id;
+  await provider.latest(new URLSearchParams([['genre', genre], ['genre', '1'], ['source', 'manga'], ['sort', 'score'], ['mediaType', 'TV Special'], ['minEpisodes', '12'], ['maxEpisodes', '26']]));
+  const url = requested[0];
+  assert.equal(url.pathname, '/filter');
+  assert.deepEqual(url.searchParams.getAll('genre[]'), [genre, '1']);
+  assert.deepEqual(url.searchParams.getAll('source[]'), ['manga']);
+  assert.deepEqual(url.searchParams.getAll('term_type[]'), ['TV Special']);
+  assert.equal(url.searchParams.get('sort'), 'score');
+  assert.equal(url.searchParams.get('ep_min'), '12');
+  assert.equal(url.searchParams.get('ep_max'), '26');
+  assert.ok(provider.filters.genres.find((option) => option.label === 'Hentai').adult);
+  await assert.rejects(provider.latest(new URLSearchParams([['genre', '99999']])), (error) => error.status === 400);
+  await assert.rejects(provider.latest(new URLSearchParams([['minEpisodes', '0']])), (error) => error.status === 400);
+});
+
 test('Preferences keep the hide-adult setting', () => {
   assert.equal(normalizePreferences({ hideAdult: true }).hideAdult, true);
   assert.equal(normalizePreferences({}).hideAdult, false);

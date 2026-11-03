@@ -288,14 +288,19 @@ class BridgeClient(val baseUrl: String, private val token: String) {
 
     suspend fun health(): Health = get("/health")
 
-    suspend fun latest(page: Int, language: String? = null, keyword: String? = null): LatestResponse {
+    suspend fun latest(page: Int, language: String? = null, keyword: String? = null, filters: CatalogFilters = CatalogFilters()): LatestResponse {
         val query = buildList {
             add("page" to page.toString())
             if (language != null) add("language" to language)
             if (!keyword.isNullOrBlank()) add("q" to keyword)
+            addAll(filters.query())
         }
         return get("/api/latest", query)
     }
+
+    /** The bridge's filter option lists (null on older bridges). */
+    suspend fun catalogFilterOptions(): CatalogFilterOptions? =
+        runCatching { get<CatalogFilterOptions>("/api/catalog/filters") }.getOrNull()?.takeIf { it.genres.isNotEmpty() }
 
     suspend fun series(watchUrl: String): Series = post("/api/series", json.encodeToString(WatchRequest.serializer(), WatchRequest(watchUrl)))
 
