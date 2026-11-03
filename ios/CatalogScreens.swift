@@ -466,8 +466,16 @@ enum FilterOptions {
 
 struct CatalogFilterSheet: View {
     @Binding var filters: CatalogFilters
-    @State private var draft = CatalogFilters()
+    @State private var draft: CatalogFilters
     @Environment(\.dismiss) private var dismiss
+
+    // The draft starts from the applied filters once. Copying them in
+    // onAppear lost the choices: the form appears again on every return
+    // from a checklist.
+    init(filters: Binding<CatalogFilters>) {
+        _filters = filters
+        _draft = State(initialValue: filters.wrappedValue)
+    }
 
     var body: some View {
         NavigationStack {
@@ -503,7 +511,6 @@ struct CatalogFilterSheet: View {
                     }
                 }
             }
-            .onAppear { draft = filters }
         }
         .presentationDetents([.medium, .large])
     }
