@@ -97,7 +97,8 @@ jobs:
     name: Unsigned iOS build
     needs: changes
     if: needs.changes.outputs.app == 'true'
-    runs-on: macos-latest
+    # The Xcode 27 image has the iOS 27 SDK, needed for the iPhone Duo (foldable).
+    runs-on: xcode-27
     defaults:
       run:
         working-directory: ios
@@ -121,36 +122,22 @@ jobs:
             fi
           fi
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-      # Uses the newest stable Xcode installed on the runner, so the app links
-      # against the newest iOS/iPadOS SDK available (iOS 27 once the image
-      # ships Xcode 27). Set the repository variable XCODE_VERSION (e.g. 26.6)
-      # to pin a specific installed version instead.
+      # Xcode 27.1 is the first with the iPhone Duo (foldable) SDK; the image
+      # also has 27.0 and a 27.2 release candidate. Set the repository
+      # variable XCODE_VERSION (e.g. 27.2) to use another installed version.
       - name: Select Xcode
         shell: bash
         env:
-          XCODE_VERSION: ${{ vars.XCODE_VERSION }}
+          XCODE_VERSION: ${{ vars.XCODE_VERSION || '27.1' }}
         run: |
           set -euo pipefail
-          selected=''
-          if [[ -n "$XCODE_VERSION" ]]; then
-            selected="/Applications/Xcode_${XCODE_VERSION}.app"
-            [[ -d "$selected" ]] || { echo "Xcode $XCODE_VERSION is not installed on this runner"; ls -d /Applications/Xcode*.app; exit 1; }
-          else
-            best_version=''
-            for app in /Applications/Xcode_*.app; do
-              [[ -d "$app" && ! -L "$app" ]] || continue
-              name=$(basename "$app" .app)
-              # Only plain version numbers: skips beta and release-candidate builds.
-              [[ "$name" =~ ^Xcode_([0-9]+(\.[0-9]+)*)$ ]] || continue
-              version="${BASH_REMATCH[1]}"
-              if [[ -z "$best_version" || "$(printf '%s\n%s\n' "$best_version" "$version" | sort -V | tail -n 1)" == "$version" ]]; then
-                best_version="$version"; selected="$app"
-              fi
-            done
-          fi
-          if [[ -n "$selected" ]]; then sudo xcode-select -s "$selected/Contents/Developer"; fi
+          selected="/Applications/Xcode_${XCODE_VERSION}.app"
+          [[ -d "$selected" ]] || { echo "Xcode $XCODE_VERSION is not installed on this runner"; ls -d /Applications/Xcode*.app; exit 1; }
+          sudo xcode-select -s "$selected/Contents/Developer"
           xcodebuild -version
           xcodebuild -showsdks | grep -i 'iphoneos' || true
+          echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+          xcrun simctl list devices available | grep -i 'iPhone Duo' || echo 'No iPhone Duo simulator on this image'
       - name: Build for physical iPhone/iPad
         run: >-
           xcodebuild

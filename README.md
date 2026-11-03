@@ -338,7 +338,7 @@ Así `https://github.com/rsilva48/anksubbrd/releases/latest/download/AirPlaySubt
 
 ### Compilación iOS
 
-La app requiere iOS/iPadOS 26 y usa los componentes nativos de Liquid Glass. El workflow selecciona la versión estable más reciente de Xcode instalada en el runner, así que compila con el SDK de iOS 27 en cuanto la imagen de GitHub incluya Xcode 27; el paso **Select Xcode** muestra la versión y el SDK usados. Para fijar una versión instalada, define la variable de repositorio `XCODE_VERSION` (por ejemplo `26.6`).
+La app requiere iOS/iPadOS 26 y usa los componentes nativos de Liquid Glass. El build de iOS corre en el runner `xcode-27` con **Xcode 27.1**, el primero con el SDK del iPhone Duo (plegable); el paso **Select Xcode** muestra la versión, el SDK y si la imagen trae el simulador del iPhone Duo. Para usar otra versión instalada en esa imagen (27.0 o 27.2), define la variable de repositorio `XCODE_VERSION` (por ejemplo `27.2`).
 
 El IPA no está firmado: impórtalo en LiveContainer o fírmalo con tu herramienta de sideload (por ejemplo ByteLoader).
 
