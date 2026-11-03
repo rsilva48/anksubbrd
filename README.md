@@ -261,6 +261,7 @@ La app usa estas rutas; no necesitas llamarlas manualmente.
 - `GET` / `PUT /api/preferences`: preferencias privadas; gana la modificación más reciente.
 - `POST /api/admin/users` con el encabezado `X-Bridge-Admin-Token`: registra un token de usuario.
 - `POST /api/pair/start` y `GET /api/pair/status?pairingId=…` (sin identidad), `POST /api/pair/approve` con `{ "code", "label" }`: vinculación de la TV por QR.
+- `POST /api/identities` con `{ "label" }`: crea un perfil nuevo con la identidad que hace la petición; responde `{ token, userId, label }`. `GET`/`POST /setup?code=…`: página para completar la vinculación de una TV desde el navegador.
 - `GET /api/devices`: TVs conectadas de la identidad, con lo que reproducen, `stateAge` (ms desde ese informe) y `canOpen` (si la TV puede abrir la app sola). `PUT /api/devices/:id` con `{ "name", "state", "canOpen" }`: la TV informa su estado. `GET /api/devices/:id/commands`: la TV espera órdenes (long polling de hasta 25 s). `POST /api/devices/:id/commands` con `{ "type": "play" | "pause" | "resume" | "toggle" | "seek" | "skip" | "next" | "previous" | "stop" | "volume" | "subtitles", … }`: el teléfono envía una orden (`play` lleva `watchUrl`, `episode` y `kind`; `seek`, `position` absoluta o `seconds` relativos; `volume`, `steps`; `subtitles`, `track` con el id de una pista de `state.subtitles` u `off`).
 
 Las sesiones de serie caducan a los 20 minutos (HTTP 410); la app recarga la serie y reintenta sola. El bridge sólo acepta URLs `/watch/…` del origen configurado y no expone un proxy genérico.
@@ -277,6 +278,13 @@ La app de Android TV aparece como TV conectada para las apps que usan la misma i
 El control remoto muestra lo que reproduce la TV, con una barra de progreso que se puede arrastrar para ir a un punto exacto, y permite pausar o reanudar, ±10 s, saltar intro/outro cuando la TV lo ofrece, elegir los subtítulos (o desactivarlos; el idioma elegido sigue en los episodios siguientes), subir o bajar el volumen, episodio anterior o siguiente y detener. Las órdenes pasan por el bridge, así que funcionan aunque el teléfono y la TV no estén en la misma red. Una TV que deja de informar durante 45 s desaparece de la lista.
 
 Para que el teléfono pueda **abrir** la app de la TV cuando está cerrada, Android exige el permiso «Mostrar sobre otras apps»; la app de la TV muestra el botón **Abrir desde el teléfono**, que explica y abre ese ajuste. Sin él, la TV solo empieza episodios con la app en pantalla (el teléfono lo indica). En TV TCL, el «Escudo de autorización» del Administrador de TV bloquea el arranque automático de apps instaladas a mano: tras encender la TV hay que abrir la app una vez (después sigue disponible en segundo plano), salvo que se permita en Administrador de TV › Escudo de autorización › Permiso de lanzamiento automático.
+
+### Perfiles de la TV
+
+- **Vincular perfil** muestra un código QR que abre la página `/setup` del bridge en cualquier teléfono, sin instalar nada. Desde ahí se puede abrir la app («Abrir en la app», que vincula la TV con la identidad del teléfono), pegar un token existente o, la primera vez, crear la identidad con el token administrador del bridge. El token administrador sólo se comprueba, no se guarda; cada código admite cinco intentos y caduca a los 10 minutos.
+- **Crear perfil** crea un perfil nuevo con la identidad del perfil activo, sin token administrador (`POST /api/identities`, como mucho 10 perfiles por identidad y 5 por hora).
+- Manteniendo OK sobre un perfil: **Llevar al teléfono** muestra, tras un aviso, un QR con su identidad (`anksubbrd://identity?…`) que se oculta en un minuto; **Quitar** lo borra de la TV.
+- En el iPhone, ese QR se abre con la app Cámara o con **Configuración › Escanear código de la TV…**, que también lee los códigos de vinculación. Usar el perfil reemplaza la identidad actual (pide confirmar que guardaste su token) y, si el código es de otro bridge, lo prueba y se conecta a él.
 
 ## Versiones y releases
 

@@ -31,6 +31,8 @@
     </array>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>La cámara escanea los códigos QR de la TV para vincularla o para usar un perfil en este dispositivo.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>La app se conecta al bridge de vídeo dentro de tu red local.</string>
     <key>AVInitialRouteSharingPolicy</key>

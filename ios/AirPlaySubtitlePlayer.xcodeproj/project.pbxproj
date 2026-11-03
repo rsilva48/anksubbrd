@@ -22,6 +22,7 @@
 		A10000000000000000000113 /* ReleaseNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000213 /* ReleaseNotifications.swift */; };
 		A10000000000000000000114 /* RemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000214 /* RemoteControl.swift */; };
 		A10000000000000000000115 /* TVNowPlaying.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000215 /* TVNowPlaying.swift */; };
+		A10000000000000000000116 /* IdentityTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000216 /* IdentityTransfer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +44,7 @@
 		A10000000000000000000213 /* ReleaseNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReleaseNotifications.swift; sourceTree = "<group>"; };
 		A10000000000000000000214 /* RemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteControl.swift; sourceTree = "<group>"; };
 		A10000000000000000000215 /* TVNowPlaying.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVNowPlaying.swift; sourceTree = "<group>"; };
+		A10000000000000000000216 /* IdentityTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityTransfer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -51,7 +53,7 @@
 
 /* Begin PBXGroup section */
 		A10000000000000000000007 = {isa = PBXGroup; children = (A10000000000000000000008 /* AirPlaySubtitlePlayer */, A10000000000000000000009 /* Products */); sourceTree = "<group>"; };
-		A10000000000000000000008 /* AirPlaySubtitlePlayer */ = {isa = PBXGroup; children = (A10000000000000000000201 /* AirPlaySubtitlePlayerApp.swift */, A10000000000000000000202 /* Models.swift */, A10000000000000000000203 /* BridgeClient.swift */, A10000000000000000000204 /* ProfileStore.swift */, A10000000000000000000205 /* SharedViews.swift */, A10000000000000000000206 /* CatalogScreens.swift */, A10000000000000000000207 /* EpisodesScreen.swift */, A10000000000000000000208 /* HistoryScreen.swift */, A10000000000000000000209 /* SettingsScreen.swift */, A10000000000000000000210 /* Player.swift */, A10000000000000000000211 /* AppUpdate.swift */, A10000000000000000000212 /* Downloads.swift */, A10000000000000000000213 /* ReleaseNotifications.swift */, A10000000000000000000214 /* RemoteControl.swift */, A10000000000000000000215 /* TVNowPlaying.swift */, A10000000000000000000004 /* Info.plist */, A10000000000000000000021 /* Assets.xcassets */); path = .; sourceTree = "<group>"; };
+		A10000000000000000000008 /* AirPlaySubtitlePlayer */ = {isa = PBXGroup; children = (A10000000000000000000201 /* AirPlaySubtitlePlayerApp.swift */, A10000000000000000000202 /* Models.swift */, A10000000000000000000203 /* BridgeClient.swift */, A10000000000000000000204 /* ProfileStore.swift */, A10000000000000000000205 /* SharedViews.swift */, A10000000000000000000206 /* CatalogScreens.swift */, A10000000000000000000207 /* EpisodesScreen.swift */, A10000000000000000000208 /* HistoryScreen.swift */, A10000000000000000000209 /* SettingsScreen.swift */, A10000000000000000000210 /* Player.swift */, A10000000000000000000211 /* AppUpdate.swift */, A10000000000000000000212 /* Downloads.swift */, A10000000000000000000213 /* ReleaseNotifications.swift */, A10000000000000000000214 /* RemoteControl.swift */, A10000000000000000000215 /* TVNowPlaying.swift */, A10000000000000000000216 /* IdentityTransfer.swift */, A10000000000000000000004 /* Info.plist */, A10000000000000000000021 /* Assets.xcassets */); path = .; sourceTree = "<group>"; };
 		A10000000000000000000009 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000005 /* AirPlaySubtitlePlayer.app */,); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -68,7 +70,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A10000000000000000000012 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000101 /* AirPlaySubtitlePlayerApp.swift in Sources */, A10000000000000000000102 /* Models.swift in Sources */, A10000000000000000000103 /* BridgeClient.swift in Sources */, A10000000000000000000104 /* ProfileStore.swift in Sources */, A10000000000000000000105 /* SharedViews.swift in Sources */, A10000000000000000000106 /* CatalogScreens.swift in Sources */, A10000000000000000000107 /* EpisodesScreen.swift in Sources */, A10000000000000000000108 /* HistoryScreen.swift in Sources */, A10000000000000000000109 /* SettingsScreen.swift in Sources */, A10000000000000000000110 /* Player.swift in Sources */, A10000000000000000000111 /* AppUpdate.swift in Sources */, A10000000000000000000112 /* Downloads.swift in Sources */, A10000000000000000000113 /* ReleaseNotifications.swift in Sources */, A10000000000000000000114 /* RemoteControl.swift in Sources */, A10000000000000000000115 /* TVNowPlaying.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000012 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000101 /* AirPlaySubtitlePlayerApp.swift in Sources */, A10000000000000000000102 /* Models.swift in Sources */, A10000000000000000000103 /* BridgeClient.swift in Sources */, A10000000000000000000104 /* ProfileStore.swift in Sources */, A10000000000000000000105 /* SharedViews.swift in Sources */, A10000000000000000000106 /* CatalogScreens.swift in Sources */, A10000000000000000000107 /* EpisodesScreen.swift in Sources */, A10000000000000000000108 /* HistoryScreen.swift in Sources */, A10000000000000000000109 /* SettingsScreen.swift in Sources */, A10000000000000000000110 /* Player.swift in Sources */, A10000000000000000000111 /* AppUpdate.swift in Sources */, A10000000000000000000112 /* Downloads.swift in Sources */, A10000000000000000000113 /* ReleaseNotifications.swift in Sources */, A10000000000000000000114 /* RemoteControl.swift in Sources */, A10000000000000000000115 /* TVNowPlaying.swift in Sources */, A10000000000000000000116 /* IdentityTransfer.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

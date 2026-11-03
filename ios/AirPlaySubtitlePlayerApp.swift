@@ -65,6 +65,8 @@ struct RootView: View {
     @State private var showNotificationPrompt = false
     /// A TV pairing QR scanned with the camera (anksubbrd://pair…).
     @State private var pairingRequest: TVPairingRequest?
+    /// A TV profile's QR (anksubbrd://identity…) to use on this device.
+    @State private var identityRequest: IdentityTransferRequest?
     @State private var selection: AppTab = .latest
     /// Increments each time the Search tab is selected to focus its field.
     @State private var searchActivation = 0
@@ -164,10 +166,17 @@ struct RootView: View {
             Text("La app puede avisarte cuando salga un episodio nuevo de las series que sigues en Continuar viendo. Puedes cambiarlo cuando quieras en Configuración.")
         }
         .onOpenURL { url in
-            pairingRequest = TVPairingRequest(url: url)
+            if let identity = IdentityTransferRequest(url: url) {
+                identityRequest = identity
+            } else {
+                pairingRequest = TVPairingRequest(url: url)
+            }
         }
         .sheet(item: $pairingRequest) { request in
             TVPairingSheet(request: request)
+        }
+        .sheet(item: $identityRequest) { request in
+            IdentityImportSheet(request: request)
         }
         .sheet(item: $notifier.openedSeries) { anime in
             NavigationStack {

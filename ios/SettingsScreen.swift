@@ -23,6 +23,10 @@ struct SettingsScreen: View {
     @State private var preferences = UserPreferences()
     @State private var showProvisioning = false
     @State private var showImport = false
+    @State private var showScanner = false
+    /// A code read by the scanner, opened once the scanner has closed.
+    @State private var scannedCode: ScannedCode?
+    @State private var pendingScan: ScannedCode?
     @State private var showBackup = false
     @State private var showChangeWarning = false
     @State private var tokenError: String?
@@ -61,6 +65,18 @@ struct SettingsScreen: View {
         }
         .sheet(isPresented: $showProvisioning) {
             TokenProvisioningSheet(bridgeBaseURL: profile.bridgeURL) { token in try install(token: token) }
+        }
+        .sheet(isPresented: $showScanner, onDismiss: {
+            scannedCode = pendingScan
+            pendingScan = nil
+        }) {
+            CodeScannerSheet { pendingScan = $0 }
+        }
+        .sheet(item: $scannedCode) { code in
+            switch code {
+            case .identity(let request): IdentityImportSheet(request: request)
+            case .pairing(let request): TVPairingSheet(request: request)
+            }
         }
         .sheet(isPresented: $showImport) {
             TokenImportSheet { token in try install(token: token) }
@@ -199,6 +215,8 @@ struct SettingsScreen: View {
                 Button("Restaurar desde Llavero de iCloud…", action: restoreFromICloud)
                 Button("Importar token manualmente…") { showImport = true }
             }
+            // A TV's "Llevar al teléfono" profile, or a TV pairing code.
+            Button("Escanear código de la TV…", systemImage: "qrcode.viewfinder") { showScanner = true }
             if let tokenError {
                 ErrorNotice(message: tokenError)
             }
@@ -589,19 +607,29 @@ private struct TokenBackupSheet: View {
     }
 }
 
-/// A pairing QR shown by a TV app: `anksubbrd://pair?bridge=<url>&code=<code>`.
+/// A pairing QR shown by a TV app: the bridge's setup page
+/// (`https://<bridge>/setup?code=<code>`, scanned in the app) or the app link
+/// `anksubbrd://pair?bridge=<url>&code=<code>` (older TV apps, and the page's
+/// "Abrir en la app" button).
 struct TVPairingRequest: Identifiable {
     let code: String
     let bridge: String
     var id: String { code }
 
     init?(url: URL) {
-        guard url.scheme?.lowercased() == "anksubbrd", url.host?.lowercased() == "pair",
-              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
-              let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty,
-              let bridge = items.first(where: { $0.name == "bridge" })?.value, !bridge.isEmpty else { return nil }
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let code = items.first(where: { $0.name == "code" })?.value, !code.isEmpty else { return nil }
+        let scheme = url.scheme?.lowercased()
+        if scheme == "anksubbrd", url.host?.lowercased() == "pair",
+           let bridge = items.first(where: { $0.name == "bridge" })?.value, !bridge.isEmpty {
+            self.bridge = bridge
+        } else if scheme == "https" || scheme == "http", url.path == "/setup",
+                  let bridge = BridgeEndpoint.canonicalURL(url.absoluteString) {
+            self.bridge = bridge
+        } else {
+            return nil
+        }
         self.code = code
-        self.bridge = bridge
     }
 }
 
