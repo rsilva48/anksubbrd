@@ -47,7 +47,7 @@ La lista se divide en **En curso** (incluye las series con un episodio nuevo o, 
 
 Con el idioma de catálogo en japonés, la lista muestra el nombre en inglés y debajo el título japonés.
 
-En Android TV, Continuar, Recientes y Buscar muestran los pósters en la misma cuadrícula que se recorre hacia abajo. Mantener pulsado OK sobre una serie de Continuar abre un menú para abrirla o **quitarla de Continuar** (se quita también en el teléfono y en las demás TVs de esa identidad). En la ficha, la fila de temporadas indica cuál es la actual y cuántas hay («1 de 16»), y sus bordes se difuminan con ‹ › cuando hay más a los lados.
+En Android TV, Continuar, Recientes y Buscar muestran los pósters en la misma cuadrícula que se recorre hacia abajo. Continuar usa las mismas secciones y avisos que el iPhone (**En curso** con «Nuevo: episodio N» o «Nueva temporada», **Al día** con la fecha estimada del próximo episodio, **Completados**). Mantener pulsado OK sobre una serie de Continuar abre un menú para abrirla o **quitarla de Continuar** (se quita también en el teléfono y en las demás TVs de esa identidad). En la ficha, la fila de temporadas indica cuál es la actual y cuántas hay («1 de 16»), y sus bordes se difuminan con ‹ › cuando hay más a los lados.
 
 ### Descargas sin conexión
 

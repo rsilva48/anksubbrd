@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
@@ -38,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -146,27 +148,54 @@ private fun ContinueTab(session: Session, onOpen: (Anime) -> Unit) {
     val scope = rememberCoroutineScope()
     var menuFor by remember { mutableStateOf<HistoryEntry?>(null) }
     fun title(entry: HistoryEntry) = if (session.japanese) entry.titleJp ?: entry.seriesTitle else entry.seriesTitle
+    val finished = entries.filter { it.isCompleted }.map { catalogPath(it.watchUrl) }.toSet()
+    LaunchedEffect(finished) { session.loadStatuses() }
+    val states = entries.associate { it.watchUrl to continueState(session, it) }
+    val sections = listOf(
+        Triple("En curso", null as String?, entries.filter { states[it.watchUrl]?.section == 0 }),
+        Triple("Al día", "Vuelven a «En curso» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.", entries.filter { states[it.watchUrl]?.section == 1 }),
+        Triple("Completados", null, entries.filter { states[it.watchUrl]?.section == 2 }),
+    ).filter { it.third.isNotEmpty() }
     when {
         entries.isEmpty() && session.historyError != null -> Message(session.historyError.orEmpty())
         entries.isEmpty() -> Message("Las series que veas en este perfil (aquí o en el teléfono) aparecerán aquí.")
         else -> PosterGrid {
-            items(entries.size, key = { entries[it].watchUrl }) { index ->
-                val entry = entries[index]
-                val label = if (entry.isCompleted) "Episodio ${entry.episode} · visto" else "Episodio ${entry.episode} · ${formatTime(entry.positionSeconds)}"
-                PosterCard(
-                    title = title(entry),
-                    subtitle = label,
-                    imageUrl = entry.imageUrl,
-                    onClick = { onOpen(entry.asAnime()) },
-                    onLongClick = { menuFor = entry },
-                )
+            for ((heading, footer, group) in sections) {
+                item(key = "section:$heading", span = { GridItemSpan(maxLineSpan) }) {
+                    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(heading, style = MaterialTheme.typography.titleLarge)
+                        footer?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f)) }
+                    }
+                }
+                items(group.size, key = { group[it].watchUrl }) { index ->
+                    val entry = group[index]
+                    val state = states.getValue(entry.watchUrl)
+                    PosterCard(
+                        title = title(entry),
+                        subtitle = state.label(entry),
+                        highlight = state.isNews,
+                        imageUrl = entry.imageUrl,
+                        onClick = { onOpen(entry.asAnime()) },
+                        onLongClick = { menuFor = entry },
+                    )
+                }
             }
         }
     }
     menuFor?.let { entry ->
+        // The menu opens while OK is still held: its repeats and release
+        // must not press the focused button. Keys count from a new press.
+        var armed by remember(entry) { mutableStateOf(false) }
         Dialog(onDismissRequest = { menuFor = null }) {
             Surface(shape = RoundedCornerShape(24.dp)) {
-                Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(
+                    Modifier.padding(32.dp).onPreviewKeyEvent { event ->
+                        val key = event.nativeKeyEvent
+                        if (!armed && key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0) armed = true
+                        !armed
+                    },
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
                     Text(title(entry), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         "Quitarla de Continuar también la quita en el teléfono y en las demás TVs de este perfil.",
@@ -283,14 +312,29 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
 }
 
 @Composable
-fun PosterCard(title: String, subtitle: String, imageUrl: String?, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
+fun PosterCard(
+    title: String,
+    subtitle: String,
+    imageUrl: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    /** Shows the subtitle in the accent color (new episodes or seasons). */
+    highlight: Boolean = false,
+) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Card(onClick = onClick, onLongClick = onLongClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), scale = CardDefaults.scale(focusedScale = 1f)) {
             AsyncImage(model = imageUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
         Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (subtitle.isNotEmpty()) {
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f), maxLines = 1)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (highlight) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.6f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -463,4 +507,56 @@ private fun EdgeHint(start: Boolean, modifier: Modifier) {
             Text(if (start) "‹" else "›", style = MaterialTheme.typography.headlineMedium, color = Color.White.copy(alpha = 0.8f))
         }
     }
+}
+
+/**
+ * Where a series stands for the viewer (as on the phone), from its history
+ * entry and the bridge's episode counts for the Sub/Dub kind they watch.
+ */
+private sealed interface ContinueState {
+    data object InProgress : ContinueState
+    /** The finished episode has successors of the same kind. */
+    data class NewEpisodes(val count: Int) : ContinueState
+    /** The series is complete and the watch order has a season not started yet. */
+    data class NextSeason(val season: Season) : ContinueState
+    /** Watched up to the newest episode of a series still airing. */
+    data class CaughtUp(val nextAt: Double?) : ContinueState
+    data object Completed : ContinueState
+
+    val section: Int
+        get() = when (this) {
+            InProgress, is NewEpisodes, is NextSeason -> 0
+            is CaughtUp -> 1
+            Completed -> 2
+        }
+
+    val isNews: Boolean get() = this is NewEpisodes || this is NextSeason
+
+    fun label(entry: HistoryEntry): String = when (this) {
+        InProgress -> "Episodio ${entry.episode} · ${formatTime(entry.positionSeconds)}"
+        is NewEpisodes -> if (count == 1) "Nuevo: episodio ${entry.episode + 1}" else "$count episodios nuevos desde el ${entry.episode + 1}"
+        is NextSeason -> "Nueva temporada: ${season.displayLabel}"
+        is CaughtUp -> airingLabel(nextAt)?.let { "Al día · episodio ${entry.episode} · próximo: $it" } ?: "Al día · viste el episodio ${entry.episode}"
+        Completed -> "Completada · ${entry.episode} episodios"
+    }
+}
+
+private fun continueState(session: Session, entry: HistoryEntry): ContinueState {
+    if (!entry.isCompleted) return ContinueState.InProgress
+    val kind = entry.serverKind ?: session.preferences.defaultTrackType
+    val status = session.statuses[catalogPath(entry.watchUrl)]
+    val latest = status?.latest(kind)
+    if (latest != null && latest > entry.episode) return ContinueState.NewEpisodes(latest - entry.episode)
+    val total = status?.totalEpisodes ?: entry.totalEpisodes
+    val isFinal = if (total != null) entry.episode >= total else status?.status == "finished" && entry.episode >= (latest ?: entry.episode)
+    if (!isFinal) return ContinueState.CaughtUp(status?.nextEpisodeAt)
+    status?.nextSeason?.takeIf { session.entry(it.watchUrl) == null }?.let { return ContinueState.NextSeason(it) }
+    return ContinueState.Completed
+}
+
+/** "jue 5 nov, 11:28" in the TV's time zone, for a release still in the future. */
+private fun airingLabel(unixSeconds: Double?): String? {
+    val millis = unixSeconds?.takeIf { it > 0 }?.let { (it * 1000).toLong() } ?: return null
+    if (millis <= System.currentTimeMillis()) return null
+    return java.text.SimpleDateFormat("EEE d MMM, HH:mm", java.util.Locale.forLanguageTag("es")).format(java.util.Date(millis)).replace(".", "")
 }

@@ -26,6 +26,9 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
         private set
     var historyError by mutableStateOf<String?>(null)
         private set
+    /** Bridge episode counts by catalog path; only finished entries need them. */
+    var statuses by mutableStateOf<Map<String, SeriesStatus>>(emptyMap())
+        private set
 
     val japanese: Boolean get() = preferences.titleLanguage == "jp"
 
@@ -63,6 +66,17 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
         history = listOf(entry) + history.filterNot { catalogPath(it.watchUrl) == catalogPath(entry.watchUrl) }
         persistHistory()
         runCatching { client.saveHistory(listOf(entry)) }
+    }
+
+    /** Loads the status of the series whose last watched episode is finished. */
+    suspend fun loadStatuses() {
+        val urls = history.filter { it.isCompleted }.map { it.watchUrl }.distinctBy(::catalogPath)
+        if (urls.isEmpty()) return
+        try {
+            statuses = statuses + client.seriesStatuses(urls).associateBy { catalogPath(it.watchUrl) }
+        } catch (error: BridgeException) {
+            // Older bridges: entries stay grouped by their own details.
+        }
     }
 
     /** Removes a series from Continue, here and (as a deletion) on the bridge and the phone. */

@@ -66,6 +66,27 @@ data class Season(
     fun asAnime() = Anime(title = title, watchUrl = watchUrl, imageUrl = imageUrl, titleJp = titleJp)
 }
 
+/** Episode counts of a series for Continue: the newest Sub/Dub episode and what follows it. */
+@Serializable
+data class SeriesStatus(
+    val watchUrl: String,
+    val totalEpisodes: Int? = null,
+    val status: String? = null,
+    val latestSub: Int? = null,
+    val latestDub: Int? = null,
+    val nextSeason: Season? = null,
+    /** Unix seconds of the next episode's estimated release. */
+    val nextEpisodeAt: Double? = null,
+) {
+    fun latest(kind: String): Int? = if (kind == "dub") latestDub else latestSub
+}
+
+@Serializable
+private data class SeriesStatusRequest(val watchUrls: List<String>)
+
+@Serializable
+private data class SeriesStatusResponse(val statuses: List<SeriesStatus> = emptyList())
+
 @Serializable
 data class Series(
     val seriesKey: String,
@@ -286,6 +307,10 @@ class BridgeClient(val baseUrl: String, private val token: String) {
     suspend fun startPairing(): PairingStart = post("/api/pair/start", "{}")
 
     suspend fun pairingStatus(pairingId: String): PairingStatus = get("/api/pair/status", listOf("pairingId" to pairingId))
+
+    /** Status of up to 50 series (older bridges answer 404). */
+    suspend fun seriesStatuses(watchUrls: List<String>): List<SeriesStatus> =
+        post<SeriesStatusResponse>("/api/series/status", json.encodeToString(SeriesStatusRequest.serializer(), SeriesStatusRequest(watchUrls.take(50)))).statuses
 
     suspend fun reportDevice(deviceId: String, name: String, state: DeviceState, canOpen: Boolean) {
         send<OkResponse>("PUT", "/api/devices/$deviceId", emptyList(), json.encodeToString(DeviceReport.serializer(), DeviceReport(name, state, canOpen)))
