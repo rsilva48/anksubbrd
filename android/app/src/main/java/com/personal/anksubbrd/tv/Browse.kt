@@ -11,18 +11,21 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +37,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -45,6 +49,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.Button
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
@@ -54,6 +59,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Tab
 import androidx.tv.material3.TabRow
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import coil3.SingletonImageLoader
@@ -133,25 +139,67 @@ private fun StartupScreen() {
     }
 }
 
+/** Continue watching, in the same grid as Recents and Search; holding OK on a series opens its menu. */
 @Composable
 private fun ContinueTab(session: Session, onOpen: (Anime) -> Unit) {
     val entries = session.history
+    val scope = rememberCoroutineScope()
+    var menuFor by remember { mutableStateOf<HistoryEntry?>(null) }
+    fun title(entry: HistoryEntry) = if (session.japanese) entry.titleJp ?: entry.seriesTitle else entry.seriesTitle
     when {
         entries.isEmpty() && session.historyError != null -> Message(session.historyError.orEmpty())
         entries.isEmpty() -> Message("Las series que veas en este perfil (aquí o en el teléfono) aparecerán aquí.")
-        else -> LazyRow(horizontalArrangement = Arrangement.spacedBy(20.dp), contentPadding = PaddingValues(vertical = 12.dp)) {
-            items(entries, key = { it.watchUrl }) { entry ->
+        else -> PosterGrid {
+            items(entries.size, key = { entries[it].watchUrl }) { index ->
+                val entry = entries[index]
                 val label = if (entry.isCompleted) "Episodio ${entry.episode} · visto" else "Episodio ${entry.episode} · ${formatTime(entry.positionSeconds)}"
                 PosterCard(
-                    title = if (session.japanese) entry.titleJp ?: entry.seriesTitle else entry.seriesTitle,
+                    title = title(entry),
                     subtitle = label,
                     imageUrl = entry.imageUrl,
-                    modifier = Modifier.width(180.dp),
                     onClick = { onOpen(entry.asAnime()) },
+                    onLongClick = { menuFor = entry },
                 )
             }
         }
     }
+    menuFor?.let { entry ->
+        Dialog(onDismissRequest = { menuFor = null }) {
+            Surface(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(title(entry), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "Quitarla de Continuar también la quita en el teléfono y en las demás TVs de este perfil.",
+                        color = Color.White.copy(alpha = 0.7f),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = {
+                            menuFor = null
+                            onOpen(entry.asAnime())
+                        }) { Text("Abrir") }
+                        OutlinedButton(onClick = {
+                            menuFor = null
+                            scope.launch { session.remove(entry) }
+                        }) { Text("Quitar de Continuar") }
+                        OutlinedButton(onClick = { menuFor = null }) { Text("Cancelar") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Posters in rows that scroll down: Continue, Recents and Search. */
+@Composable
+private fun PosterGrid(content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit) {
+    LazyVerticalGrid(
+        // Five posters per row on a 1080p TV.
+        columns = GridCells.Adaptive(140.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
+        contentPadding = PaddingValues(top = 4.dp, bottom = 48.dp),
+        content = content,
+    )
 }
 
 /** Recents (Sub/Dub/both, the configured kind first) or search results, paged. */
@@ -217,12 +265,7 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
             visible.isEmpty() && error != null -> Message(error.orEmpty())
             visible.isEmpty() && searching && submitted.isBlank() -> Message("Escribe un título y pulsa Buscar en el teclado.")
             visible.isEmpty() -> Message("Sin resultados.")
-            else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(160.dp),
-                horizontalArrangement = Arrangement.spacedBy(20.dp),
-                verticalArrangement = Arrangement.spacedBy(24.dp),
-                contentPadding = PaddingValues(bottom = 48.dp),
-            ) {
+            else -> PosterGrid {
                 itemsIndexed(visible, key = { _, anime -> anime.watchUrl }) { index, anime ->
                     if (index == visible.lastIndex && hasNext && !loading) {
                         LaunchedEffect(page) { scope.launch { load(page + 1) } }
@@ -240,9 +283,9 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
 }
 
 @Composable
-fun PosterCard(title: String, subtitle: String, imageUrl: String?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun PosterCard(title: String, subtitle: String, imageUrl: String?, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Card(onClick = onClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), scale = CardDefaults.scale(focusedScale = 1f)) {
+        Card(onClick = onClick, onLongClick = onLongClick, modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f), scale = CardDefaults.scale(focusedScale = 1f)) {
             AsyncImage(model = imageUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
         Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -340,15 +383,7 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
                     }
                 }
                 if (loaded.seasons.size > 1) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(loaded.seasons, key = { it.watchUrl }) { season ->
-                            if (catalogPath(season.watchUrl) == catalogPath(current.watchUrl)) {
-                                Button(onClick = {}) { Text(season.displayLabel, maxLines = 1) }
-                            } else {
-                                OutlinedButton(onClick = { current = season.asAnime() }) { Text(season.displayLabel, maxLines = 1) }
-                            }
-                        }
-                    }
+                    SeasonRow(loaded.seasons, current) { current = it.asAnime() }
                 }
                 busy?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -374,6 +409,58 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
             } else {
                 Text(error ?: "Cargando episodios…", color = if (error != null) MaterialTheme.colorScheme.error else Color.White.copy(alpha = 0.7f))
             }
+        }
+    }
+}
+
+/**
+ * Seasons and related entries. The padding leaves room for the enlarged
+ * focused pill; fades with arrows at the edges show there are more.
+ */
+@Composable
+private fun SeasonRow(seasons: List<Season>, current: Anime, onSelect: (Season) -> Unit) {
+    val state = rememberLazyListState()
+    val index = seasons.indexOfFirst { catalogPath(it.watchUrl) == catalogPath(current.watchUrl) }
+    LaunchedEffect(seasons, index) { if (index > 0) state.scrollToItem(index) }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            if (index >= 0) "Temporadas y extras · ${index + 1} de ${seasons.size}" else "Temporadas y extras · ${seasons.size}",
+            style = MaterialTheme.typography.labelLarge,
+            color = Color.White.copy(alpha = 0.6f),
+        )
+        Box {
+            LazyRow(
+                state = state,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                items(seasons, key = { it.watchUrl }) { season ->
+                    // Long names (movies, specials) are shortened.
+                    val label = @Composable { Text(season.displayLabel, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 320.dp)) }
+                    if (catalogPath(season.watchUrl) == catalogPath(current.watchUrl)) {
+                        Button(onClick = {}) { label() }
+                    } else {
+                        OutlinedButton(onClick = { onSelect(season) }) { label() }
+                    }
+                }
+            }
+            if (state.canScrollBackward) EdgeHint(start = true, Modifier.matchParentSize())
+            if (state.canScrollForward) EdgeHint(start = false, Modifier.matchParentSize())
+        }
+    }
+}
+
+@Composable
+private fun EdgeHint(start: Boolean, modifier: Modifier) {
+    val background = Color(0xFF0B0B12)
+    Box(modifier, contentAlignment = if (start) Alignment.CenterStart else Alignment.CenterEnd) {
+        Box(
+            Modifier.fillMaxHeight().width(96.dp).background(
+                Brush.horizontalGradient(if (start) listOf(background, Color.Transparent) else listOf(Color.Transparent, background)),
+            ),
+            contentAlignment = if (start) Alignment.CenterStart else Alignment.CenterEnd,
+        ) {
+            Text(if (start) "‹" else "›", style = MaterialTheme.typography.headlineMedium, color = Color.White.copy(alpha = 0.8f))
         }
     }
 }

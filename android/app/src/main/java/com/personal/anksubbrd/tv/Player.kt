@@ -35,6 +35,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -66,6 +67,8 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     /** "−10 s · 01:38" after seeking with the controls hidden. */
     var seekNotice by remember { mutableStateOf<String?>(null) }
+    /** Subtitle language chosen from the phone ("off" hides them), kept for the next episodes. */
+    var remoteSubtitles by remember { mutableStateOf<String?>(null) }
     val player = remember { ExoPlayer.Builder(context).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build() }
 
     fun entry(completed: Boolean? = null): HistoryEntry? {
@@ -114,11 +117,15 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
     // the device language or English); Dub leaves them to the stream.
     LaunchedEffect(request, attempt) {
         val preferences = session.preferences
-        val subtitleLanguage = preferences.subtitleLanguage.takeUnless { it.isEmpty() || it == "off" } ?: Locale.getDefault().language
+        val chosen = remoteSubtitles ?: preferences.subtitleLanguage
+        val subtitleLanguage = chosen.takeUnless { it.isEmpty() || it == "off" } ?: Locale.getDefault().language
+        // A language chosen from the phone also applies to Dub episodes.
+        val showText = request.kind == "sub" || remoteSubtitles != null
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, request.kind == "sub" && preferences.subtitleLanguage == "off")
-            .setPreferredTextLanguages(*(if (request.kind == "sub") arrayOf(subtitleLanguage, "en") else emptyArray()))
-            .setSelectUndeterminedTextLanguage(request.kind == "sub")
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, showText && chosen == "off")
+            .setPreferredTextLanguages(*(if (showText) arrayOf(subtitleLanguage, "en") else emptyArray()))
+            .setSelectUndeterminedTextLanguage(showText)
             .build()
         val start = session.position(request.anime.watchUrl, request.episode.number)
         player.setMediaItem(MediaItem.fromUri(request.playback.playbackUrl), (start * 1000).toLong())
@@ -142,6 +149,7 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
                     player.seekTo((range.end * 1000).toLong())
                     skip = null
                 }
+                "subtitles" -> selectSubtitles(player, command.track)?.let { remoteSubtitles = it }
                 "next" -> request.series.episodeAfter(request.episode.number, request.kind)?.let { open(it) }
                 "previous" -> request.series.episodeBefore(request.episode.number)?.let { open(it) }
                 "stop" -> onExit()
@@ -178,6 +186,8 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
                 position = player.currentPosition / 1000.0,
                 duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }?.let { it / 1000.0 },
                 skip = skip?.first,
+                subtitles = subtitleOptions(player),
+                subtitle = selectedSubtitle(player),
             )
         }
     }
@@ -366,6 +376,35 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
 
 /** Moves the focus to the play/pause button once the controls are laid out. */
 @AndroidXOptIn(UnstableApi::class)
+// Subtitle tracks are identified by their group and track index, stable
+// while the episode is loaded.
+private fun textTracks(player: Player) = player.currentTracks.groups.withIndex()
+    .filter { (_, group) -> group.type == C.TRACK_TYPE_TEXT }
+    .flatMap { (groupIndex, group) -> (0 until group.length).filter(group::isTrackSupported).map { Triple("$groupIndex:$it", group, it) } }
+
+private fun subtitleOptions(player: Player): List<SubtitleOption> = textTracks(player).map { (id, group, index) ->
+    val format = group.getTrackFormat(index)
+    val language = format.language?.takeUnless { it == C.LANGUAGE_UNDETERMINED }
+        ?.let { Locale.forLanguageTag(it).getDisplayLanguage(Locale.forLanguageTag("es")).replaceFirstChar(Char::titlecase) }
+    SubtitleOption(id, format.label ?: language ?: "Pista ${index + 1}")
+}
+
+private fun selectedSubtitle(player: Player): String? =
+    textTracks(player).firstOrNull { (_, group, index) -> group.isTrackSelected(index) }?.first
+
+/** Shows a subtitle track ("off" hides them); returns the language to keep for the next episodes. */
+private fun selectSubtitles(player: Player, track: String?): String? {
+    val builder = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
+    if (track == null || track == "off") {
+        player.trackSelectionParameters = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+        return "off"
+    }
+    val (_, group, index) = textTracks(player).firstOrNull { it.first == track } ?: return null
+    player.trackSelectionParameters = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+        .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index)).build()
+    return group.getTrackFormat(index).language
+}
+
 private fun focusPlayPause(view: PlayerView) {
     view.post { view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)?.requestFocus() }
 }

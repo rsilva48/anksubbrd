@@ -98,6 +98,8 @@ final class PlayerModel: Identifiable {
     func start() {
         guard !started else { return }
         started = true
+        // The volume buttons control this device again, not the TV.
+        TVVolumeRelay.shared.localPlayback = true
         AudioSession.configure()
         AudioSession.setActive(true)
         player.allowsExternalPlayback = true
@@ -110,6 +112,7 @@ final class PlayerModel: Identifiable {
     func close() {
         guard started, !closed else { return }
         closed = true
+        TVVolumeRelay.shared.localPlayback = false
         loadWatchdog?.cancel()
         saveProgress()
         playerObservations.forEach { $0.invalidate() }

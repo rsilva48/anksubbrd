@@ -65,6 +65,13 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
         runCatching { client.saveHistory(listOf(entry)) }
     }
 
+    /** Removes a series from Continue, here and (as a deletion) on the bridge and the phone. */
+    suspend fun remove(entry: HistoryEntry) {
+        history = history.filterNot { catalogPath(it.watchUrl) == catalogPath(entry.watchUrl) }
+        persistHistory()
+        runCatching { client.saveHistory(emptyList(), listOf(HistoryDeletion(entry.watchUrl, HistoryEntry.now()))) }
+    }
+
     /**
      * Resolves an episode: the preferred server first, then the other
      * servers of the same kind (servers differ between episodes and can

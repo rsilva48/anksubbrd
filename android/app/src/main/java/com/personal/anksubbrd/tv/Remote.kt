@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 
 /**
  * Remote control from the phone apps of the same identity, through the
@@ -51,7 +53,14 @@ object Remote {
  * Keeps this TV visible to the phones (a report on every change and every
  * few seconds) and long-polls for commands.
  */
-suspend fun runRemoteControl(client: BridgeClient, deviceId: String, deviceName: String, canOpen: () -> Boolean, onPlay: (RemoteCommand) -> Unit) = coroutineScope {
+suspend fun runRemoteControl(
+    client: BridgeClient,
+    deviceId: String,
+    deviceName: String,
+    canOpen: () -> Boolean,
+    onVolume: (Int) -> Unit,
+    onPlay: (RemoteCommand) -> Unit,
+) = coroutineScope {
     launch {
         while (isActive) {
             val current = Remote.state.value
@@ -63,7 +72,8 @@ suspend fun runRemoteControl(client: BridgeClient, deviceId: String, deviceName:
             withTimeoutOrNull(if (current.status == "playing") 5_000L else 15_000L) {
                 merge(
                     Remote.state.filter {
-                        it.status != current.status || it.watchUrl != current.watchUrl || it.episode != current.episode || it.skip != current.skip
+                        it.status != current.status || it.watchUrl != current.watchUrl || it.episode != current.episode || it.skip != current.skip ||
+                            it.subtitle != current.subtitle || it.subtitles != current.subtitles
                     },
                     Remote.foreground.filter { it != foreground },
                     Remote.handled.filter { it != handled },
@@ -82,7 +92,11 @@ suspend fun runRemoteControl(client: BridgeClient, deviceId: String, deviceName:
                 continue
             }
             for (command in commands) {
-                if (command.type == "play") onPlay(command) else Remote.playerCommands.emit(command)
+                when (command.type) {
+                    "play" -> onPlay(command)
+                    "volume" -> command.steps?.let(onVolume)
+                    else -> Remote.playerCommands.emit(command)
+                }
             }
             if (commands.isNotEmpty()) Remote.handled.value = System.currentTimeMillis()
         }
@@ -125,7 +139,11 @@ class RemoteService : Service() {
             job?.cancel()
             val name = Settings.Global.getString(contentResolver, "device_name") ?: Build.MODEL
             job = scope.launch {
-                runRemoteControl(state.client(profile), state.deviceId, name, canOpen = { Settings.canDrawOverlays(this@RemoteService) }) { command ->
+                runRemoteControl(
+                    state.client(profile), state.deviceId, name,
+                    canOpen = { Settings.canDrawOverlays(this@RemoteService) },
+                    onVolume = ::changeVolume,
+                ) { command ->
                     val open = Intent(this@RemoteService, MainActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         .putExtra(EXTRA_PLAY, BridgeClient.json.encodeToString(RemoteCommand.serializer(), command))
@@ -134,6 +152,16 @@ class RemoteService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    // The TV's own volume; on a box connected by HDMI, Android forwards it
+    // to the TV (or receiver) over CEC, like the remote's volume keys.
+    private fun changeVolume(steps: Int) {
+        val audio = getSystemService(AudioManager::class.java) ?: return
+        val direction = if (steps > 0) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+        repeat(minOf(abs(steps), 20)) {
+            audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+        }
     }
 
     override fun onDestroy() {

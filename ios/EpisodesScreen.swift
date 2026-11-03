@@ -115,6 +115,11 @@ struct EpisodesScreen: View {
     @State private var downloadNotice: String?
     /// Opens the remote control, optionally starting an episode on a TV.
     @State private var remoteRequest: RemotePlayRequest?
+    /// The TV chosen in the remote: playing sends episodes there.
+    @AppStorage(TVRemoteSheet.connectedKey) private var connectedTV = ""
+    /// Episode sent to the TV, to play here instead if the TV is not available.
+    @State private var remoteEpisode: Episode?
+    @State private var playHereAfterRemote: Episode?
     /// The bridge could not be reached: saved series data and downloads only.
     @State private var isOffline = false
     @State private var pendingServer: (episode: Episode, server: Server)?
@@ -210,8 +215,19 @@ struct EpisodesScreen: View {
                 serverChoice = nil
             }
         }
-        .sheet(item: $remoteRequest) { request in
-            TVRemoteSheet(play: request.command, playTitle: request.title, autoplay: request.autoplay)
+        .sheet(item: $remoteRequest, onDismiss: {
+            // "Reproducir en este iPhone" from the remote, once it has closed.
+            if let episode = playHereAfterRemote {
+                playHereAfterRemote = nil
+                openHere(episode)
+            }
+        }) { request in
+            TVRemoteSheet(play: request.command, playTitle: request.title, autoplay: request.autoplay, playHere: remoteEpisode.map { episode -> () -> Void in
+                {
+                    playHereAfterRemote = episode
+                    remoteRequest = nil
+                }
+            })
         }
         .sheet(item: $downloadRequest) { request in
             ServerPicker(choice: request.choice, defaultKind: request.kind, title: request.title, actionSymbol: "arrow.down.circle") { server in
@@ -301,14 +317,18 @@ struct EpisodesScreen: View {
                let episode = series.episodes.first(where: { $0.number == entry.episode }) {
                 let kind = entry.kind ?? profile.preferences.defaultTrack
                 if !entry.isCompleted {
-                    actionButton("Continuar episodio \(entry.episode) · \(formatTime(entry.positionSeconds))") {
-                        start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
+                    actionButton("Continuar episodio \(entry.episode) · \(formatTime(entry.positionSeconds))", systemImage: playSymbol) {
+                        if !playOnTV(episode) {
+                            start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
+                        }
                     }
                 } else if let next = series.episode(after: entry.episode, kind: kind) {
                     // Finished episodes never reopen on their last second:
                     // the next one with the same Sub/Dub kind starts instead.
-                    actionButton("Ver episodio \(next.number) · siguiente") {
-                        start { try await $0.session(for: next, preferredName: entry.serverName, kind: kind) }
+                    actionButton("Ver episodio \(next.number) · siguiente", systemImage: playSymbol) {
+                        if !playOnTV(next) {
+                            start { try await $0.session(for: next, preferredName: entry.serverName, kind: kind) }
+                        }
                     }
                 } else {
                     let finished = isFinalEpisode(entry.episode, totalEpisodes: series.totalEpisodes, status: series.status, latestEpisode: series.episodes.last?.number)
@@ -324,7 +344,9 @@ struct EpisodesScreen: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     Button {
-                        start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
+                        if !playOnTV(episode) {
+                            start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
+                        }
                     } label: {
                         Label("Volver a ver el episodio \(entry.episode)", systemImage: "arrow.counterclockwise")
                             .frame(maxWidth: .infinity)
@@ -335,7 +357,7 @@ struct EpisodesScreen: View {
                 Button {
                     open(episode)
                 } label: {
-                    Label(episode.number == latestEpisode ? "Ver episodio \(episode.number) (nuevo)" : "Empezar con el episodio \(episode.number)", systemImage: "play.fill")
+                    Label(episode.number == latestEpisode ? "Ver episodio \(episode.number) (nuevo)" : "Empezar con el episodio \(episode.number)", systemImage: playSymbol)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glassProminent)
@@ -388,6 +410,9 @@ struct EpisodesScreen: View {
                         }
                     }
                     Button("Ver en TV", systemImage: "tv") { watchOnTV(episode) }
+                    if !connectedTV.isEmpty {
+                        Button("Ver en este iPhone", systemImage: "iphone") { openHere(episode) }
+                    }
                     Button("Elegir servidor en línea", systemImage: "antenna.radiowaves.left.and.right") {
                         chooseServer(for: episode)
                     }
@@ -455,7 +480,7 @@ struct EpisodesScreen: View {
         if let record = downloads.record(watchUrl: current.watchUrl, episode: episode.number) {
             Menu {
                 if record.state == .completed {
-                    Button("Ver sin conexión", systemImage: "play.fill") { open(episode) }
+                    Button("Ver sin conexión", systemImage: "play.fill") { openHere(episode) }
                 }
                 if record.state == .failed {
                     Button("Reintentar descarga", systemImage: "arrow.clockwise") {
@@ -495,8 +520,19 @@ struct EpisodesScreen: View {
         return series.episode(after: entry.episode, kind: kind) ?? series.episodes.first { $0.number == entry.episode }
     }
 
+    /// With a TV connected (and the bridge reachable), playing sends the
+    /// episode there; false when it should play here.
+    private func playOnTV(_ episode: Episode) -> Bool {
+        guard !connectedTV.isEmpty, !isOffline else { return false }
+        watchOnTV(episode)
+        return true
+    }
+
+    private var playSymbol: String { connectedTV.isEmpty || isOffline ? "play.fill" : "play.tv.fill" }
+
     private func watchOnTV(_ episode: Episode?, autoplay: Bool = true) {
         let kind = profile.entry(for: current.watchUrl)?.kind ?? profile.preferences.defaultTrack
+        remoteEpisode = episode
         remoteRequest = RemotePlayRequest(
             command: episode.map { RemoteCommand.play(current.watchUrl, episode: $0.number, kind: kind) },
             title: episode.map { "\(current.displayTitle(language)) · episodio \($0.number)" },
@@ -504,8 +540,13 @@ struct EpisodesScreen: View {
         )
     }
 
-    /// Downloaded episodes play from disk; the rest ask for a server.
+    /// Plays on the connected TV, or here.
     private func open(_ episode: Episode) {
+        if !playOnTV(episode) { openHere(episode) }
+    }
+
+    /// Downloaded episodes play from disk; the rest ask for a server.
+    private func openHere(_ episode: Episode) {
         let preferred = profile.entry(for: current.watchUrl)?.kind ?? profile.preferences.defaultTrack
         let local = [preferred, preferred == .sub ? .dub : .sub].first {
             downloads.record(watchUrl: current.watchUrl, episode: episode.number, kind: $0)?.state == .completed

@@ -546,7 +546,8 @@ function approvePairing(code, label, user) {
 // stops reporting for 45 seconds is offline.
 const devices = new Map();
 const deviceTimeout = 45 * 1000;
-const commandTypes = ['play', 'pause', 'resume', 'toggle', 'seek', 'skip', 'next', 'previous', 'stop'];
+const commandTypes = ['play', 'pause', 'resume', 'toggle', 'seek', 'skip', 'next', 'previous', 'stop', 'volume', 'subtitles'];
+const subtitleTrackId = /^(?:off|\d{1,3}:\d{1,3})$/;
 function deviceFor(user, deviceId, create = true) {
   const id = cleanText(deviceId);
   if (!/^[\w-]{8,64}$/.test(id)) throw new HttpError(400, 'Invalid device id');
@@ -569,6 +570,13 @@ function deviceState(value) {
     kind: ['sub', 'dub'].includes(value.kind) ? value.kind : null,
     position: seconds(value.position), duration: seconds(value.duration),
     skip: text('skip', 40),
+    // Subtitle tracks the TV can show ("group:track" ids) and the one shown.
+    subtitles: Array.isArray(value.subtitles)
+      ? value.subtitles.slice(0, 30)
+        .filter((track) => subtitleTrackId.test(String(track?.id)) && track.id !== 'off')
+        .map((track) => ({ id: track.id, label: historyText(track.label, track.id, 80) }))
+      : [],
+    subtitle: subtitleTrackId.test(String(value.subtitle)) ? value.subtitle : null,
   };
 }
 function reportDevice(user, deviceId, body) {
@@ -609,6 +617,17 @@ function sendCommand(user, deviceId, body) {
     if (valid(body.position) && Number(body.position) >= 0) command.position = Number(body.position);
     else if (valid(body.seconds)) command.seconds = Number(body.seconds);
     else throw new HttpError(400, 'Invalid seek');
+  }
+  if (type === 'volume') {
+    // Volume steps of the TV (the phone's volume buttons): up when positive.
+    const steps = Number(body.steps);
+    if (!Number.isInteger(steps) || steps === 0 || Math.abs(steps) > 20) throw new HttpError(400, 'Invalid volume');
+    command.steps = steps;
+  }
+  if (type === 'subtitles') {
+    const track = cleanText(body.track) || 'off';
+    if (!subtitleTrackId.test(track)) throw new HttpError(400, 'Invalid subtitle track');
+    command.track = track;
   }
   device.queue.push(command);
   if (device.queue.length > 20) device.queue.shift();

@@ -173,6 +173,10 @@ data class RemoteCommand(
     val seconds: Double? = null,
     /** Absolute position for "seek", from scrubbing on the phone. */
     val position: Double? = null,
+    /** Volume steps for "volume" (positive raises it). */
+    val steps: Int? = null,
+    /** Subtitle track for "subtitles" ([SubtitleOption.id], or "off"). */
+    val track: String? = null,
 )
 
 @Serializable
@@ -193,7 +197,13 @@ data class DeviceState(
     val duration: Double? = null,
     /** "Saltar intro"/"Saltar outro" while that skip is offered. */
     val skip: String? = null,
+    /** Subtitle tracks of the episode, and the one shown (null: off). */
+    val subtitles: List<SubtitleOption> = emptyList(),
+    val subtitle: String? = null,
 )
+
+@Serializable
+data class SubtitleOption(val id: String, val label: String)
 
 @Serializable
 private data class DeviceReport(val name: String, val state: DeviceState, val canOpen: Boolean)
@@ -268,8 +278,8 @@ class BridgeClient(val baseUrl: String, private val token: String) {
 
     suspend fun history(): HistoryPayload = get("/api/history")
 
-    suspend fun saveHistory(entries: List<HistoryEntry>): HistoryPayload =
-        send("PUT", "/api/history", emptyList(), json.encodeToString(HistoryPayload.serializer(), HistoryPayload(entries)))
+    suspend fun saveHistory(entries: List<HistoryEntry>, deletions: List<HistoryDeletion> = emptyList()): HistoryPayload =
+        send("PUT", "/api/history", emptyList(), json.encodeToString(HistoryPayload.serializer(), HistoryPayload(entries, deletions)))
 
     suspend fun preferences(): Preferences = get<PreferencesEnvelope>("/api/preferences").preferences ?: Preferences()
 

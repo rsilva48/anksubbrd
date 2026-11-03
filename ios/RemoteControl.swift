@@ -1,3 +1,5 @@
+import AVFAudio
+import MediaPlayer
 import SwiftUI
 
 /// A TV app of this identity, as it reports itself to the bridge.
@@ -24,6 +26,9 @@ struct RemoteDeviceState: Decodable, Hashable {
     let duration: Double?
     /// "Saltar intro"/"Saltar outro" while the TV offers that skip.
     let skip: String?
+    /// Subtitle tracks of the episode and the one shown (nil: off).
+    let subtitles: [RemoteSubtitle]?
+    let subtitle: String?
 
     var isActive: Bool { status != "idle" && seriesTitle != nil }
 
@@ -32,6 +37,11 @@ struct RemoteDeviceState: Decodable, Hashable {
         guard status != "idle", let watchUrl, let target = command.watchUrl else { return false }
         return episode == command.episode && URL(string: watchUrl)?.path == URL(string: target)?.path
     }
+}
+
+struct RemoteSubtitle: Decodable, Hashable, Identifiable {
+    let id: String
+    let label: String
 }
 
 struct RemoteDevicesResponse: Decodable { let devices: [RemoteDevice] }
@@ -46,6 +56,10 @@ struct RemoteCommand: Encodable, Hashable {
     var seconds: Double? = nil
     /// Absolute position for `seek`, from scrubbing.
     var position: Double? = nil
+    /// Volume steps for `volume` (positive raises it).
+    var steps: Int? = nil
+    /// Subtitle track for `subtitles` (a `RemoteSubtitle` id, or "off").
+    var track: String? = nil
 
     static func play(_ watchUrl: String, episode: Int, kind: StreamKind?) -> RemoteCommand {
         RemoteCommand(type: "play", watchUrl: watchUrl, episode: episode, kind: kind?.rawValue)
@@ -68,12 +82,17 @@ struct RemotePlayRequest: Identifiable {
 /// opening the sheet only shows its state, it never sends anything by itself
 /// except an episode chosen with "Ver en TV" in its menu.
 struct TVRemoteSheet: View {
+    /// The TV playback goes to while set (the app plays on it, not here).
+    static let connectedKey = "anksubbrd.remote.tv"
+
     var play: RemoteCommand? = nil
     var playTitle: String? = nil
     var autoplay = true
+    /// Plays the episode on this device instead, offered while the TV is not available.
+    var playHere: (() -> Void)? = nil
     @Environment(ProfileStore.self) private var profile
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("anksubbrd.remote.tv") private var connectedID = ""
+    @AppStorage(TVRemoteSheet.connectedKey) private var connectedID = ""
     @AppStorage("anksubbrd.remote.tv-name") private var connectedName = ""
     @State private var devices: [RemoteDevice] = []
     /// When `devices` arrived, to advance the position between reports.
@@ -103,6 +122,9 @@ struct TVRemoteSheet: View {
                             systemImage: "tv.slash",
                             description: Text("Enciende la TV y abre AniBridge Player con un perfil vinculado a esta identidad.")
                         )
+                        if pendingPlay != nil, let playHere {
+                            Button("Reproducir en este iPhone", systemImage: "iphone", action: playHere)
+                        }
                     }
                 } else {
                     ProgressView()
@@ -232,6 +254,14 @@ struct TVRemoteSheet: View {
                 if let skip = state.skip {
                     Button(skip, systemImage: "forward.fill") { send(RemoteCommand(type: "skip"), to: device) }
                 }
+                if let subtitles = state.subtitles, !subtitles.isEmpty {
+                    subtitleMenu(subtitles, selected: state.subtitle, device: device)
+                }
+                HStack(spacing: 0) {
+                    remoteButton("speaker.minus.fill", "Bajar volumen de la TV") { send(RemoteCommand(type: "volume", steps: -1), to: device) }
+                    remoteButton("speaker.plus.fill", "Subir volumen de la TV") { send(RemoteCommand(type: "volume", steps: 1), to: device) }
+                }
+                .buttonStyle(.borderless)
                 Button("Detener en la TV", systemImage: "stop.fill", role: .destructive) {
                     send(RemoteCommand(type: "stop"), to: device)
                 }
@@ -287,6 +317,26 @@ struct TVRemoteSheet: View {
             position = target.position
         }
         return min(max(position, 0), duration)
+    }
+
+    private func subtitleMenu(_ subtitles: [RemoteSubtitle], selected: String?, device: RemoteDevice) -> some View {
+        Menu {
+            Picker("Subtítulos", selection: Binding(
+                get: { selected ?? "off" },
+                set: { send(RemoteCommand(type: "subtitles", track: $0), to: device) }
+            )) {
+                Text("Desactivados").tag("off")
+                ForEach(subtitles) { track in
+                    Text(track.label).tag(track.id)
+                }
+            }
+        } label: {
+            LabeledContent {
+                Text(subtitles.first { $0.id == selected }?.label ?? "Desactivados")
+            } label: {
+                Label("Subtítulos", systemImage: "captions.bubble")
+            }
+        }
     }
 
     private func remoteButton(_ symbol: String, _ label: String, large: Bool = false, action: @escaping () -> Void) -> some View {
@@ -353,4 +403,135 @@ struct TVRemoteSheet: View {
         }
         loaded = true
     }
+}
+
+/// While a TV is connected and nothing plays on this device, the volume
+/// buttons change the TV's volume, as with Cast: each press is sent to the
+/// TV and this device's volume goes back to where it was. The root view
+/// starts and stops it and hosts `view`.
+@MainActor
+@Observable
+final class TVVolumeRelay {
+    struct Target: Hashable {
+        let base: String
+        let device: String
+    }
+
+    static let shared = TVVolumeRelay()
+    /// Set by the local player: the buttons then control this device.
+    var localPlayback = false
+
+    /// An MPVolumeView on screen hides the system volume HUD and lets the
+    /// app set the volume (its slider is the only way).
+    @ObservationIgnored let view: MPVolumeView = {
+        let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+        view.alpha = 0.01
+        view.isUserInteractionEnabled = false
+        return view
+    }()
+    @ObservationIgnored private var target: Target?
+    @ObservationIgnored private var observation: NSKeyValueObservation?
+    @ObservationIgnored private var baseline: Float = 0.5
+    /// The volume before the relay moved it away from the ends.
+    @ObservationIgnored private var original: Float?
+    @ObservationIgnored private var pendingSteps = 0
+    @ObservationIgnored private var flush: Task<Void, Never>?
+
+    /// One press of a volume button.
+    private static let step: Float = 1 / 16
+
+    func start(_ target: Target) {
+        self.target = target
+        guard observation == nil else { return }
+        let session = AVAudioSession.sharedInstance()
+        // Ambient and mixable: other apps' audio keeps playing. The player
+        // sets its own category again when it starts.
+        try? session.setCategory(.ambient, options: [.mixWithOthers])
+        try? session.setActive(true)
+        let current = session.outputVolume
+        // At either end one of the buttons would not change anything.
+        baseline = min(max(current, 2 * Self.step), 1 - 2 * Self.step)
+        if baseline != current {
+            original = current
+            setVolume(baseline)
+        }
+        observation = observeOutputVolume()
+    }
+
+    func stop() {
+        target = nil
+        pendingSteps = 0
+        guard let observation else { return }
+        observation.invalidate()
+        self.observation = nil
+        // Starting the local player stops the relay; its audio session stays.
+        guard !localPlayback else {
+            original = nil
+            return
+        }
+        if let original { setVolume(original) }
+        original = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        AudioSession.configure()
+    }
+
+    nonisolated private func observeOutputVolume() -> NSKeyValueObservation {
+        AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] session, _ in
+            let value = session.outputVolume
+            let relay = self
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { relay?.volumeChanged(value) }
+            }
+        }
+    }
+
+    private func volumeChanged(_ value: Float) {
+        guard observation != nil else { return }
+        let delta = value - baseline
+        // Moving back to the baseline reports a change too.
+        guard abs(delta) > Self.step / 4 else { return }
+        let steps = Int((delta / Self.step).rounded())
+        pendingSteps += steps != 0 ? steps : (delta > 0 ? 1 : -1)
+        setVolume(baseline)
+        // Presses in quick succession go to the TV together.
+        guard flush == nil else { return }
+        flush = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            self?.sendPending()
+        }
+    }
+
+    private func sendPending() {
+        flush = nil
+        let steps = max(-20, min(20, pendingSteps))
+        pendingSteps = 0
+        guard steps != 0, let target else { return }
+        Task {
+            let _: RemoteCommandReply? = try? await BridgeClient.post(
+                base: target.base,
+                path: "/api/devices/\(target.device)/commands",
+                body: RemoteCommand(type: "volume", steps: steps)
+            )
+        }
+    }
+
+    private func setVolume(_ value: Float) {
+        guard let slider = Self.slider(in: view) else { return }
+        slider.setValue(value, animated: false)
+        slider.sendActions(for: .valueChanged)
+    }
+
+    private static func slider(in view: UIView) -> UISlider? {
+        if let slider = view as? UISlider { return slider }
+        for subview in view.subviews {
+            if let slider = slider(in: subview) { return slider }
+        }
+        return nil
+    }
+}
+
+/// Keeps `TVVolumeRelay.view` in the window (1 pt, nearly transparent).
+struct TVVolumeRelayHost: UIViewRepresentable {
+    func makeUIView(context: Context) -> MPVolumeView { TVVolumeRelay.shared.view }
+    func updateUIView(_ view: MPVolumeView, context: Context) {}
 }

@@ -68,6 +68,13 @@ struct RootView: View {
     @State private var selection: AppTab = .latest
     /// Increments each time the Search tab is selected to focus its field.
     @State private var searchActivation = 0
+    /// The TV of the remote control: the volume buttons change its volume.
+    @AppStorage(TVRemoteSheet.connectedKey) private var connectedTV = ""
+
+    private var volumeRelayTarget: TVVolumeRelay.Target? {
+        guard !connectedTV.isEmpty, profile.isBridgeConfigured, scenePhase == .active, !TVVolumeRelay.shared.localPlayback else { return nil }
+        return TVVolumeRelay.Target(base: profile.bridgeURL, device: connectedTV)
+    }
 
     var body: some View {
         @Bindable var updates = updates
@@ -92,6 +99,18 @@ struct RootView: View {
         }
         .onChange(of: selection) { _, tab in
             if tab == .search { searchActivation += 1 }
+        }
+        .background {
+            TVVolumeRelayHost()
+                .frame(width: 1, height: 1)
+                .accessibilityHidden(true)
+        }
+        .task(id: volumeRelayTarget) {
+            if let target = volumeRelayTarget {
+                TVVolumeRelay.shared.start(target)
+            } else {
+                TVVolumeRelay.shared.stop()
+            }
         }
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)

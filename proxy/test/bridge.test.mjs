@@ -261,6 +261,22 @@ test('Remote control: a TV reports itself and receives commands from the same id
   const scrub = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
   assert.deepEqual(scrub.commands.map(({ type, position, seconds }) => [type, position, seconds]), [['seek', 754.2, undefined]]);
 
+  // The phone's volume buttons send volume steps.
+  assert.throws(() => sendCommand(tv, deviceId, { type: 'volume', steps: 0 }), (error) => error.status === 400);
+  sendCommand(tv, deviceId, { type: 'volume', steps: -2 });
+  const volume = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
+  assert.deepEqual(volume.commands.map(({ type, steps }) => [type, steps]), [['volume', -2]]);
+
+  // Subtitle tracks: the TV lists them, the phone picks one (or "off").
+  reportDevice(tv, deviceId, { name: 'Sala', state: { status: 'playing', subtitles: [{ id: '2:0', label: 'English' }, { id: 'x', label: 'bad' }], subtitle: '2:0' } });
+  assert.deepEqual(listDevices(tv).devices[0].state.subtitles, [{ id: '2:0', label: 'English' }]);
+  assert.equal(listDevices(tv).devices[0].state.subtitle, '2:0');
+  assert.throws(() => sendCommand(tv, deviceId, { type: 'subtitles', track: '../x' }), (error) => error.status === 400);
+  sendCommand(tv, deviceId, { type: 'subtitles', track: '3:1' });
+  sendCommand(tv, deviceId, { type: 'subtitles' });
+  const subtitles = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
+  assert.deepEqual(subtitles.commands.map(({ track }) => track), ['3:1', 'off']);
+
   // Commands queued while the TV is away are delivered on its next poll.
   sendCommand(tv, deviceId, { type: 'play', watchUrl: '/watch/delta-4', episode: 5, kind: 'dub' });
   const next = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
