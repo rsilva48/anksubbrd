@@ -13,6 +13,8 @@ data class PlaybackRequest(
     val episode: Episode,
     val kind: String,
     val playback: Playback,
+    /** Phone: played from a download (its series is the downloaded episodes when `seriesKey` is empty). */
+    val downloaded: Boolean = false,
 )
 
 /** The active profile: its preferences and its watch history (shared with the phone). */
@@ -47,7 +49,14 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
     suspend fun refresh() {
         runCatching { client.preferences() }.onSuccess { preferences = it }
         try {
-            history = client.history().entries.sortedByDescending { it.updatedAt }
+            val remote = client.history().entries
+            // Progress saved here while offline (a download) goes up now.
+            val newer = history.filter { local ->
+                remote.firstOrNull { catalogPath(it.watchUrl) == catalogPath(local.watchUrl) }?.let { local.updatedAt > it.updatedAt } == true
+            }
+            if (newer.isNotEmpty()) runCatching { client.saveHistory(newer) }
+            history = (newer + remote.filterNot { entry -> newer.any { catalogPath(it.watchUrl) == catalogPath(entry.watchUrl) } })
+                .sortedByDescending { it.updatedAt }
             persistHistory()
             historyError = null
         } catch (error: BridgeException) {

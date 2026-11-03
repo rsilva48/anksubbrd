@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -196,12 +197,30 @@ private fun PhoneRoot() {
     var tab by remember { mutableStateOf(if (app.bridge == null) PhoneTab.Settings else PhoneTab.Recents) }
     // One stack of series per tab, like the tabs on iOS.
     val stacks = remember { PhoneTab.entries.associateWith { mutableStateListOf<Anime>() } }
-    LaunchedEffect(session) { session?.refresh() }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(session) {
+        session?.refresh()
+        ReleaseReminders.refresh(context, session)
+        // Downloads finished on another device with this identity.
+        PhoneDownloads.cleanUp(context, session)
+    }
+    // Reminders are rescheduled with the latest history whenever the app returns.
+    androidx.lifecycle.compose.LifecycleResumeEffect(session) {
+        scope.launch { ReleaseReminders.refresh(context, session) }
+        onPauseOrDispose { }
+    }
+    // A tapped reminder opens its series in Continue.
+    val reminded by ReleaseReminders.opened.collectAsState()
+    LaunchedEffect(reminded) {
+        val anime = reminded ?: return@LaunchedEffect
+        ReleaseReminders.opened.value = null
+        tab = PhoneTab.Continue
+        stacks.getValue(PhoneTab.Continue).apply { clear(); add(anime) }
+    }
 
     // With a TV connected and nothing playing here, the volume buttons
     // change the TV's volume.
     val activity = context as? MainActivity
-    val scope = rememberCoroutineScope()
     DisposableEffect(activity, app.connectedTv, app.playing, session) {
         val tv = app.connectedTv
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
@@ -250,10 +269,8 @@ private fun PhoneRoot() {
                 val open: (Anime) -> Unit = { stack.add(it) }
                 when {
                     tab == PhoneTab.Settings -> PhoneSettings(app)
-                    tab == PhoneTab.Downloads -> PhoneMessage(
-                        "Descargas",
-                        "Las descargas para ver sin conexión llegan en la próxima versión de la app de Android.",
-                    )
+                    // Works without a bridge or a connection.
+                    tab == PhoneTab.Downloads -> PhoneDownloadsScreen(session) { app.playing = it }
                     session == null -> PhoneMessage(
                         "Configura tu bridge",
                         "Escribe la dirección de tu bridge en Ajustes y pruébala. Buscar, Recientes y Continuar se activan en cuanto responde.",
@@ -267,6 +284,15 @@ private fun PhoneRoot() {
             }
         }
         if (app.remoteOpen && session != null) PhoneRemoteSheet(app, session)
+        // Offers the reminders once, as on iOS, once a bridge works.
+        if (session != null && app.bridge != null && !ReleaseReminders.wasPrompted(context)) ReleasePrompt()
+        // A TV's QR (camera or the scanner in Ajustes).
+        val link by PhoneLinks.pending.collectAsState()
+        when (val current = link) {
+            is ScannedLink.Identity -> IdentityImportDialog(app, current) { PhoneLinks.pending.value = null }
+            is ScannedLink.Pairing -> PairTvDialog(app, current) { PhoneLinks.pending.value = null }
+            null -> Unit
+        }
     }
 }
 
@@ -291,4 +317,35 @@ internal fun Context.findActivity(): Activity? {
         current = current.baseContext
     }
     return null
+}
+
+/** "¿Avisarte de nuevos episodios?", shown once. */
+@Composable
+private fun ReleasePrompt() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var visible by remember { mutableStateOf(true) }
+    val permission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+        ReleaseReminders.setEnabled(context, granted)
+        visible = false
+    }
+    if (!visible) return
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { ReleaseReminders.markPrompted(context); visible = false },
+        title = { Text("¿Avisarte de nuevos episodios?") },
+        text = { Text("La app puede avisarte cuando salga un episodio nuevo de las series que sigues en Continuar viendo. Puedes cambiarlo cuando quieras en Ajustes.") },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                if (Build.VERSION.SDK_INT >= 33 && !ReleaseReminders.hasPermission(context)) {
+                    permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    ReleaseReminders.setEnabled(context, true)
+                    visible = false
+                }
+            }) { Text("Activar avisos") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = { ReleaseReminders.markPrompted(context); visible = false }) { Text("Ahora no") }
+        },
+    )
 }

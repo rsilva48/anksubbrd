@@ -2,10 +2,14 @@
 
 package com.personal.anksubbrd.tv
 
+import android.app.PictureInPictureParams
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.content.pm.PackageManager
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -31,6 +35,8 @@ class MainActivity : ComponentActivity() {
     var playerKeyHandler: ((KeyEvent) -> Boolean)? = null
     /** Phone: the volume buttons go to the connected TV while nothing plays here. */
     var phoneKeyHandler: ((KeyEvent) -> Boolean)? = null
+    /** Phone: picture-in-picture for the playing episode when the user leaves the app. */
+    var phonePip: (() -> PictureInPictureParams?)? = null
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
         if (playerKeyHandler?.invoke(event) == true || phoneKeyHandler?.invoke(event) == true) true else super.dispatchKeyEvent(event)
@@ -40,7 +46,13 @@ class MainActivity : ComponentActivity() {
         Connectivity.start(applicationContext)
         val isTv = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
         if (isTv) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        if (savedInstanceState == null) forwardRemotePlay(intent)
+        // The launch screen (icon included) gives way to a plain background, seen while rotating.
+        val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        window.setBackgroundDrawable(ColorDrawable(if (isTv || night) 0xFF0B0B12.toInt() else android.graphics.Color.WHITE))
+        if (savedInstanceState == null) {
+            forwardRemotePlay(intent)
+            forwardLink(intent)
+        }
         val state = AppState(applicationContext)
         setContent {
             if (!isTv) {
@@ -62,6 +74,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         forwardRemotePlay(intent)
+        forwardLink(intent)
     }
 
     override fun onResume() {
@@ -69,9 +82,28 @@ class MainActivity : ComponentActivity() {
         Remote.foreground.value = true
     }
 
+    // Android 12+ enters picture-in-picture by itself (setAutoEnterEnabled).
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < 31) phonePip?.invoke()?.let { runCatching { enterPictureInPictureMode(it) } }
+    }
+
     override fun onPause() {
         Remote.foreground.value = false
         super.onPause()
+    }
+
+    // Phone: a TV's QR opened from the camera (anksubbrd://identity or pair).
+    private fun forwardLink(intent: Intent?) {
+        // A tapped reminder of a new episode opens its series.
+        intent?.getStringExtra(ReleaseReminders.EXTRA_SERIES)?.let { text ->
+            intent.removeExtra(ReleaseReminders.EXTRA_SERIES)
+            runCatching { BridgeClient.json.decodeFromString(Anime.serializer(), text) }.getOrNull()?.let { ReleaseReminders.opened.value = it }
+        }
+        val data = intent?.data ?: return
+        if (data.scheme != "anksubbrd") return
+        intent.data = null
+        ScannedLink.parse(data.toString())?.let { PhoneLinks.pending.value = it }
     }
 
     private fun forwardRemotePlay(intent: Intent?) {

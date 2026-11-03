@@ -140,7 +140,20 @@ internal fun PhoneSettings(app: PhoneState) {
                         OutlinedButton(onClick = { dialog = IdentityDialog.Import }) { Text("Importar token…") }
                     }
                 }
-                Footer("El token define tu historial y tus preferencias. Se guarda cifrado en este teléfono sólo para esta dirección; compártelo únicamente con los dispositivos que deban compartir lista y ajustes.")
+                // A TV's "Llevar al teléfono" profile, or a TV pairing code.
+                var scanError by remember { mutableStateOf<String?>(null) }
+                OutlinedButton(onClick = {
+                    scanError = null
+                    scope.launch {
+                        try {
+                            scanTvCode(context)?.let { PhoneLinks.pending.value = it }
+                        } catch (failure: BridgeException) {
+                            scanError = failure.message
+                        }
+                    }
+                }) { Text("Escanear código de la TV…") }
+                scanError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                Footer("El token define tu historial y tus preferencias. Se guarda cifrado en este teléfono sólo para esta dirección; compártelo únicamente con los dispositivos que deban compartir lista y ajustes. El código de la TV puede ser un perfil («Llevar al teléfono») o la vinculación de una TV.")
             }
 
             val preferences = session?.preferences
@@ -173,6 +186,55 @@ internal fun PhoneSettings(app: PhoneState) {
                 scope.launch { session?.updatePreferences { it.copy(autoSkipOutro = value) } }
             }
             Footer("Sub declara audio japonés y activa los subtítulos; Dub declara audio en inglés. Estas preferencias pertenecen a la identidad activa y se sincronizan con el bridge en tus otros dispositivos.", Modifier.padding(horizontal = 16.dp))
+
+            SectionTitle("Este dispositivo")
+            var reminders by remember { mutableStateOf(ReleaseReminders.isEnabled(context) && ReleaseReminders.hasPermission(context)) }
+            var reminderError by remember { mutableStateOf<String?>(null) }
+            val permission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
+                ReleaseReminders.setEnabled(context, granted)
+                reminders = granted
+                reminderError = if (granted) null else "Android no permite avisos de esta app. Actívalos en los ajustes del sistema → Notificaciones."
+                scope.launch { ReleaseReminders.refresh(context, app.session) }
+            }
+            SwitchRow("Avisar de nuevos episodios", reminders, enabled = session != null) { value ->
+                if (value && !ReleaseReminders.hasPermission(context) && android.os.Build.VERSION.SDK_INT >= 33) {
+                    permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else {
+                    ReleaseReminders.setEnabled(context, value)
+                    reminders = value
+                    scope.launch { ReleaseReminders.refresh(context, app.session) }
+                }
+            }
+            reminderError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp)) }
+            var autoDelete by remember { mutableStateOf(PhoneDownloads.autoDelete(context)) }
+            SwitchRow("Borrar descargas ya vistas", autoDelete, enabled = true) { value ->
+                PhoneDownloads.setAutoDelete(context, value)
+                autoDelete = value
+                if (value) PhoneDownloads.cleanUp(context, session)
+            }
+            val downloads by rememberDownloads()
+            var confirmRemoveAll by remember { mutableStateOf(false) }
+            ListItem(
+                headlineContent = { Text("Espacio usado") },
+                trailingContent = { Text(android.text.format.Formatter.formatShortFileSize(context, downloads.sumOf { it.bytes })) },
+            )
+            OutlinedButton(
+                onClick = { confirmRemoveAll = true },
+                enabled = downloads.isNotEmpty(),
+                modifier = Modifier.padding(horizontal = 16.dp),
+            ) { Text("Borrar todas las descargas", color = if (downloads.isNotEmpty()) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified) }
+            if (confirmRemoveAll) AlertDialog(
+                onDismissRequest = { confirmRemoveAll = false },
+                title = { Text(if (downloads.size == 1) "¿Borrar 1 descarga?" else "¿Borrar ${downloads.size} descargas?") },
+                text = { Text("Los episodios dejarán de estar disponibles sin conexión.") },
+                confirmButton = {
+                    TextButton(onClick = { PhoneDownloads.removeAll(context); confirmRemoveAll = false }) {
+                        Text("Borrar todas", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = { TextButton(onClick = { confirmRemoveAll = false }) { Text("Cancelar") } },
+            )
+            Footer("Una descarga se borra sólo cuando terminas de ver ese episodio (al llegar al outro o a sus últimos minutos), aquí o en otro dispositivo con la misma identidad. Abrir otro episodio no la borra. Los avisos usan el horario estimado del catálogo para las series de Continuar viendo (en el tipo Sub o Dub que sigues) y se reprograman cada vez que abres la app.", Modifier.padding(horizontal = 16.dp))
 
             SectionTitle("Acerca de")
             PhoneUpdates()

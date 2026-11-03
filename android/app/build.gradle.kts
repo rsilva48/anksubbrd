@@ -65,10 +65,17 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
+    // Phone player: play/pause in picture-in-picture and from headsets.
+    implementation(libs.media3.session)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.zxing.core)
+    // Phone app: release reminders and QR scanning (Google's scanner, no
+    // camera permission). Synopsis translation uses the system's translator
+    // app: an on-device model would add tens of MB the TVs also download.
+    implementation(libs.work.runtime)
+    implementation(libs.code.scanner)
 }

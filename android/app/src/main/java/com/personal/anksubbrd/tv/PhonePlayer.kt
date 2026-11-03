@@ -1,6 +1,10 @@
 package com.personal.anksubbrd.tv
 
+import android.app.PictureInPictureParams
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Rational
 import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn as AndroidXOptIn
@@ -38,6 +42,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.PictureInPictureModeChangedInfo
+import androidx.core.util.Consumer
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -49,6 +55,10 @@ import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import androidx.media3.session.MediaSession
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.media3.ui.PlayerView
 import java.util.Locale
 import kotlinx.coroutines.CoroutineStart
@@ -59,6 +69,7 @@ import kotlinx.coroutines.launch
  * The phone player: full screen in landscape, Media3's controls (seek bar,
  * subtitles, audio and speed in its settings) plus the series and episode,
  * previous/next episode of the same kind and the intro/outro skip.
+ * Leaving the app while it plays continues in picture-in-picture.
  */
 @AndroidXOptIn(UnstableApi::class)
 @Composable
@@ -73,11 +84,46 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
     var controlsVisible by remember { mutableStateOf(true) }
     /** Set while the app itself changes the track selection (not the viewer). */
     var applyingTracks by remember { mutableStateOf(false) }
-    // Decoder fallback: if the preferred video decoder fails (some phones), try the next one.
+    var inPip by remember { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(false) }
+    // Decoder fallback: if the preferred video decoder fails (some phones), try
+    // the next one. Downloaded episodes are read from the app's storage.
     val player = remember {
-        ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true))
+        val renderers = DefaultRenderersFactory(context).setEnableDecoderFallback(true)
+            // The emulator's "goldfish" H.264 decoder fails mid-stream; its software decoder works.
+            .setMediaCodecSelector { mimeType, secure, tunneling ->
+                MediaCodecUtil.getDecoderInfos(mimeType, secure, tunneling).filterNot { "goldfish" in it.name }
+            }
+        ExoPlayer.Builder(context, renderers)
+            .setMediaSourceFactory(PhoneDownloads.mediaSourceFactory(context))
             .setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
     }
+
+    // Play/pause from picture-in-picture, headsets and the system's media controls.
+    DisposableEffect(player) {
+        val mediaSession = runCatching { MediaSession.Builder(context, player).setId("phone-player").build() }.getOrNull()
+        onDispose { mediaSession?.release() }
+    }
+
+    // Picture-in-picture when leaving the app while the episode plays; the
+    // overlays hide in the small window.
+    val activity = remember { context.findActivity() as? MainActivity }
+    val pipSupported = remember { context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) }
+    fun pipParams(auto: Boolean): PictureInPictureParams = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
+        .apply { if (Build.VERSION.SDK_INT >= 31) setAutoEnterEnabled(auto).setSeamlessResizeEnabled(true) }.build()
+    LaunchedEffect(isPlaying) { if (pipSupported) runCatching { activity?.setPictureInPictureParams(pipParams(isPlaying)) } }
+    DisposableEffect(activity) {
+        val listener = Consumer<PictureInPictureModeChangedInfo> { inPip = it.isInPictureInPictureMode }
+        activity?.addOnPictureInPictureModeChangedListener(listener)
+        activity?.phonePip = { if (pipSupported && player.isPlaying) pipParams(false) else null }
+        onDispose {
+            activity?.removeOnPictureInPictureModeChangedListener(listener)
+            activity?.phonePip = null
+            if (pipSupported) runCatching { activity?.setPictureInPictureParams(pipParams(false)) }
+        }
+    }
+    // Closing the picture-in-picture window, or locking the phone, pauses.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { player.pause() }
 
     // Landscape, without system bars, while the player is open.
     DisposableEffect(Unit) {
@@ -116,6 +162,7 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
 
     fun save(completed: Boolean? = null) {
         val value = entry(completed) ?: return
+        if (value.isCompleted) PhoneDownloads.markWatched(context, value.watchUrl, value.episode)
         // Starts at once so a save on close is not cancelled with the screen.
         scope.launch(start = CoroutineStart.UNDISPATCHED) { session.record(value) }
     }
@@ -123,6 +170,13 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
     fun open(episode: Episode, saveCurrent: Boolean = true) {
         if (changing != null) return
         if (saveCurrent) save()
+        // A downloaded episode plays from storage; among downloads the series stays theirs.
+        PhoneDownloads.completed(request.anime.watchUrl, episode.number, request.kind)?.let { stored ->
+            val local = PhoneDownloads.playback(stored)
+            request = if (request.series.seriesKey.isEmpty()) local else local.copy(anime = request.anime, series = request.series)
+            error = null
+            return
+        }
         changing = "Abriendo el episodio ${episode.number}…"
         scope.launch {
             try {
@@ -153,7 +207,8 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
             .build()
         applyingTracks = false
         val start = session.position(request.anime.watchUrl, request.episode.number)
-        player.setMediaItem(MediaItem.fromUri(request.playback.playbackUrl), (start * 1000).toLong())
+        val item = (if (request.downloaded) PhoneDownloads.mediaItem(request.playback.playbackUrl) else null) ?: MediaItem.fromUri(request.playback.playbackUrl)
+        player.setMediaItem(item, (start * 1000).toLong())
         player.prepare()
         player.playWhenReady = true
     }
@@ -183,8 +238,9 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
                 if (following != null && session.preferences.autoNext) open(following, saveCurrent = false) else if (following == null) onExit()
             }
 
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying) save()
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
+                if (!playing) save()
             }
 
             // A subtitle chosen in a Sub episode becomes the identity's
@@ -200,7 +256,12 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
             }
 
             override fun onPlayerError(failure: PlaybackException) {
-                error = if (Connectivity.isOnline) "No se pudo reproducir este servidor (${failure.errorCodeName})." else "Sin conexión a internet."
+                error = when {
+                    failure.errorCode in 4000..4999 -> "Este teléfono no pudo decodificar el video (${failure.errorCodeName})."
+                    request.downloaded ->"No se pudo abrir la descarga (${failure.errorCodeName}). Bórrala y descárgala de nuevo."
+                    Connectivity.isOnline -> "No se pudo reproducir este servidor (${failure.errorCodeName})."
+                    else -> "Sin conexión a internet. Los episodios descargados siguen disponibles en Descargas."
+                }
             }
         }
         player.addListener(listener)
@@ -208,6 +269,7 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
             save()
             player.removeListener(listener)
             player.release()
+            PhoneDownloads.cleanUp(context, session)
         }
     }
 
@@ -225,8 +287,14 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { controlsVisible = it == View.VISIBLE })
                 }
             },
+            update = { view ->
+                view.useController = !inPip
+                if (inPip) view.hideController()
+            },
             modifier = Modifier.fillMaxSize(),
         )
+        // Picture-in-picture shows only the video.
+        if (inPip) return@Box
 
         if (controlsVisible && error == null) {
             Row(
@@ -284,6 +352,10 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
                         // A fresh URL from the same server, from the saved position.
                         save()
                         error = null
+                        if (request.downloaded) {
+                            attempt++
+                            return@Button
+                        }
                         changing = "Reintentando…"
                         scope.launch {
                             try {

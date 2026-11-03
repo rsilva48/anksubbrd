@@ -199,6 +199,9 @@ data class RemoteTv(
 private data class RemoteTvs(val devices: List<RemoteTv> = emptyList())
 
 @Serializable
+private data class PairApproval(val code: String, val label: String)
+
+@Serializable
 private data class RegisterUser(val token: String, val label: String)
 
 @Serializable
@@ -355,6 +358,14 @@ class BridgeClient(val baseUrl: String, private val token: String) {
     /** Status of up to 50 series (older bridges answer 404). */
     suspend fun seriesStatuses(watchUrls: List<String>): List<SeriesStatus> =
         post<SeriesStatusResponse>("/api/series/status", json.encodeToString(SeriesStatusRequest.serializer(), SeriesStatusRequest(watchUrls.take(50)))).statuses
+
+    /** Approves a TV's pairing code with this identity (the TV gets this token). */
+    suspend fun approvePairing(code: String, label: String) {
+        send<OkResponse>("POST", "/api/pair/approve", emptyList(), json.encodeToString(PairApproval.serializer(), PairApproval(code, label)))
+    }
+
+    /** Episodes the catalog expects to release (release reminders). */
+    suspend fun schedule(): List<ScheduleEntry> = get<ScheduleReply>("/api/schedule").entries
 
     /** The TVs of this identity (phone remote control). */
     suspend fun tvs(): List<RemoteTv> = get<RemoteTvs>("/api/devices").devices

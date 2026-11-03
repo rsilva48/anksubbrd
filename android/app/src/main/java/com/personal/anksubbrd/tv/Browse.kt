@@ -123,7 +123,7 @@ private fun StartupScreen() {
     Box(Modifier.fillMaxSize().background(Color(0xFF0B0B12)), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Image(
-                painter = painterResource(R.drawable.ic_launcher),
+                painter = painterResource(R.drawable.app_icon_square),
                 contentDescription = null,
                 modifier = Modifier.size(96.dp).clip(RoundedCornerShape(24.dp)),
             )

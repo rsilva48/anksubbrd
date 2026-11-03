@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
@@ -39,6 +41,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,8 +52,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -70,15 +75,43 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
     var serverChoice by remember { mutableStateOf<Pair<Episode, List<Server>>?>(null) }
     var synopsisExpanded by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
+    val context = LocalContext.current
+    val downloads by rememberDownloads()
+    /** Without a connection: the series is its downloaded episodes. */
+    var offline by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(current.watchUrl, reload) {
         series = null
         error = null
+        offline = false
+        notice = null
         try {
             series = session.client.series(current.watchUrl)
         } catch (failure: BridgeException) {
-            error = failure.message
+            val stored = PhoneDownloads.offlineSeries(current.watchUrl)
+            if (stored != null) {
+                series = stored
+                offline = true
+                notice = "Sin conexión con el bridge: solo puedes ver los episodios descargados."
+            } else {
+                error = failure.message
+            }
         }
+    }
+
+    /** The download of an episode in a kind (any kind with null). */
+    fun recordOf(number: Int, recordKind: String?): EpisodeDownload? =
+        downloads.filter { it.matches(current.watchUrl, number, recordKind) }.minByOrNull { if (it.isCompleted) 0 else if (it.isActive) 1 else 2 }
+
+    /** A completed download: the preferred kind first, then the other. */
+    fun stored(number: Int, preferred: String): EpisodeDownload? =
+        recordOf(number, preferred)?.takeIf { it.isCompleted } ?: downloads.firstOrNull { it.isCompleted && it.matches(current.watchUrl, number) }
+
+    fun playStored(download: EpisodeDownload) {
+        val local = PhoneDownloads.playback(download)
+        // Online, previous and next keep the whole series.
+        app.playing = if (offline) local else local.copy(anime = current, series = series ?: local.series)
     }
 
     val entry = session.entry(current.watchUrl)
@@ -88,6 +121,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
     // Series sessions on the bridge expire after 20 minutes (HTTP 410).
     suspend fun <T> withSeries(block: suspend (Series) -> T): T {
         val loaded = series ?: throw BridgeException("La serie aún no se cargó.")
+        if (offline) throw BridgeException("Sin conexión: solo puedes ver los episodios descargados.")
         return try {
             block(loaded)
         } catch (failure: BridgeException) {
@@ -101,6 +135,10 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
     fun play(episode: Episode, preferredServer: String?, playKind: String) {
         val loaded = series ?: return
         if (busy != null) return
+        if (offline) {
+            error = "Sin conexión: el episodio ${episode.number} no está descargado."
+            return
+        }
         busy = "Preparando reproducción…"
         scope.launch {
             try {
@@ -143,15 +181,49 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
 
     fun tvCommand(episode: Episode) = RemoteCommand(type = "play", watchUrl = current.watchUrl, episode = episode.number, kind = kind)
 
-    /** With a TV connected the episode goes there; otherwise the server picker. */
-    fun open(episode: Episode) {
-        if (!app.playOnTv(tvCommand(episode), "$title · episodio ${episode.number}") { chooseServer(episode) }) chooseServer(episode)
+    /** Here: the downloaded copy if there is one, else the server picker. */
+    fun openHere(episode: Episode) {
+        stored(episode.number, kind)?.let { playStored(it) } ?: chooseServer(episode)
     }
 
-    /** Continue and next: the saved server and kind, straight away (or on the TV). */
+    /** With a TV connected (and a connection) the episode goes there; otherwise here. */
+    fun open(episode: Episode) {
+        if (offline || !app.playOnTv(tvCommand(episode), "$title · episodio ${episode.number}") { openHere(episode) }) openHere(episode)
+    }
+
+    /** Continue and next: the download, or the saved server and kind straight away (or on the TV). */
     fun resume(episode: Episode, preferredServer: String?, playKind: String) {
-        if (!app.playOnTv(tvCommand(episode), "$title · episodio ${episode.number}") { play(episode, preferredServer, playKind) }) {
-            play(episode, preferredServer, playKind)
+        fun here() = recordOf(episode.number, playKind)?.takeIf { it.isCompleted }?.let { playStored(it) } ?: play(episode, preferredServer, playKind)
+        if (offline || !app.playOnTv(tvCommand(episode), "$title · episodio ${episode.number}") { here() }) here()
+    }
+
+    /** Downloads episodes one at a time, each from a working server of the kind. */
+    fun download(episodes: List<Episode>, downloadKind: String) {
+        if (busy != null || episodes.isEmpty() || series == null || offline) return
+        notice = null
+        error = null
+        scope.launch {
+            val notes = mutableListOf<String>()
+            for (episode in episodes) {
+                busy = "Preparando la descarga del episodio ${episode.number}…"
+                try {
+                    val request = session.resolve(current, series ?: break, episode, downloadKind, entry?.takeIf { it.serverKind == downloadKind }?.serverName)
+                    series = request.series
+                    if (request.kind != downloadKind) {
+                        notes += "Episodio ${episode.number}: sin servidores ${kindLabel(downloadKind)} disponibles, no se descarga."
+                        continue
+                    }
+                    PhoneDownloads.start(context, request)
+                } catch (failure: BridgeException) {
+                    notes += "Episodio ${episode.number}: ${failure.message}"
+                    if (failure.offline) break
+                }
+            }
+            busy = null
+            notice = notes.joinToString("\n").ifEmpty {
+                if (episodes.size == 1) "Descargando el episodio ${episodes.first().number} en ${kindLabel(downloadKind)}. Lo verás en Descargas."
+                else "Descargando ${episodes.size} episodios en ${kindLabel(downloadKind)}. Los verás en Descargas."
+            }
         }
     }
 
@@ -161,7 +233,41 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás") } },
             actions = {
                 val loaded = series
-                if (loaded != null) IconButton(onClick = {
+                if (loaded != null && !offline) {
+                    // "Descargar": the next episodes of the kind being followed.
+                    var menu by remember { mutableStateOf(false) }
+                    val start = entry?.let { if (it.isCompleted) it.episode + 1 else it.episode } ?: loaded.episodes.firstOrNull()?.number ?: 1
+                    val pending = loaded.episodes.filter { it.number >= start && it.isAvailable(kind) && recordOf(it.number, kind)?.isFailed != false }
+                    Box {
+                        IconButton(onClick = { menu = true }, enabled = pending.isNotEmpty() && busy == null) { Icon(PhoneIcons.Download, contentDescription = "Descargar") }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            Text(
+                                "Descargar en ${kindLabel(kind)} para ver sin conexión",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                            pending.firstOrNull()?.let { first ->
+                                DropdownMenuItem(text = { Text(if (entry != null) "Episodio ${first.number} · siguiente" else "Episodio ${first.number}") }, onClick = {
+                                    menu = false
+                                    download(listOf(first), kind)
+                                })
+                            }
+                            if (pending.size > 3) DropdownMenuItem(text = { Text("Siguientes 3 episodios") }, onClick = {
+                                menu = false
+                                download(pending.take(3), kind)
+                            })
+                            if (pending.size > 1) DropdownMenuItem(
+                                text = { Text(if (entry == null) "Serie completa · ${pending.size} episodios" else "Los que faltan · episodios ${pending.first().number} a ${pending.last().number}") },
+                                onClick = {
+                                    menu = false
+                                    download(pending, kind)
+                                },
+                            )
+                        }
+                    }
+                }
+                if (loaded != null && !offline) IconButton(onClick = {
                     // Opens the remote; the episode is offered, not sent.
                     val suggested = suggestedEpisode(loaded, entry, current)
                     app.tvPlay = suggested?.let { TvPlayRequest(tvCommand(it), "$title · episodio ${it.number}", autoplay = false) }
@@ -224,12 +330,20 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                     PrimaryAction(session, loaded, current, entry, kind, playIcon = app.connectedTv != null,
                         onResume = ::resume, onOpen = ::open, onSeason = { current = it.asAnime() })
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
                 }
             }
             loaded.synopsis?.let { synopsis ->
                 item {
                     Column(Modifier.padding(16.dp).clickable { synopsisExpanded = !synopsisExpanded }) {
-                        Text("Sinopsis", style = MaterialTheme.typography.titleSmall)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Sinopsis", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            // The catalog's synopses are in English.
+                            if (java.util.Locale.getDefault().language != "en") {
+                                val context = androidx.compose.ui.platform.LocalContext.current
+                                TextButton(onClick = { translate(context, synopsis) }) { Text("Traducir") }
+                            }
+                        }
                         Text(synopsis, style = MaterialTheme.typography.bodyMedium, maxLines = if (synopsisExpanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
                     }
                 }
@@ -258,6 +372,10 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                 var menu by remember { mutableStateOf(false) }
                 val watched = entry != null && (episode.number < entry.episode || (episode.number == entry.episode && entry.isCompleted))
                 val progress = entry?.takeIf { it.episode == episode.number && !it.isCompleted }?.positionSeconds
+                val records = downloads.filter { it.matches(current.watchUrl, episode.number) }
+                val active = records.firstOrNull { it.isActive }
+                // Offline only the downloaded episodes play.
+                val playable = !offline || records.any { it.isCompleted }
                 Box {
                     ListItem(
                         headlineContent = { Text("${episode.number}. ${episode.subtitle ?: "Episodio ${episode.number}"}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
@@ -265,26 +383,61 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                             val notes = listOfNotNull(
                                 progress?.let { "Visto hasta ${formatTime(it)}" },
                                 if (episode.number == current.episode) "Nuevo" else null,
-                                if (!episode.isAvailable(kind)) "Aún sin ${if (kind == "dub") "Dub" else "Sub"}" else null,
-                            )
+                                if (!offline && !episode.isAvailable(kind)) "Aún sin ${if (kind == "dub") "Dub" else "Sub"}" else null,
+                            ) + records.sortedBy { it.info.kind }.map { downloadStatus(context, it) }
                             if (notes.isNotEmpty()) Text(notes.joinToString(" · "))
                         },
                         trailingContent = {
-                            Icon(if (watched) Icons.Filled.Check else if (app.connectedTv != null) PhoneIcons.Tv else Icons.Filled.PlayArrow, contentDescription = null)
+                            if (active != null) {
+                                CircularProgressIndicator(progress = { active.percent / 100f }, modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
+                            } else {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    if (records.any { it.isCompleted }) Icon(PhoneIcons.Download, contentDescription = "Descargado", tint = MaterialTheme.colorScheme.primary)
+                                    Icon(if (watched) Icons.Filled.Check else if (app.connectedTv != null && !offline) PhoneIcons.Tv else Icons.Filled.PlayArrow, contentDescription = null)
+                                }
+                            }
                         },
-                        modifier = Modifier.combinedClickable(onClick = { open(episode) }, onLongClick = { menu = true }),
+                        modifier = Modifier.alpha(if (playable) 1f else 0.45f)
+                            .combinedClickable(enabled = playable, onClick = { open(episode) }, onLongClick = { menu = true }),
                     )
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Ver en TV") }, leadingIcon = { Icon(PhoneIcons.Tv, null) }, onClick = {
-                            menu = false
-                            app.tvPlay = TvPlayRequest(tvCommand(episode), "$title · episodio ${episode.number}", autoplay = true) { chooseServer(episode) }
-                            app.remoteOpen = true
-                        })
-                        if (app.connectedTv != null) DropdownMenuItem(text = { Text("Ver en este teléfono") }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = {
-                            menu = false
-                            chooseServer(episode)
-                        })
-                        DropdownMenuItem(text = { Text("Elegir servidor en línea") }, onClick = { menu = false; chooseServer(episode) })
+                        // Per kind: download, watch offline, cancel or delete.
+                        listOf("sub", "dub").filter { episode.isAvailable(it) || recordOf(episode.number, it) != null }.forEach { recordKind ->
+                            val record = recordOf(episode.number, recordKind)
+                            val label = kindLabel(recordKind)
+                            when {
+                                record == null || record.isFailed -> if (!offline) DropdownMenuItem(
+                                    text = { Text(if (record != null) "Reintentar descarga en $label" else "Descargar en $label") },
+                                    leadingIcon = { Icon(PhoneIcons.Download, null) },
+                                    onClick = {
+                                        menu = false
+                                        record?.let { PhoneDownloads.remove(context, it) }
+                                        download(listOf(episode), recordKind)
+                                    },
+                                )
+                                record.isCompleted -> {
+                                    DropdownMenuItem(text = { Text("Ver sin conexión · $label") }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = {
+                                        menu = false
+                                        playStored(record)
+                                    })
+                                    DropdownMenuItem(text = { Text("Borrar descarga · $label") }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
+                                }
+                                else -> DropdownMenuItem(text = { Text("Cancelar descarga · $label") }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
+                            }
+                            if (record?.isFailed == true) DropdownMenuItem(text = { Text("Borrar descarga · $label") }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
+                        }
+                        if (!offline) {
+                            DropdownMenuItem(text = { Text("Ver en TV") }, leadingIcon = { Icon(PhoneIcons.Tv, null) }, onClick = {
+                                menu = false
+                                app.tvPlay = TvPlayRequest(tvCommand(episode), "$title · episodio ${episode.number}", autoplay = true) { openHere(episode) }
+                                app.remoteOpen = true
+                            })
+                            if (app.connectedTv != null) DropdownMenuItem(text = { Text("Ver en este teléfono") }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = {
+                                menu = false
+                                openHere(episode)
+                            })
+                            DropdownMenuItem(text = { Text("Elegir servidor en línea") }, onClick = { menu = false; chooseServer(episode) })
+                        }
                     }
                 }
             }
@@ -399,5 +552,25 @@ internal fun PhoneServerPicker(episode: Episode, servers: List<Server>, defaultK
             }
             Box(Modifier.padding(bottom = 24.dp))
         }
+    }
+}
+
+/**
+ * Translates with the phone's translator app (Google Translate shows it in a
+ * popup over the app). An on-device model would weigh tens of MB.
+ */
+private fun translate(context: android.content.Context, text: String) {
+    val popup = android.content.Intent(android.content.Intent.ACTION_PROCESS_TEXT)
+        .setType("text/plain")
+        .putExtra(android.content.Intent.EXTRA_PROCESS_TEXT, text)
+        .putExtra(android.content.Intent.EXTRA_PROCESS_TEXT_READONLY, true)
+    val translator = context.packageManager.queryIntentActivities(popup, 0)
+        .firstOrNull { it.activityInfo.packageName == "com.google.android.apps.translate" }
+    val intent = when {
+        translator != null -> popup.setClassName(translator.activityInfo.packageName, translator.activityInfo.name)
+        else -> android.content.Intent(android.content.Intent.ACTION_TRANSLATE).putExtra(android.content.Intent.EXTRA_TEXT, text)
+    }
+    runCatching { context.startActivity(intent) }.onFailure {
+        android.widget.Toast.makeText(context, "Instala Google Translate para traducir la sinopsis.", android.widget.Toast.LENGTH_LONG).show()
     }
 }
