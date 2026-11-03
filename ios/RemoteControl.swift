@@ -118,7 +118,7 @@ struct TVRemoteSheet: View {
                 } else if loaded {
                     Section {
                         ContentUnavailableView(
-                            "\(connectedName.isEmpty ? "La TV" : connectedName) no está disponible",
+                            "\(connectedName.isEmpty ? String(localized: "La TV") : connectedName) no está disponible",
                             systemImage: "tv.slash",
                             description: Text("Enciende la TV y abre AniBridge Player con un perfil vinculado a esta identidad.")
                         )
@@ -134,7 +134,7 @@ struct TVRemoteSheet: View {
                     Section { ErrorNotice(message: errorMessage) }
                 }
             }
-            .navigationTitle(connectedID.isEmpty ? "Ver en TV" : (connected?.name ?? connectedName))
+            .navigationTitle(connectedID.isEmpty ? String(localized: "Ver en TV") : (connected?.name ?? connectedName))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -223,7 +223,7 @@ struct TVRemoteSheet: View {
                     VStack(alignment: .leading, spacing: 4) {
                         SeriesTitle(title: state.seriesTitle ?? "", titleJp: state.titleJp, language: language)
                         if let episode = state.episode {
-                            Text(state.episodeTitle.map { "Episodio \(episode) · \($0)" } ?? "Episodio \(episode)")
+                            Text(state.episodeTitle.map { String(localized: "Episodio \(episode) · \($0)") } ?? String(localized: "Episodio \(episode)"))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -242,24 +242,25 @@ struct TVRemoteSheet: View {
             Section {
                 // Several buttons in one row: borderless keeps each tap separate.
                 HStack(spacing: 0) {
-                    remoteButton("backward.end.fill", "Episodio anterior") { send(RemoteCommand(type: "previous"), to: device) }
-                    remoteButton("gobackward.10", "Retroceder 10 segundos") { send(RemoteCommand(type: "seek", seconds: -10), to: device) }
-                    remoteButton(state.status == "playing" ? "pause.circle.fill" : "play.circle.fill", state.status == "playing" ? "Pausar" : "Reproducir", large: true) {
+                    remoteButton("backward.end.fill", String(localized: "Episodio anterior")) { send(RemoteCommand(type: "previous"), to: device) }
+                    remoteButton("gobackward.10", String(localized: "Retroceder 10 segundos")) { send(RemoteCommand(type: "seek", seconds: -10), to: device) }
+                    remoteButton(state.status == "playing" ? "pause.circle.fill" : "play.circle.fill", state.status == "playing" ? String(localized: "Pausar") : String(localized: "Reproducir"), large: true) {
                         send(RemoteCommand(type: "toggle"), to: device)
                     }
-                    remoteButton("goforward.10", "Adelantar 10 segundos") { send(RemoteCommand(type: "seek", seconds: 10), to: device) }
-                    remoteButton("forward.end.fill", "Siguiente episodio") { send(RemoteCommand(type: "next"), to: device) }
+                    remoteButton("goforward.10", String(localized: "Adelantar 10 segundos")) { send(RemoteCommand(type: "seek", seconds: 10), to: device) }
+                    remoteButton("forward.end.fill", String(localized: "Siguiente episodio")) { send(RemoteCommand(type: "next"), to: device) }
                 }
                 .buttonStyle(.borderless)
                 if let skip = state.skip {
-                    Button(skip, systemImage: "forward.fill") { send(RemoteCommand(type: "skip"), to: device) }
+                    // Older TV apps send the Spanish label; a known one is translated.
+                    Button(LocalizedStringKey(skip), systemImage: "forward.fill") { send(RemoteCommand(type: "skip"), to: device) }
                 }
                 if let subtitles = state.subtitles, !subtitles.isEmpty {
                     subtitleMenu(subtitles, selected: state.subtitle, device: device)
                 }
                 HStack(spacing: 0) {
-                    remoteButton("speaker.minus.fill", "Bajar volumen de la TV") { send(RemoteCommand(type: "volume", steps: -1), to: device) }
-                    remoteButton("speaker.plus.fill", "Subir volumen de la TV") { send(RemoteCommand(type: "volume", steps: 1), to: device) }
+                    remoteButton("speaker.minus.fill", String(localized: "Bajar volumen de la TV")) { send(RemoteCommand(type: "volume", steps: -1), to: device) }
+                    remoteButton("speaker.plus.fill", String(localized: "Subir volumen de la TV")) { send(RemoteCommand(type: "volume", steps: 1), to: device) }
                 }
                 .buttonStyle(.borderless)
                 Button("Detener en la TV", systemImage: "stop.fill", role: .destructive) {
@@ -332,7 +333,7 @@ struct TVRemoteSheet: View {
             }
         } label: {
             LabeledContent {
-                Text(subtitles.first { $0.id == selected }?.label ?? "Desactivados")
+                Text(subtitles.first { $0.id == selected }?.label ?? String(localized: "Desactivados"))
             } label: {
                 Label("Subtítulos", systemImage: "captions.bubble")
             }
@@ -350,10 +351,11 @@ struct TVRemoteSheet: View {
     }
 
     private func summary(_ state: RemoteDeviceState?) -> String {
-        guard let state, state.isActive, let title = state.seriesTitle else { return "En espera" }
-        let episode = state.episode.map { " · episodio \($0)" } ?? ""
-        let status = state.status == "playing" ? "Reproduciendo" : state.status == "loading" ? "Cargando" : "En pausa"
-        return "\(status): \(title)\(episode)"
+        guard let state, state.isActive, let title = state.seriesTitle else { return String(localized: "En espera") }
+        let status = state.status == "playing" ? String(localized: "Reproduciendo")
+            : state.status == "loading" ? String(localized: "Cargando") : String(localized: "En pausa")
+        guard let episode = state.episode else { return "\(status): \(title)" }
+        return String(localized: "\(status): \(title) · episodio \(episode)")
     }
 
     private func connect(_ device: RemoteDevice) {
@@ -397,7 +399,7 @@ struct TVRemoteSheet: View {
         } catch is CancellationError {
             return
         } catch let error as BridgeRequestError where error.statusCode == 404 {
-            errorMessage = "Este bridge todavía no admite el control remoto. Actualízalo a la última versión."
+            errorMessage = String(localized: "Este bridge todavía no admite el control remoto. Actualízalo a la última versión.")
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -67,10 +67,10 @@ private struct HistoryList: View {
                 ContentUnavailableView("Nada para continuar", systemImage: "play.circle", description: Text("Las series que reproduzcas con esta identidad aparecerán aquí con el segundo en que las dejaste."))
             } else {
                 let states = Dictionary(entries.map { ($0.id, state(of: $0)) }, uniquingKeysWith: { first, _ in first })
-                section("Nuevos episodios", entries: entries.filter { states[$0.id]?.section == 0 }, states: states)
-                section("En curso", entries: entries.filter { states[$0.id]?.section == 1 }, states: states)
-                section("Al día", entries: entries.filter { states[$0.id]?.section == 2 }, states: states, footer: "Pasan a «Nuevos episodios» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.")
-                section("Completados", entries: entries.filter { states[$0.id]?.section == 3 }, states: states)
+                section(String(localized: "Nuevos episodios"), entries: entries.filter { states[$0.id]?.section == 0 }, states: states)
+                section(String(localized: "En curso"), entries: entries.filter { states[$0.id]?.section == 1 }, states: states)
+                section(String(localized: "Al día"), entries: entries.filter { states[$0.id]?.section == 2 }, states: states, footer: String(localized: "Pasan a «Nuevos episodios» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo."))
+                section(String(localized: "Completados"), entries: entries.filter { states[$0.id]?.section == 3 }, states: states)
             }
         }
         .task(id: finishedURLs) { await loadStatuses() }
@@ -83,7 +83,7 @@ private struct HistoryList: View {
                 Button("Ver en TV", systemImage: "tv") { showRemote = true }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button(isEditing ? "Listo" : "Editar") {
+                Button(isEditing ? String(localized: "Listo") : String(localized: "Editar")) {
                     if isEditing {
                         selectedEntryIDs.removeAll()
                         editMode = .inactive
@@ -203,7 +203,7 @@ private struct HistoryList: View {
                 selectedEntryIDs = Set(entries.map(\.id))
             }
         } label: {
-            Label(allEntriesSelected ? "Deseleccionar todo" : "Seleccionar todo", systemImage: allEntriesSelected ? "xmark.circle" : "checkmark.circle")
+            Label(allEntriesSelected ? String(localized: "Deseleccionar todo") : String(localized: "Seleccionar todo"), systemImage: allEntriesSelected ? "xmark.circle" : "checkmark.circle")
         }
         .buttonStyle(.glass)
         .accessibilityIdentifier("history.selectAll")
@@ -266,13 +266,13 @@ private struct HistoryRow: View {
             Text("\(entry.episodeLabel) · \(formatTime(entry.positionSeconds))")
                 .foregroundStyle(.secondary)
         case .newEpisodes(let count):
-            Label(count == 1 ? "Nuevo: episodio \(entry.episode + 1)" : "\(count) episodios nuevos desde el \(entry.episode + 1)", systemImage: "sparkles")
+            Label(count == 1 ? String(localized: "Nuevo: episodio \(entry.episode + 1)") : String(localized: "\(count) episodios nuevos desde el \(entry.episode + 1)"), systemImage: "sparkles")
                 .foregroundStyle(.tint)
         case .nextSeason(let season):
             Label("Nueva temporada: \(season.localizedLabel ?? season.anime.displayTitle(language))", systemImage: "sparkles")
                 .foregroundStyle(.tint)
         case .caughtUp(let next):
-            Text(next.map { "Al día · episodio \(entry.episode) · próximo: \(airingLabel($0))" } ?? "Al día · viste el episodio \(entry.episode)")
+            Text(next.map { String(localized: "Al día · episodio \(entry.episode) · próximo: \(airingLabel($0))") } ?? String(localized: "Al día · viste el episodio \(entry.episode)"))
                 .foregroundStyle(.secondary)
         case .completed:
             Label("Completada · \(entry.episode) episodios", systemImage: "checkmark.circle.fill")

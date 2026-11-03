@@ -66,7 +66,7 @@ enum CatalogLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .sub: return "Sub"
         case .dub: return "Dub"
-        case .all: return "Sub y Dub"
+        case .all: return String(localized: "Sub y Dub")
         }
     }
 
@@ -206,7 +206,7 @@ struct CatalogGrid<EmptyState: View>: View {
             if let onShowFilters {
                 HStack {
                     Button(action: onShowFilters) {
-                        Label(filters.activeCount > 0 ? "Filtros (\(filters.activeCount))" : "Filtros", systemImage: filters.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                        Label(filters.activeCount > 0 ? String(localized: "Filtros (\(filters.activeCount))") : String(localized: "Filtros"), systemImage: filters.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                     }
                     .buttonStyle(.glass)
                     Spacer()
@@ -297,7 +297,7 @@ struct LatestScreen: View {
     var body: some View {
         AdaptiveSeriesNavigation {
             CatalogGrid(feed: feed, filters: filters, language: profile.preferences.titleLanguage, hideAdult: profile.preferences.hideAdult) {
-                ContentUnavailableView("Sin resultados", systemImage: "sparkles", description: Text(filters.isActive ? "Cambia o limpia los filtros." : "El catálogo no devolvió novedades."))
+                ContentUnavailableView("Sin resultados", systemImage: "sparkles", description: filters.isActive ? Text("Cambia o limpia los filtros.") : Text("El catálogo no devolvió novedades."))
             }
             .navigationTitle("Recientes")
             .modifier(AdaptableTabRootTitleStyle())
@@ -465,8 +465,15 @@ struct FilterOption: Hashable {
 struct CatalogFilterOptions: Decodable {
     struct Option: Decodable {
         let id: String
+        /// Spanish label; `labelEn` is the English one (newer bridges).
         let label: String
+        var labelEn: String?
         var adult: Bool?
+
+        /// The label in the app's language.
+        var displayLabel: String {
+            AppLanguage.isSpanish ? label : (labelEn ?? label)
+        }
     }
 
     var genres: [Option] = []
@@ -488,15 +495,15 @@ struct CatalogFilterOptions: Decodable {
 
 enum FilterOptions {
     static let seasons = [
-        FilterOption(tag: "winter", label: "Invierno"),
-        FilterOption(tag: "spring", label: "Primavera"),
-        FilterOption(tag: "summer", label: "Verano"),
-        FilterOption(tag: "fall", label: "Otoño"),
+        FilterOption(tag: "winter", label: String(localized: "Invierno")),
+        FilterOption(tag: "spring", label: String(localized: "Primavera")),
+        FilterOption(tag: "summer", label: String(localized: "Verano")),
+        FilterOption(tag: "fall", label: String(localized: "Otoño")),
     ]
     static let statuses = [
-        FilterOption(tag: "currently-airing", label: "En emisión"),
-        FilterOption(tag: "finished-airing", label: "Finalizado"),
-        FilterOption(tag: "not-yet-aired", label: "Próximamente"),
+        FilterOption(tag: "currently-airing", label: String(localized: "En emisión")),
+        FilterOption(tag: "finished-airing", label: String(localized: "Finalizado")),
+        FilterOption(tag: "not-yet-aired", label: String(localized: "Próximamente")),
     ]
     static let ratings = ["G", "PG", "PG-13", "R", "R+", "Rx"].map { FilterOption(tag: $0, label: $0) }
     static let mediaTypes = ["TV", "Movie", "ONA", "OVA", "Special"].map { FilterOption(tag: $0, label: $0) }
@@ -514,7 +521,7 @@ struct CatalogFilterSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     private func choices(_ list: [CatalogFilterOptions.Option]) -> [FilterOption] {
-        list.filter { !(profile.preferences.hideAdult && $0.adult == true) }.map { FilterOption(tag: $0.id, label: $0.label) }
+        list.filter { !(profile.preferences.hideAdult && $0.adult == true) }.map { FilterOption(tag: $0.id, label: $0.displayLabel) }
     }
 
     private func episodeBinding(_ keyPath: WritableKeyPath<CatalogFilters, Int?>) -> Binding<String> {
@@ -540,16 +547,16 @@ struct CatalogFilterSheet: View {
             Form {
                 Section {
                     if let options {
-                        MultiSelectLink(title: "Género", options: choices(options.genres), selection: $draft.genres)
+                        MultiSelectLink(title: String(localized: "Género"), options: choices(options.genres), selection: $draft.genres)
                     }
-                    MultiSelectLink(title: "Temporada", options: FilterOptions.seasons, selection: $draft.seasons)
-                    MultiSelectLink(title: "Año", options: FilterOptions.years, selection: $draft.years)
-                    MultiSelectLink(title: "Estado", options: FilterOptions.statuses, selection: $draft.statuses)
-                    MultiSelectLink(title: "Tipo", options: options.map { choices($0.mediaTypes) } ?? FilterOptions.mediaTypes, selection: $draft.mediaTypes)
+                    MultiSelectLink(title: String(localized: "Temporada"), options: FilterOptions.seasons, selection: $draft.seasons)
+                    MultiSelectLink(title: String(localized: "Año"), options: FilterOptions.years, selection: $draft.years)
+                    MultiSelectLink(title: String(localized: "Estado"), options: FilterOptions.statuses, selection: $draft.statuses)
+                    MultiSelectLink(title: String(localized: "Tipo"), options: options.map { choices($0.mediaTypes) } ?? FilterOptions.mediaTypes, selection: $draft.mediaTypes)
                     if let options {
-                        MultiSelectLink(title: "Origen", options: choices(options.sources), selection: $draft.sources)
+                        MultiSelectLink(title: String(localized: "Origen"), options: choices(options.sources), selection: $draft.sources)
                     }
-                    MultiSelectLink(title: "Clasificación", options: FilterOptions.ratings, selection: $draft.ratings)
+                    MultiSelectLink(title: String(localized: "Clasificación"), options: FilterOptions.ratings, selection: $draft.ratings)
                     Picker("Puntuación mínima", selection: $draft.minimumScore) {
                         Text("Cualquiera").tag(0)
                         ForEach([5, 6, 7, 8, 9], id: \.self) { Text("\($0).0+").tag($0) }
@@ -561,7 +568,7 @@ struct CatalogFilterSheet: View {
                     Section("Orden y episodios") {
                         Picker("Ordenar por", selection: $draft.sort) {
                             Text("Predeterminado").tag("")
-                            ForEach(options.sorts, id: \.id) { Text($0.label).tag($0.id) }
+                            ForEach(options.sorts, id: \.id) { Text($0.displayLabel).tag($0.id) }
                         }
                         LabeledContent("Episodios mínimo") {
                             TextField("Cualquiera", text: episodeBinding(\.minEpisodes))
@@ -607,7 +614,7 @@ private struct MultiSelectLink: View {
 
     private var summary: String {
         let chosen = options.filter { selection.contains($0.tag) }.map { $0.label }
-        return chosen.isEmpty ? "Todos" : chosen.joined(separator: ", ")
+        return chosen.isEmpty ? String(localized: "Todos") : chosen.joined(separator: ", ")
     }
 
     var body: some View {

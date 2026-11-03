@@ -18,7 +18,7 @@ struct IdentityTransferRequest: Identifiable {
         self.bridge = bridge
         self.token = token
         let label = items.first(where: { $0.name == "label" })?.value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        self.label = label.isEmpty ? "Perfil" : label
+        self.label = label.isEmpty ? String(localized: "Perfil") : label
     }
 }
 
@@ -79,8 +79,8 @@ struct IdentityImportSheet: View {
                     if !sameBridge {
                         Section {
                             Text(profile.isBridgeConfigured
-                                 ? "El código es del bridge \(request.bridge) y este dispositivo usa \(profile.bridgeURL). Al continuar, la app se conectará a \(request.bridge)."
-                                 : "Al continuar, la app se conectará al bridge \(request.bridge).")
+                                 ? String(localized: "El código es del bridge \(request.bridge) y este dispositivo usa \(profile.bridgeURL). Al continuar, la app se conectará a \(request.bridge).")
+                                 : String(localized: "Al continuar, la app se conectará al bridge \(request.bridge)."))
                         } header: {
                             Text("Bridge")
                         }
@@ -95,7 +95,7 @@ struct IdentityImportSheet: View {
                         }
                     }
                     Section {
-                        Button(working ? "Conectando…" : "Usar este perfil") {
+                        Button(working ? String(localized: "Conectando…") : String(localized: "Usar este perfil")) {
                             Task { await apply() }
                         }
                         .disabled(working || (replacesIdentity && !confirmedBackup))
@@ -109,7 +109,7 @@ struct IdentityImportSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(alreadyInUse ? "Cerrar" : "Cancelar", role: .cancel) { dismiss() }
+                    Button(alreadyInUse ? String(localized: "Cerrar") : String(localized: "Cancelar"), role: .cancel) { dismiss() }
                         .disabled(working)
                 }
             }
@@ -125,7 +125,7 @@ struct IdentityImportSheet: View {
         do {
             if !sameBridge {
                 let health: HealthResponse = try await BridgeClient.get(base: request.bridge, path: "/health", timeoutInterval: 10)
-                guard health.ok else { throw BridgeRequestError(message: "El bridge respondió de forma inesperada.") }
+                guard health.ok else { throw BridgeRequestError(message: String(localized: "El bridge respondió de forma inesperada.")) }
             }
             // The token goes to the bridge's Keychain item before the switch,
             // so the identity loads with it.

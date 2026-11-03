@@ -36,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -58,17 +59,17 @@ internal fun PhoneContinue(session: Session, onOpen: (Anime) -> Unit) {
     val states = entries.associate { it.watchUrl to continueState(session, it) }
     fun title(entry: HistoryEntry) = if (session.japanese) entry.titleJp ?: entry.seriesTitle else entry.seriesTitle
     val sections = listOf(
-        Triple("Nuevos episodios", null as String?, entries.filter { states[it.watchUrl]?.section == 0 }),
-        Triple("En curso", null, entries.filter { states[it.watchUrl]?.section == 1 }),
-        Triple("Al día", "Pasan a «Nuevos episodios» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.", entries.filter { states[it.watchUrl]?.section == 2 }),
-        Triple("Completados", null, entries.filter { states[it.watchUrl]?.section == 3 }),
+        Triple(stringResource(R.string.continue_new_episodes), null as String?, entries.filter { states[it.watchUrl]?.section == 0 }),
+        Triple(stringResource(R.string.continue_in_progress), null, entries.filter { states[it.watchUrl]?.section == 1 }),
+        Triple(stringResource(R.string.continue_up_to_date), stringResource(R.string.continue_up_to_date_footer), entries.filter { states[it.watchUrl]?.section == 2 }),
+        Triple(stringResource(R.string.continue_completed), null, entries.filter { states[it.watchUrl]?.section == 3 }),
     ).filter { it.third.isNotEmpty() }
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("Continuar viendo") },
+            title = { Text(stringResource(R.string.continue_watching)) },
             actions = {
-                IconButton(onClick = { app.tvPlay = null; app.remoteOpen = true }) { Icon(PhoneIcons.Tv, contentDescription = "Ver en TV") }
+                IconButton(onClick = { app.tvPlay = null; app.remoteOpen = true }) { Icon(PhoneIcons.Tv, contentDescription = stringResource(R.string.watch_on_tv)) }
             },
         )
         PullToRefreshBox(
@@ -77,7 +78,7 @@ internal fun PhoneContinue(session: Session, onOpen: (Anime) -> Unit) {
             modifier = Modifier.fillMaxSize(),
         ) {
             if (entries.isEmpty()) {
-                PhoneMessage("Nada para continuar", session.historyError ?: "Las series que reproduzcas con esta identidad aparecerán aquí con el segundo en que las dejaste.")
+                PhoneMessage(stringResource(R.string.nothing_to_continue), session.historyError ?: stringResource(R.string.continue_empty_phone))
                 return@PullToRefreshBox
             }
             LazyColumn(Modifier.fillMaxSize()) {
@@ -123,7 +124,7 @@ internal fun PhoneContinue(session: Session, onOpen: (Anime) -> Unit) {
                             )
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(
-                                    text = { Text("Quitar de Continuar") },
+                                    text = { Text(stringResource(R.string.remove_from_continue)) },
                                     leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
                                     onClick = { menu = false; removing = entry },
                                 )
@@ -143,15 +144,15 @@ internal fun PhoneContinue(session: Session, onOpen: (Anime) -> Unit) {
     removing?.let { entry ->
         AlertDialog(
             onDismissRequest = { removing = null },
-            title = { Text("¿Quitar «${title(entry)}»?") },
-            text = { Text("Se quita de Continuar también en tus otros dispositivos con esta identidad.") },
+            title = { Text(stringResource(R.string.remove_title, title(entry))) },
+            text = { Text(stringResource(R.string.remove_continue_text)) },
             confirmButton = {
                 TextButton(onClick = {
                     removing = null
                     scope.launch { session.remove(entry) }
-                }) { Text("Quitar") }
+                }) { Text(stringResource(R.string.remove)) }
             },
-            dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }

@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -55,8 +56,8 @@ private fun DeviceState.isShowing(command: RemoteCommand): Boolean =
 
 /**
  * The TV remote, as on iOS: the chosen TV is remembered until
- * "Desconectar"; opening it only shows the TV's state, and an episode chosen
- * with "Ver en TV" is sent once (never restarting what the TV shows).
+ * "Disconnect"; opening it only shows the TV's state, and an episode chosen
+ * with "Watch on TV" is sent once (never restarting what the TV shows).
  */
 @Composable
 internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
@@ -83,7 +84,7 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
             receivedAt = System.currentTimeMillis()
             error = null
         } catch (failure: BridgeException) {
-            error = if (failure.status == 404) "Este bridge todavía no admite el control remoto. Actualízalo a la última versión." else failure.message
+            error = if (failure.status == 404) Strings.get(R.string.remote_unsupported) else failure.message
         }
         loaded = true
     }
@@ -100,7 +101,7 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
         }
     }
 
-    /** The "Ver en TV" episode, once, unless the TV already shows it. */
+    /** The "Watch on TV" episode, once, unless the TV already shows it. */
     fun startPending(target: RemoteTv) {
         val request = pending ?: return
         if (!request.autoplay) return
@@ -126,15 +127,15 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
     ModalBottomSheet(onDismissRequest = ::close) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(connected?.name ?: "Ver en TV", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                if (connected != null) TextButton(onClick = { app.connect(null) }) { Text("Desconectar", color = MaterialTheme.colorScheme.error) }
+                Text(connected?.name ?: stringResource(R.string.watch_on_tv), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                if (connected != null) TextButton(onClick = { app.connect(null) }) { Text(stringResource(R.string.disconnect), color = MaterialTheme.colorScheme.error) }
             }
             when {
                 connected == null -> {
-                    Text("Conectar a una TV", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.connect_to_tv), style = MaterialTheme.typography.titleSmall)
                     if (tvs.isEmpty()) {
                         Text(
-                            if (loaded) "No hay TVs conectadas. Abre AniBridge Player en la TV con un perfil vinculado a esta identidad." else "Buscando TVs…",
+                            stringResource(if (loaded) R.string.no_tvs else R.string.searching_tvs),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -149,15 +150,15 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
                             },
                         )
                     }
-                    Text("La app recordará la TV elegida hasta que pulses Desconectar.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.remember_tv), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 tv == null -> {
                     Text(
-                        if (loaded) "${connected.name} no está disponible. Enciende la TV y abre AniBridge Player con un perfil vinculado a esta identidad." else "Conectando…",
+                        if (loaded) stringResource(R.string.tv_unavailable, connected.name) else stringResource(R.string.connecting),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     val here = pending?.playHere
-                    if (loaded && here != null) Button(onClick = { close(); here() }) { Text("Reproducir en este teléfono") }
+                    if (loaded && here != null) Button(onClick = { close(); here() }) { Text(stringResource(R.string.play_on_this_phone)) }
                 }
                 else -> {
                     val state = tv.state
@@ -165,7 +166,7 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
                     if (request != null && !request.autoplay && state?.isShowing(request.command) != true) {
                         Button(onClick = { pending = null; send(request.command, tv.id) }, modifier = Modifier.fillMaxWidth()) {
                             Icon(Icons.Filled.PlayArrow, null)
-                            Text(" Reproducir en la TV")
+                            Text(" " + stringResource(R.string.play_on_tv))
                         }
                         Text(request.title, style = MaterialTheme.typography.bodySmall)
                     }
@@ -180,9 +181,9 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
                             Column {
                                 Text(state.seriesTitle.orEmpty(), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 state.episode?.let { episode ->
-                                    Text(state.episodeTitle?.let { "Episodio $episode · $it" } ?: "Episodio $episode", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(state.episodeTitle?.let { stringResource(R.string.episode_with_title, episode, it) } ?: stringResource(R.string.episode_number, episode), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                if (state.status == "loading") Text("Cargando en la TV…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                if (state.status == "loading") Text(stringResource(R.string.loading_on_tv), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                         val duration = state.duration
@@ -210,13 +211,13 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
                             }
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { send(RemoteCommand(type = "previous"), tv.id) }) { Icon(PhoneIcons.SkipPrevious, "Episodio anterior") }
-                            IconButton(onClick = { send(RemoteCommand(type = "seek", seconds = -10.0), tv.id) }) { Icon(PhoneIcons.Replay10, "Retroceder 10 segundos") }
+                            IconButton(onClick = { send(RemoteCommand(type = "previous"), tv.id) }) { Icon(PhoneIcons.SkipPrevious, stringResource(R.string.previous_episode)) }
+                            IconButton(onClick = { send(RemoteCommand(type = "seek", seconds = -10.0), tv.id) }) { Icon(PhoneIcons.Replay10, stringResource(R.string.rewind_10)) }
                             FilledIconButton(onClick = { send(RemoteCommand(type = "toggle"), tv.id) }, modifier = Modifier.size(56.dp)) {
-                                Icon(if (state.status == "playing") PhoneIcons.Pause else Icons.Filled.PlayArrow, if (state.status == "playing") "Pausar" else "Reproducir")
+                                Icon(if (state.status == "playing") PhoneIcons.Pause else Icons.Filled.PlayArrow, stringResource(if (state.status == "playing") R.string.pause else R.string.play))
                             }
-                            IconButton(onClick = { send(RemoteCommand(type = "seek", seconds = 10.0), tv.id) }) { Icon(PhoneIcons.Forward10, "Adelantar 10 segundos") }
-                            IconButton(onClick = { send(RemoteCommand(type = "next"), tv.id) }) { Icon(PhoneIcons.SkipNext, "Siguiente episodio") }
+                            IconButton(onClick = { send(RemoteCommand(type = "seek", seconds = 10.0), tv.id) }) { Icon(PhoneIcons.Forward10, stringResource(R.string.forward_10)) }
+                            IconButton(onClick = { send(RemoteCommand(type = "next"), tv.id) }) { Icon(PhoneIcons.SkipNext, stringResource(R.string.next_episode)) }
                         }
                         state.skip?.let { label -> OutlinedButton(onClick = { send(RemoteCommand(type = "skip"), tv.id) }) { Text(label) } }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -225,10 +226,10 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
                                 Box(Modifier.weight(1f)) {
                                     OutlinedButton(onClick = { menu = true }) {
                                         Icon(PhoneIcons.Subtitles, null)
-                                        Text(" " + (state.subtitles.firstOrNull { it.id == state.subtitle }?.label ?: "Desactivados"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(" " + (state.subtitles.firstOrNull { it.id == state.subtitle }?.label ?: stringResource(R.string.subtitles_off)), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                        DropdownMenuItem(text = { Text("Desactivados") }, onClick = { menu = false; send(RemoteCommand(type = "subtitles", track = "off"), tv.id) })
+                                        DropdownMenuItem(text = { Text(stringResource(R.string.subtitles_off)) }, onClick = { menu = false; send(RemoteCommand(type = "subtitles", track = "off"), tv.id) })
                                         state.subtitles.forEach { track ->
                                             DropdownMenuItem(text = { Text(track.label) }, onClick = { menu = false; send(RemoteCommand(type = "subtitles", track = track.id), tv.id) })
                                         }
@@ -237,19 +238,19 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
                             } else {
                                 Box(Modifier.weight(1f))
                             }
-                            IconButton(onClick = { send(RemoteCommand(type = "volume", steps = -1), tv.id) }) { Icon(PhoneIcons.VolumeDown, "Bajar volumen de la TV") }
-                            IconButton(onClick = { send(RemoteCommand(type = "volume", steps = 1), tv.id) }) { Icon(PhoneIcons.VolumeUp, "Subir volumen de la TV") }
+                            IconButton(onClick = { send(RemoteCommand(type = "volume", steps = -1), tv.id) }) { Icon(PhoneIcons.VolumeDown, stringResource(R.string.tv_volume_down)) }
+                            IconButton(onClick = { send(RemoteCommand(type = "volume", steps = 1), tv.id) }) { Icon(PhoneIcons.VolumeUp, stringResource(R.string.tv_volume_up)) }
                         }
                         TextButton(onClick = { send(RemoteCommand(type = "stop"), tv.id) }) {
                             Icon(PhoneIcons.Stop, null, tint = MaterialTheme.colorScheme.error)
-                            Text(" Detener en la TV", color = MaterialTheme.colorScheme.error)
+                            Text(" " + stringResource(R.string.stop_on_tv), color = MaterialTheme.colorScheme.error)
                         }
                     } else if (request == null || request.autoplay) {
-                        Text("La TV no está reproduciendo nada. En la ficha de una serie, usa «Ver en TV» para empezar un episodio ahí.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.tv_idle_hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (tv.canOpen == false && state?.isActive() != true) {
                         Text(
-                            "La TV sólo empieza episodios con AniBridge Player en pantalla. Para que se abra sola, pulsa «Abrir desde el teléfono» en la app de la TV.",
+                            stringResource(R.string.tv_cannot_open),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -262,8 +263,8 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
 }
 
 private fun summary(state: DeviceState?): String {
-    if (state == null || !state.isActive()) return "En espera"
-    val episode = state.episode?.let { " · episodio $it" }.orEmpty()
-    val status = when (state.status) { "playing" -> "Reproduciendo"; "loading" -> "Cargando"; else -> "En pausa" }
-    return "$status: ${state.seriesTitle}$episode"
+    if (state == null || !state.isActive()) return Strings.get(R.string.tv_idle)
+    val status = Strings.get(when (state.status) { "playing" -> R.string.tv_playing; "loading" -> R.string.tv_loading; else -> R.string.tv_paused })
+    return state.episode?.let { Strings.get(R.string.tv_summary_episode, status, state.seriesTitle.orEmpty(), it) }
+        ?: Strings.get(R.string.tv_summary, status, state.seriesTitle.orEmpty())
 }

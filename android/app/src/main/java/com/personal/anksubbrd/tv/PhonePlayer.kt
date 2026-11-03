@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -177,13 +178,13 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
             error = null
             return
         }
-        changing = "Abriendo el episodio ${episode.number}…"
+        changing = Strings.get(R.string.opening_episode, episode.number)
         scope.launch {
             try {
                 request = session.resolve(request.anime, request.series, episode, request.kind, request.playback.serverName)
                 error = null
             } catch (failure: BridgeException) {
-                error = "No se pudo abrir el episodio ${episode.number}. ${failure.message}"
+                error = Strings.get(R.string.open_episode_failed, episode.number, failure.message.orEmpty())
             } finally {
                 changing = null
             }
@@ -223,8 +224,8 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
             val preferences = session.preferences
             request.playback.intro?.takeIf { preferences.autoSkipIntro && position >= it.start && position < it.end }?.let { player.seekTo((it.end * 1000).toLong()) }
             request.playback.outro?.takeIf { preferences.autoSkipOutro && position >= it.start && position < it.end }?.let { player.seekTo((it.end * 1000).toLong()) }
-            skip = request.playback.intro?.takeIf { !preferences.autoSkipIntro && position >= it.start && position < it.end }?.let { "Saltar intro" to it }
-                ?: request.playback.outro?.takeIf { !preferences.autoSkipOutro && position >= it.start && position < it.end }?.let { "Saltar outro" to it }
+            skip = request.playback.intro?.takeIf { !preferences.autoSkipIntro && position >= it.start && position < it.end }?.let { Strings.get(R.string.skip_intro) to it }
+                ?: request.playback.outro?.takeIf { !preferences.autoSkipOutro && position >= it.start && position < it.end }?.let { Strings.get(R.string.skip_outro) to it }
             if (++ticks % 10 == 0 && player.isPlaying) save()
         }
     }
@@ -257,10 +258,10 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
 
             override fun onPlayerError(failure: PlaybackException) {
                 error = when {
-                    failure.errorCode in 4000..4999 -> "Este teléfono no pudo decodificar el video (${failure.errorCodeName})."
-                    request.downloaded ->"No se pudo abrir la descarga (${failure.errorCodeName}). Bórrala y descárgala de nuevo."
-                    Connectivity.isOnline -> "No se pudo reproducir este servidor (${failure.errorCodeName})."
-                    else -> "Sin conexión a internet. Los episodios descargados siguen disponibles en Descargas."
+                    failure.errorCode in 4000..4999 -> Strings.get(R.string.decode_failed, failure.errorCodeName)
+                    request.downloaded -> Strings.get(R.string.download_open_failed, failure.errorCodeName)
+                    Connectivity.isOnline -> Strings.get(R.string.server_failed, failure.errorCodeName)
+                    else -> Strings.get(R.string.offline_downloads_available)
                 }
             }
         }
@@ -303,7 +304,7 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
                     .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onExit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cerrar", tint = Color.White) }
+                IconButton(onClick = onExit) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.close), tint = Color.White) }
                 Column(Modifier.weight(1f)) {
                     Text(
                         (if (session.japanese) request.series.titleJp ?: request.anime.titleJp else null) ?: request.series.title,
@@ -313,7 +314,7 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        listOfNotNull("Episodio ${request.episode.number}", request.episode.subtitle, if (request.kind == "dub") "Dub" else "Sub").joinToString(" · "),
+                        listOfNotNull(stringResource(R.string.episode_number, request.episode.number), request.episode.subtitle, if (request.kind == "dub") "Dub" else "Sub").joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.8f),
                         maxLines = 1,
@@ -321,10 +322,10 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
                     )
                 }
                 IconButton(onClick = { previous?.let { open(it) } }, enabled = previous != null && changing == null) {
-                    Icon(PhoneIcons.SkipPrevious, contentDescription = "Episodio anterior", tint = if (previous != null) Color.White else Color.White.copy(alpha = 0.4f))
+                    Icon(PhoneIcons.SkipPrevious, contentDescription = stringResource(R.string.previous_episode), tint = if (previous != null) Color.White else Color.White.copy(alpha = 0.4f))
                 }
                 IconButton(onClick = { next?.let { open(it) } }, enabled = next != null && changing == null) {
-                    Icon(PhoneIcons.SkipNext, contentDescription = "Siguiente episodio", tint = if (next != null) Color.White else Color.White.copy(alpha = 0.4f))
+                    Icon(PhoneIcons.SkipNext, contentDescription = stringResource(R.string.next_episode), tint = if (next != null) Color.White else Color.White.copy(alpha = 0.4f))
                 }
             }
         }
@@ -356,19 +357,19 @@ internal fun PhonePlayer(session: Session, initial: PlaybackRequest, onExit: () 
                             attempt++
                             return@Button
                         }
-                        changing = "Reintentando…"
+                        changing = Strings.get(R.string.retrying)
                         scope.launch {
                             try {
                                 request = session.resolve(request.anime, request.series, request.episode, request.kind, request.playback.serverName)
                                 attempt++
                             } catch (failure: BridgeException) {
-                                error = "No se pudo reintentar. ${failure.message}"
+                                error = Strings.get(R.string.retry_failed, failure.message.orEmpty())
                             } finally {
                                 changing = null
                             }
                         }
-                    }) { Text("Reintentar") }
-                    OutlinedButton(onClick = onExit) { Text("Cerrar reproductor") }
+                    }) { Text(stringResource(R.string.retry)) }
+                    OutlinedButton(onClick = onExit) { Text(stringResource(R.string.close_player)) }
                 }
             }
         }

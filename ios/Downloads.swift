@@ -70,7 +70,7 @@ struct DownloadRecord: Codable, Identifiable {
 
     var episodeLabel: String {
         let title = episodeTitle.trimmingCharacters(in: .whitespaces)
-        return title.isEmpty || title == "Episode \(episode)" ? "Episodio \(episode)" : "Episodio \(episode) · \(title)"
+        return title.isEmpty || title == "Episode \(episode)" ? String(localized: "Episodio \(episode)") : String(localized: "Episodio \(episode) · \(title)")
     }
 
     var anime: Anime {
@@ -234,7 +234,7 @@ final class DownloadStore {
         Task { await PosterCache.prefetch(entry.imageUrl) }
         do {
             guard let url = URL(string: playbackSession.playback.playbackUrl), let session else {
-                throw BridgeRequestError(message: "La URL de reproducción no es válida.")
+                throw BridgeRequestError(message: String(localized: "La URL de reproducción no es válida."))
             }
             let asset = AVURLAsset(url: url)
             let configuration = AVAssetDownloadConfiguration(asset: asset, title: "\(entry.seriesTitle) · \(entry.episodeLabel)")
@@ -285,7 +285,8 @@ final class DownloadStore {
     /// help diagnose a package that moved.
     func playbackProblem(for record: DownloadRecord) -> String? {
         guard let url = record.fileURL, FileManager.default.fileExists(atPath: url.path) else {
-            return "No se encontró el archivo de esta descarga. Bórrala y descárgala de nuevo. (Guardado en: \(record.storedPath ?? "sin ruta"); inicio: \(NSHomeDirectory()))"
+            let storedPath = record.storedPath ?? String(localized: "sin ruta")
+            return String(localized: "No se encontró el archivo de esta descarga. Bórrala y descárgala de nuevo. (Guardado en: \(storedPath); inicio: \(NSHomeDirectory()))")
         }
         return nil
     }
@@ -387,7 +388,7 @@ final class DownloadStore {
         for record in records where record.state == .downloading && tasks[record.id] == nil {
             update(record.id) {
                 $0.state = .failed
-                $0.errorMessage = "La descarga se interrumpió."
+                $0.errorMessage = String(localized: "La descarga se interrumpió.")
             }
         }
     }
@@ -449,9 +450,10 @@ final class DownloadStore {
                 $0.errorMessage = nil
             }
         } else {
+            let storedPath = record.storedPath ?? String(localized: "sin ruta")
             update(id) {
                 $0.state = .failed
-                $0.errorMessage = "La descarga terminó, pero no se encontró el archivo (\(record.storedPath ?? "sin ruta"))."
+                $0.errorMessage = String(localized: "La descarga terminó, pero no se encontró el archivo (\(storedPath)).")
             }
             Task { await retryWithAnotherServer(id) }
         }
@@ -462,11 +464,11 @@ final class DownloadStore {
     private func retryWithAnotherServer(_ id: String) async {
         guard let profile, profile.isBridgeConfigured, let record = records.first(where: { $0.id == id }) else { return }
         let tried = Set((record.triedServers ?? []) + [record.serverName])
-        let failure = record.errorMessage ?? "La descarga falló."
-        update(id) { $0.errorMessage = "\(failure) Probando otro servidor…" }
+        let failure = record.errorMessage ?? String(localized: "La descarga falló.")
+        update(id) { $0.errorMessage = String(localized: "\(failure) Probando otro servidor…") }
         do {
             guard let session = try await alternativeSession(for: record, excluding: tried, profile: profile) else {
-                update(id) { $0.errorMessage = "\(failure) Ningún otro servidor \(record.kind.displayName) funcionó." }
+                update(id) { $0.errorMessage = String(localized: "\(failure) Ningún otro servidor \(record.kind.displayName) funcionó.") }
                 return
             }
             remove(record)
@@ -481,7 +483,7 @@ final class DownloadStore {
     func alternativeSession(for record: DownloadRecord, excluding: Set<String>, profile: ProfileStore) async throws -> PlaybackSession? {
         let series: Series = try await BridgeClient.post(base: profile.bridgeURL, path: "/api/series", body: WatchRequest(watchUrl: record.watchUrl))
         guard let episode = series.episodes.first(where: { $0.number == record.episode }) else {
-            throw BridgeRequestError(message: "El episodio \(record.episode) ya no está en el catálogo.")
+            throw BridgeRequestError(message: String(localized: "El episodio \(record.episode) ya no está en el catálogo."))
         }
         let resolver = PlaybackResolver(series: series, anime: record.anime, profile: profile)
         return try await resolver.downloadSession(for: episode, kind: record.kind, preferredName: record.serverName, excluding: excluding)
@@ -600,7 +602,7 @@ struct DownloadsScreen: View {
             Button(role: .destructive) {
                 downloads.remove(record)
             } label: {
-                Label(record.state == .downloading ? "Cancelar" : "Borrar", systemImage: "trash")
+                Label(record.state == .downloading ? String(localized: "Cancelar") : String(localized: "Borrar"), systemImage: "trash")
             }
         }
         .swipeActions(edge: .leading) {
@@ -634,7 +636,7 @@ struct DownloadsScreen: View {
             defer { retrying = nil }
             do {
                 guard let session = try await downloads.alternativeSession(for: record, excluding: [], profile: profile) else {
-                    throw BridgeRequestError(message: "El episodio \(record.episode) no tiene servidores \(record.kind.displayName).")
+                    throw BridgeRequestError(message: String(localized: "El episodio \(record.episode) no tiene servidores \(record.kind.displayName)."))
                 }
                 downloads.remove(record)
                 await downloads.start(session)
@@ -675,12 +677,14 @@ private struct DownloadRow: View {
         switch record.state {
         case .downloading:
             ProgressView(value: record.progress) {
-                Text(record.progress > 0 ? "Descargando · \(record.kind.displayName) · \(record.serverName) · \(Int((record.progress * 100).rounded())) %" : "Esperando · \(record.kind.displayName) · \(record.serverName)")
+                Text(record.progress > 0
+                     ? String(localized: "Descargando · \(record.kind.displayName) · \(record.serverName) · \(record.progress.formatted(.percent.precision(.fractionLength(0))))")
+                     : String(localized: "Esperando · \(record.kind.displayName) · \(record.serverName)"))
                     .foregroundStyle(.secondary)
             }
         case .completed:
             let size = record.bytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
-            let parts = [record.kind.displayName, record.serverName, size, progress.map { "Visto hasta \(formatTime($0))" }].compactMap { $0 }
+            let parts = [record.kind.displayName, record.serverName, size, progress.map { String(localized: "Visto hasta \(formatTime($0))") }].compactMap { $0 }
             Text(parts.joined(separator: " · "))
                 .foregroundStyle(.secondary)
         case .failed:
@@ -688,7 +692,7 @@ private struct DownloadRow: View {
                 Text("Reintentando…")
                     .foregroundStyle(.secondary)
             } else {
-                Label(record.errorMessage ?? "La descarga falló.", systemImage: "exclamationmark.triangle.fill")
+                Label(record.errorMessage ?? String(localized: "La descarga falló."), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
                     .lineLimit(2)
             }
@@ -720,7 +724,7 @@ struct DownloadBadge: View {
             .animation(.linear(duration: 0.3), value: record.progress)
             .accessibilityElement()
             .accessibilityLabel("Descargando")
-            .accessibilityValue("\(Int((record.progress * 100).rounded())) %")
+            .accessibilityValue(Text(record.progress, format: .percent.precision(.fractionLength(0))))
         case .completed:
             Image(systemName: "arrow.down.circle.fill")
                 .foregroundStyle(.tint)

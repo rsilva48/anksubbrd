@@ -1,12 +1,18 @@
 import Foundation
 
+/// The app's interface language: Spanish when the device prefers Spanish,
+/// English for every other language (the development region).
+enum AppLanguage {
+    static var isSpanish: Bool { Bundle.main.preferredLocalizations.first?.hasPrefix("es") == true }
+}
+
 enum StreamKind: String, Codable, CaseIterable, Identifiable {
     case sub
     case dub
 
     var id: String { rawValue }
     var displayName: String { self == .dub ? "Dub" : "Sub" }
-    var detail: String { self == .dub ? "Audio en inglés" : "Audio en japonés con subtítulos" }
+    var detail: String { self == .dub ? String(localized: "Audio en inglés") : String(localized: "Audio en japonés con subtítulos") }
 }
 
 enum TitleLanguage: String, Codable, CaseIterable, Identifiable {
@@ -14,7 +20,7 @@ enum TitleLanguage: String, Codable, CaseIterable, Identifiable {
     case jp
 
     var id: String { rawValue }
-    var displayName: String { self == .jp ? "Japonés" : "Inglés" }
+    var displayName: String { self == .jp ? String(localized: "Japonés") : String(localized: "Inglés") }
 }
 
 /// Catalog and playback settings. They belong to the active identity (bridge
@@ -133,9 +139,9 @@ struct Series: Codable {
 
     var statusLabel: String? {
         switch status {
-        case "finished": return "Finalizado"
-        case "airing": return "En emisión"
-        case "upcoming": return "Próximamente"
+        case "finished": return String(localized: "Finalizado")
+        case "airing": return String(localized: "En emisión")
+        case "upcoming": return String(localized: "Próximamente")
         default: return nil
         }
     }
@@ -167,9 +173,11 @@ struct Season: Codable, Identifiable, Hashable {
     let label: String?
     var id: String { watchUrl }
 
-    /// The curated name in Spanish ("Temporada 1, parte 2", "Especial 1").
+    /// The curated name in the app's language: Spanish ("Temporada 1, parte
+    /// 2", "Especial 1") or the catalog's own English name.
     var localizedLabel: String? {
         guard let label, !label.isEmpty else { return nil }
+        guard AppLanguage.isSpanish else { return label }
         return label
             .replacingOccurrences(of: "Season", with: "Temporada")
             .replacingOccurrences(of: "Part", with: "parte")
@@ -271,7 +279,7 @@ struct WatchHistoryEntry: Codable, Hashable, Identifiable {
 
     var episodeLabel: String {
         let title = episodeTitle.trimmingCharacters(in: .whitespaces)
-        return title.isEmpty || title == "Episode \(episode)" ? "Episodio \(episode)" : "Episodio \(episode) · \(title)"
+        return title.isEmpty || title == "Episode \(episode)" ? String(localized: "Episodio \(episode)") : String(localized: "Episodio \(episode) · \(title)")
     }
 
     var anime: Anime {
@@ -348,9 +356,10 @@ func upcomingDate(_ timestamp: Double?) -> Date? {
     return date > Date() ? date : nil
 }
 
-/// "jue 5 nov, 11:28" in the device time zone.
+/// "jue 5 nov, 11:28" ("Thu, Nov 5, 11:28 AM") in the device time zone and
+/// the app's language.
 func airingLabel(_ date: Date) -> String {
-    date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute().locale(Locale(identifier: "es")))
+    date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute())
 }
 
 func formatTime(_ seconds: Double) -> String {

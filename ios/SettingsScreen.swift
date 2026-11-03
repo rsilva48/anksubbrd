@@ -123,7 +123,7 @@ struct SettingsScreen: View {
                         Text("Probando conexión…")
                     }
                 } else {
-                    Label(candidateIsActive ? "Probar conexión" : "Probar y guardar", systemImage: "network")
+                    Label(candidateIsActive ? String(localized: "Probar conexión") : String(localized: "Probar y guardar"), systemImage: "network")
                 }
             }
             .disabled(testing || candidateURL == nil)
@@ -172,7 +172,7 @@ struct SettingsScreen: View {
             do {
                 let health: HealthResponse = try await BridgeClient.get(base: candidate, path: "/health", timeoutInterval: 10)
                 guard health.ok else {
-                    testResult = .failure("El bridge respondió de forma inesperada.")
+                    testResult = .failure(String(localized: "El bridge respondió de forma inesperada."))
                     return
                 }
                 let migrated = try SecureTokenStore.migrateLegacyToken(to: candidate)
@@ -181,13 +181,13 @@ struct SettingsScreen: View {
                 let fields = BridgeEndpoint.fields(from: profile.bridgeURL)
                 scheme = fields.scheme
                 host = fields.host
-                let connected = health.summary.map { "Conectado (\($0))." } ?? "Conectado."
+                let connected = health.summary.map { String(localized: "Conectado (\($0)).") } ?? String(localized: "Conectado.")
                 if !profile.hasToken, await BridgeClient.requiresIdentity(base: candidate) {
-                    testResult = .warning("\(connected) Este bridge requiere una identidad privada: créala, restáurala o impórtala abajo.")
+                    testResult = .warning(String(localized: "\(connected) Este bridge requiere una identidad privada: créala, restáurala o impórtala abajo."))
                 } else if migrated || madeSynchronizable {
-                    testResult = .success("\(connected) La identidad se guardó como sincronizable en el Llavero de iCloud.")
+                    testResult = .success(String(localized: "\(connected) La identidad se guardó como sincronizable en el Llavero de iCloud."))
                 } else {
-                    testResult = .success("\(connected) Buscar, Recientes y Continuar ya están disponibles.")
+                    testResult = .success(String(localized: "\(connected) Buscar, Recientes y Continuar ya están disponibles."))
                 }
                 await profile.sync(force: true)
             } catch is CancellationError {
@@ -229,7 +229,7 @@ struct SettingsScreen: View {
 
     private func install(token: String) throws {
         guard profile.isBridgeConfigured else {
-            throw BridgeRequestError(message: "Primero prueba la conexión del bridge.")
+            throw BridgeRequestError(message: String(localized: "Primero prueba la conexión del bridge."))
         }
         try SecureTokenStore.save(token, for: profile.bridgeURL)
         tokenError = nil
@@ -240,7 +240,7 @@ struct SettingsScreen: View {
     private func restoreFromICloud() {
         do {
             try install(token: SecureTokenStore.restoreFromICloud(for: profile.bridgeURL))
-            testResult = .success("Identidad restaurada desde el Llavero de iCloud.")
+            testResult = .success(String(localized: "Identidad restaurada desde el Llavero de iCloud."))
         } catch {
             tokenError = error.localizedDescription
         }
@@ -334,9 +334,9 @@ struct SettingsScreen: View {
     }
 
     private var subtitleOptions: [(tag: String, label: String)] {
-        var options: [(tag: String, label: String)] = [("", "Automático (idioma del dispositivo)")]
+        var options: [(tag: String, label: String)] = [("", String(localized: "Automático (idioma del dispositivo)"))]
         options += ["en", "es", "pt", "fr", "de", "it"].map { ($0, languageName($0)) }
-        options.append((UserPreferences.subtitlesOff, "Desactivados"))
+        options.append((UserPreferences.subtitlesOff, String(localized: "Desactivados")))
         let current = preferences.subtitleLanguage
         if !options.contains(where: { $0.tag == current }) {
             options.insert((current, languageName(current)), at: 1)
@@ -344,9 +344,10 @@ struct SettingsScreen: View {
         return options
     }
 
+    /// The language's name in the app's language ("Inglés", "English").
     private func languageName(_ tag: String) -> String {
-        let spanish = Locale(identifier: "es")
-        return spanish.localizedString(forIdentifier: tag)?.capitalized(with: spanish) ?? tag
+        let locale = Locale.current
+        return locale.localizedString(forIdentifier: tag)?.capitalized(with: locale) ?? tag
     }
 
     // MARK: About
@@ -561,7 +562,7 @@ private struct TokenImportSheet: View {
     private func save() {
         let candidate = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard candidate.range(of: "^[A-Fa-f0-9]{64}$", options: .regularExpression) != nil else {
-            errorMessage = "El token debe contener 64 caracteres hexadecimales."
+            errorMessage = String(localized: "El token debe contener 64 caracteres hexadecimales.")
             return
         }
         do {
@@ -674,7 +675,7 @@ struct TVPairingSheet: View {
                 }
                 if !matchesBridge {
                     Section {
-                        ErrorNotice(message: "La TV usa el bridge \(request.bridge), que no es el configurado aquí. Configura y prueba ese mismo bridge en Ajustes y vuelve a escanear el código.")
+                        ErrorNotice(message: String(localized: "La TV usa el bridge \(request.bridge), que no es el configurado aquí. Configura y prueba ese mismo bridge en Ajustes y vuelve a escanear el código."))
                     }
                 } else if phase == .done {
                     Section {
@@ -708,7 +709,7 @@ struct TVPairingSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(phase == .done ? "Listo" : "Cerrar") { dismiss() }
+                    Button(phase == .done ? String(localized: "Listo") : String(localized: "Cerrar")) { dismiss() }
                 }
             }
         }
@@ -717,7 +718,7 @@ struct TVPairingSheet: View {
 
     private var profileName: String {
         let value = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? "Perfil" : value
+        return value.isEmpty ? String(localized: "Perfil") : value
     }
 
     private func approve() {

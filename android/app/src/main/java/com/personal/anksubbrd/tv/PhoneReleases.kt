@@ -88,7 +88,9 @@ internal object ReleaseReminders {
                 .addTag(TAG)
                 .setInputData(workDataOf(
                     "title" to title,
-                    "body" to "El episodio ${entry.episode} en ${if (entry.kind == "dub") "Dub" else "Sub"} ya debería estar disponible.",
+                    // The text is written when the reminder shows, in the app's language then.
+                    "episode" to entry.episode,
+                    "kind" to entry.kind,
                     "watchUrl" to entry.watchUrl,
                     "seriesTitle" to entry.title,
                     "titleJp" to entry.titleJp,
@@ -102,7 +104,7 @@ internal object ReleaseReminders {
     fun channel(context: Context) {
         if (Build.VERSION.SDK_INT < 26) return
         context.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel(CHANNEL, "Nuevos episodios", NotificationManager.IMPORTANCE_DEFAULT))
+            .createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.releases_channel), NotificationManager.IMPORTANCE_DEFAULT))
     }
 
     /** Posts a reminder; tapping it opens the series. */
@@ -136,7 +138,11 @@ class ReleaseWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             imageUrl = inputData.getString("imageUrl"),
             titleJp = inputData.getString("titleJp"),
         )
-        ReleaseReminders.notify(applicationContext, inputData.getString("title").orEmpty(), inputData.getString("body").orEmpty(), anime)
+        val episode = inputData.getInt("episode", 0)
+        val kind = if (inputData.getString("kind") == "dub") "Dub" else "Sub"
+        // Reminders scheduled by older versions carry their text.
+        val body = inputData.getString("body") ?: applicationContext.getString(R.string.release_body, episode, kind)
+        ReleaseReminders.notify(applicationContext, inputData.getString("title").orEmpty(), body, anime)
         return Result.success()
     }
 }

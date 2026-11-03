@@ -20,6 +20,8 @@ Las URLs y tokens temporales del proveedor no se registran en disco y desaparece
 
 ## Uso de la app
 
+Las apps (iOS, Android TV y Android en teléfono) están en español y en inglés: usan el idioma del dispositivo, en español si es español y en inglés en cualquier otro caso. En iOS y en Android 13+ el idioma de la app también se puede elegir en los ajustes del sistema. La página `/setup` del bridge sigue el idioma del navegador.
+
 1. Instala el IPA (ver [Releases](#versiones-y-releases)).
 2. En el primer uso, **Buscar**, **Recientes** y **Continuar** permanecen bloqueados y ofrecen un acceso directo a **Ajustes**.
 3. En **Ajustes → Bridge** elige `https://` (predeterminado) o `http://` y escribe sólo el dominio o la IP, con puerto si hace falta (`bridge.midominio.com` o `192.168.1.20:8787`). Si pegas una dirección con `http://` o `https://`, el prefijo se quita del campo y el selector adopta ese protocolo. **Probar y guardar** activa la dirección únicamente si `/health` responde.
@@ -265,7 +267,7 @@ La app usa estas rutas; no necesitas llamarlas manualmente.
 - `GET` / `PUT /api/preferences`: preferencias privadas; gana la modificación más reciente.
 - `POST /api/admin/users` con el encabezado `X-Bridge-Admin-Token`: registra un token de usuario.
 - `POST /api/pair/start` y `GET /api/pair/status?pairingId=…` (sin identidad), `POST /api/pair/approve` con `{ "code", "label" }`: vinculación de la TV por QR.
-- `GET /api/catalog/filters`: listas de filtros con etiquetas en español (`genres` con su `id` del catálogo y `adult`, `mediaTypes`, `sources`, `sorts`). `GET /api/latest` acepta además `genre=`, `source=`, `sort=`, `minEpisodes=` y `maxEpisodes=`.
+- `GET /api/catalog/filters`: listas de filtros con etiquetas en español (`label`) y en inglés (`labelEn`) (`genres` con su `id` del catálogo y `adult`, `mediaTypes`, `sources`, `sorts`). `GET /api/latest` acepta además `genre=`, `source=`, `sort=`, `minEpisodes=` y `maxEpisodes=`.
 - `POST /api/identities` con `{ "label" }`: crea un perfil nuevo con la identidad que hace la petición; responde `{ token, userId, label }`. `GET`/`POST /setup?code=…`: página para completar la vinculación de una TV desde el navegador.
 - `GET /api/devices`: TVs conectadas de la identidad, con lo que reproducen, `stateAge` (ms desde ese informe) y `canOpen` (si la TV puede abrir la app sola). `PUT /api/devices/:id` con `{ "name", "state", "canOpen" }`: la TV informa su estado. `GET /api/devices/:id/commands`: la TV espera órdenes (long polling de hasta 25 s). `POST /api/devices/:id/commands` con `{ "type": "play" | "pause" | "resume" | "toggle" | "seek" | "skip" | "next" | "previous" | "stop" | "volume" | "subtitles", … }`: el teléfono envía una orden (`play` lleva `watchUrl`, `episode` y `kind`; `seek`, `position` absoluta o `seconds` relativos; `volume`, `steps`; `subtitles`, `track` con el id de una pista de `state.subtitles` u `off`).
 

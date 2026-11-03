@@ -175,12 +175,12 @@ class RemoteService : Service() {
     private fun notification(): Notification {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) {
-            manager.createNotificationChannel(NotificationChannel(CHANNEL, "Control desde el teléfono", NotificationManager.IMPORTANCE_MIN))
+            manager.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.remote_channel), NotificationManager.IMPORTANCE_MIN))
         }
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else @Suppress("DEPRECATION") Notification.Builder(this)
         return builder.setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("Disponible para el control desde el teléfono")
+            .setContentText(getString(R.string.remote_notification))
             .setOngoing(true)
             .build()
     }

@@ -43,6 +43,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -68,7 +70,7 @@ internal fun PhoneSettings(app: PhoneState) {
 
     fun test() {
         val url = BridgeClient.canonicalUrl(scheme, host.trim()) ?: run {
-            bridgeMessage = "Escribe el dominio o la IP del bridge, por ejemplo bridge.midominio.com o 192.168.1.20:8787."
+            bridgeMessage = Strings.get(R.string.bridge_address_invalid)
             return
         }
         testing = true
@@ -76,11 +78,11 @@ internal fun PhoneSettings(app: PhoneState) {
         scope.launch {
             try {
                 val health = BridgeClient(url, "").health()
-                if (!health.ok) throw BridgeException("El bridge respondió de forma inesperada.")
+                if (!health.ok) throw BridgeException(Strings.get(R.string.bridge_unexpected))
                 app.useBridge(url)
-                val connected = listOfNotNull(health.version?.let { "bridge $it" }, health.provider).joinToString(" · ").let { if (it.isEmpty()) "Conectado." else "Conectado ($it)." }
+                val connected = listOfNotNull(health.version?.let { "bridge $it" }, health.provider).joinToString(" · ").let { if (it.isEmpty()) Strings.get(R.string.connected) else Strings.get(R.string.connected_details, it) }
                 val needsIdentity = app.token == null && runCatching { BridgeClient(url, "").history() }.exceptionOrNull().let { it is BridgeException && it.status == 401 }
-                bridgeMessage = if (needsIdentity) "$connected Este bridge requiere una identidad privada: créala o impórtala abajo." else "$connected Buscar, Recientes y Continuar ya están disponibles."
+                bridgeMessage = Strings.get(if (needsIdentity) R.string.needs_identity else R.string.bridge_ready, connected)
                 app.session?.refresh()
             } catch (error: BridgeException) {
                 bridgeMessage = error.message
@@ -91,11 +93,11 @@ internal fun PhoneSettings(app: PhoneState) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Text("Ajustes") })
+        TopAppBar(title = { Text(stringResource(R.string.tab_settings)) })
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
             SectionTitle("Bridge")
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                app.bridge?.let { Text("Activo: $it", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium) }
+                app.bridge?.let { Text(stringResource(R.string.active_bridge, it), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     var menu by remember { mutableStateOf(false) }
                     Box {
@@ -114,33 +116,33 @@ internal fun PhoneSettings(app: PhoneState) {
                                 else -> host = value
                             }
                         },
-                        placeholder = { Text("bridge.midominio.com") },
+                        placeholder = { Text(stringResource(R.string.bridge_placeholder)) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
                         keyboardActions = KeyboardActions(onGo = { test() }),
                         modifier = Modifier.weight(1f),
                     )
                 }
-                Button(onClick = ::test, enabled = !testing && host.isNotBlank()) { Text(if (testing) "Probando conexión…" else "Probar y guardar") }
+                Button(onClick = ::test, enabled = !testing && host.isNotBlank()) { Text(stringResource(if (testing) R.string.testing_connection else R.string.test_and_save)) }
                 bridgeMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                Footer("Escribe sólo el dominio o la IP, con el puerto si hace falta (por ejemplo bridge.midominio.com o 192.168.1.20:8787). La dirección se guarda cuando la prueba responde.")
+                Footer(stringResource(R.string.bridge_footer))
             }
 
-            SectionTitle("Identidad privada")
+            SectionTitle(stringResource(R.string.private_identity))
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when {
-                    app.bridge == null -> Text("Primero prueba y guarda la dirección del bridge", color = MaterialTheme.colorScheme.error)
+                    app.bridge == null -> Text(stringResource(R.string.test_bridge_first), color = MaterialTheme.colorScheme.error)
                     app.token != null -> {
-                        Text("Identidad privada configurada", color = MaterialTheme.colorScheme.primary)
-                        OutlinedButton(onClick = { dialog = IdentityDialog.Backup }) { Text("Respaldar token…") }
-                        OutlinedButton(onClick = { dialog = IdentityDialog.Change }) { Text("Cambiar identidad…") }
+                        Text(stringResource(R.string.identity_configured), color = MaterialTheme.colorScheme.primary)
+                        OutlinedButton(onClick = { dialog = IdentityDialog.Backup }) { Text(stringResource(R.string.backup_token_ellipsis)) }
+                        OutlinedButton(onClick = { dialog = IdentityDialog.Change }) { Text(stringResource(R.string.change_identity_ellipsis)) }
                     }
                     else -> {
-                        OutlinedButton(onClick = { dialog = IdentityDialog.Create }) { Text("Crear identidad privada…") }
-                        OutlinedButton(onClick = { dialog = IdentityDialog.Import }) { Text("Importar token…") }
+                        OutlinedButton(onClick = { dialog = IdentityDialog.Create }) { Text(stringResource(R.string.create_identity_ellipsis)) }
+                        OutlinedButton(onClick = { dialog = IdentityDialog.Import }) { Text(stringResource(R.string.import_token_ellipsis)) }
                     }
                 }
-                // A TV's "Llevar al teléfono" profile, or a TV pairing code.
+                // A TV's "Take to phone" profile, or a TV pairing code.
                 var scanError by remember { mutableStateOf<String?>(null) }
                 OutlinedButton(onClick = {
                     scanError = null
@@ -151,52 +153,52 @@ internal fun PhoneSettings(app: PhoneState) {
                             scanError = failure.message
                         }
                     }
-                }) { Text("Escanear código de la TV…") }
+                }) { Text(stringResource(R.string.scan_tv_code)) }
                 scanError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                Footer("El token define tu historial y tus preferencias. Se guarda cifrado en este teléfono sólo para esta dirección; compártelo únicamente con los dispositivos que deban compartir lista y ajustes. El código de la TV puede ser un perfil («Llevar al teléfono») o la vinculación de una TV.")
+                Footer(stringResource(R.string.identity_footer))
             }
 
             val preferences = session?.preferences
-            SectionTitle("Catálogo")
-            ChoiceRow("Idioma de los títulos", listOf("en" to "Inglés", "jp" to "Japonés"), preferences?.titleLanguage ?: "en", enabled = session != null) { value ->
+            SectionTitle(stringResource(R.string.catalog))
+            ChoiceRow(stringResource(R.string.title_language), listOf("en" to stringResource(R.string.english), "jp" to stringResource(R.string.japanese)), preferences?.titleLanguage ?: "en", enabled = session != null) { value ->
                 scope.launch { session?.updatePreferences { it.copy(titleLanguage = value) } }
             }
-            SwitchRow("Ocultar series +18", preferences?.hideAdult ?: false, enabled = session != null) { value ->
+            SwitchRow(stringResource(R.string.hide_adult), preferences?.hideAdult ?: false, enabled = session != null) { value ->
                 scope.launch { session?.updatePreferences { it.copy(hideAdult = value) } }
             }
-            Footer("En japonés, Continuar viendo mantiene el nombre en inglés y muestra debajo el título japonés. Ocultar series +18 quita de Recientes y Buscar las clasificadas R+ o Rx.", Modifier.padding(horizontal = 16.dp))
+            Footer(stringResource(R.string.catalog_footer), Modifier.padding(horizontal = 16.dp))
 
-            SectionTitle("Reproducción")
-            ChoiceRow("Servidores por defecto", listOf("sub" to "Sub", "dub" to "Dub"), preferences?.defaultTrackType ?: "sub", enabled = session != null) { value ->
+            SectionTitle(stringResource(R.string.playback))
+            ChoiceRow(stringResource(R.string.default_servers), listOf("sub" to "Sub", "dub" to "Dub"), preferences?.defaultTrackType ?: "sub", enabled = session != null) { value ->
                 scope.launch { session?.updatePreferences { it.copy(defaultTrackType = value) } }
             }
-            val languages = listOf("" to "Automático (idioma del dispositivo)") +
-                subtitleLanguages.map { it to Locale.forLanguageTag(it).getDisplayLanguage(Locale.forLanguageTag("es")).replaceFirstChar(Char::titlecase) } +
-                listOf("off" to "Desactivados")
-            ChoiceRow("Subtítulos en Sub", languages, preferences?.subtitleLanguage ?: "", enabled = session != null) { value ->
+            val languages = listOf("" to stringResource(R.string.subtitles_auto)) +
+                subtitleLanguages.map { it to Locale.forLanguageTag(it).getDisplayLanguage(Strings.locale).replaceFirstChar(Char::titlecase) } +
+                listOf("off" to stringResource(R.string.subtitles_off))
+            ChoiceRow(stringResource(R.string.subtitles_in_sub), languages, preferences?.subtitleLanguage ?: "", enabled = session != null) { value ->
                 scope.launch { session?.updatePreferences { it.copy(subtitleLanguage = value) } }
             }
-            SwitchRow("Reproducir el siguiente episodio", preferences?.autoNext ?: true, enabled = session != null) { value ->
+            SwitchRow(stringResource(R.string.auto_next), preferences?.autoNext ?: true, enabled = session != null) { value ->
                 scope.launch { session?.updatePreferences { it.copy(autoNext = value) } }
             }
-            SwitchRow("Saltar intro automáticamente", preferences?.autoSkipIntro ?: false, enabled = session != null) { value ->
+            SwitchRow(stringResource(R.string.auto_skip_intro), preferences?.autoSkipIntro ?: false, enabled = session != null) { value ->
                 scope.launch { session?.updatePreferences { it.copy(autoSkipIntro = value) } }
             }
-            SwitchRow("Saltar outro automáticamente", preferences?.autoSkipOutro ?: false, enabled = session != null) { value ->
+            SwitchRow(stringResource(R.string.auto_skip_outro), preferences?.autoSkipOutro ?: false, enabled = session != null) { value ->
                 scope.launch { session?.updatePreferences { it.copy(autoSkipOutro = value) } }
             }
-            Footer("Sub declara audio japonés y activa los subtítulos; Dub declara audio en inglés. Estas preferencias pertenecen a la identidad activa y se sincronizan con el bridge en tus otros dispositivos.", Modifier.padding(horizontal = 16.dp))
+            Footer(stringResource(R.string.playback_footer), Modifier.padding(horizontal = 16.dp))
 
-            SectionTitle("Este dispositivo")
+            SectionTitle(stringResource(R.string.this_device))
             var reminders by remember { mutableStateOf(ReleaseReminders.isEnabled(context) && ReleaseReminders.hasPermission(context)) }
             var reminderError by remember { mutableStateOf<String?>(null) }
             val permission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
                 ReleaseReminders.setEnabled(context, granted)
                 reminders = granted
-                reminderError = if (granted) null else "Android no permite avisos de esta app. Actívalos en los ajustes del sistema → Notificaciones."
+                reminderError = if (granted) null else context.getString(R.string.notifications_denied)
                 scope.launch { ReleaseReminders.refresh(context, app.session) }
             }
-            SwitchRow("Avisar de nuevos episodios", reminders, enabled = session != null) { value ->
+            SwitchRow(stringResource(R.string.new_episode_alerts), reminders, enabled = session != null) { value ->
                 if (value && !ReleaseReminders.hasPermission(context) && android.os.Build.VERSION.SDK_INT >= 33) {
                     permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                 } else {
@@ -207,7 +209,7 @@ internal fun PhoneSettings(app: PhoneState) {
             }
             reminderError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp)) }
             var autoDelete by remember { mutableStateOf(PhoneDownloads.autoDelete(context)) }
-            SwitchRow("Borrar descargas ya vistas", autoDelete, enabled = true) { value ->
+            SwitchRow(stringResource(R.string.delete_watched_downloads), autoDelete, enabled = true) { value ->
                 PhoneDownloads.setAutoDelete(context, value)
                 autoDelete = value
                 if (value) PhoneDownloads.cleanUp(context, session)
@@ -215,28 +217,28 @@ internal fun PhoneSettings(app: PhoneState) {
             val downloads by rememberDownloads()
             var confirmRemoveAll by remember { mutableStateOf(false) }
             ListItem(
-                headlineContent = { Text("Espacio usado") },
+                headlineContent = { Text(stringResource(R.string.storage_used)) },
                 trailingContent = { Text(android.text.format.Formatter.formatShortFileSize(context, downloads.sumOf { it.bytes })) },
             )
             OutlinedButton(
                 onClick = { confirmRemoveAll = true },
                 enabled = downloads.isNotEmpty(),
                 modifier = Modifier.padding(horizontal = 16.dp),
-            ) { Text("Borrar todas las descargas", color = if (downloads.isNotEmpty()) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified) }
+            ) { Text(stringResource(R.string.delete_all_downloads), color = if (downloads.isNotEmpty()) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified) }
             if (confirmRemoveAll) AlertDialog(
                 onDismissRequest = { confirmRemoveAll = false },
-                title = { Text(if (downloads.size == 1) "¿Borrar 1 descarga?" else "¿Borrar ${downloads.size} descargas?") },
-                text = { Text("Los episodios dejarán de estar disponibles sin conexión.") },
+                title = { Text(pluralStringResource(R.plurals.delete_downloads_title, downloads.size, downloads.size)) },
+                text = { Text(stringResource(R.string.delete_downloads_text)) },
                 confirmButton = {
                     TextButton(onClick = { PhoneDownloads.removeAll(context); confirmRemoveAll = false }) {
-                        Text("Borrar todas", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.delete_all), color = MaterialTheme.colorScheme.error)
                     }
                 },
-                dismissButton = { TextButton(onClick = { confirmRemoveAll = false }) { Text("Cancelar") } },
+                dismissButton = { TextButton(onClick = { confirmRemoveAll = false }) { Text(stringResource(R.string.cancel)) } },
             )
-            Footer("Una descarga se borra sólo cuando terminas de ver ese episodio (al llegar al outro o a sus últimos minutos), aquí o en otro dispositivo con la misma identidad. Abrir otro episodio no la borra. Los avisos usan el horario estimado del catálogo para las series de Continuar viendo (en el tipo Sub o Dub que sigues) y se reprograman cada vez que abres la app.", Modifier.padding(horizontal = 16.dp))
+            Footer(stringResource(R.string.device_footer), Modifier.padding(horizontal = 16.dp))
 
-            SectionTitle("Acerca de")
+            SectionTitle(stringResource(R.string.about))
             PhoneUpdates()
         }
     }
@@ -301,13 +303,13 @@ private fun TokenBackupDialog(token: String, onDismiss: () -> Unit) {
     var understood by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Respaldar token") },
+        title = { Text(stringResource(R.string.backup_token)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Quien tenga este token puede acceder al historial y las preferencias asociados. No lo envíes por mensajes, correo ni capturas sin protección.")
+                Text(stringResource(R.string.backup_warning))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { understood = !understood }) {
                     Checkbox(checked = understood, onCheckedChange = { understood = it })
-                    Text("Entiendo el riesgo")
+                    Text(stringResource(R.string.understand_risk))
                 }
                 if (understood) Text(token, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
@@ -315,10 +317,10 @@ private fun TokenBackupDialog(token: String, onDismiss: () -> Unit) {
         confirmButton = {
             TextButton(enabled = understood, onClick = {
                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("Token de AniBridge", token))
-            }) { Text("Copiar") }
+                clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.clip_label), token))
+            }) { Text(stringResource(R.string.copy)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cerrar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
     )
 }
 
@@ -327,24 +329,24 @@ private fun ChangeIdentityDialog(onDismiss: () -> Unit, onChoose: (IdentityDialo
     var saved by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Cambiar identidad") },
+        title = { Text(stringResource(R.string.change_identity)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Cambiar el token te convierte en otro usuario. El historial y las preferencias actuales seguirán en el servidor, pero este teléfono no podrá abrirlos de nuevo sin el token actual. No existe recuperación de cuenta.")
+                Text(stringResource(R.string.change_identity_text))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { saved = !saved }) {
                     Checkbox(checked = saved, onCheckedChange = { saved = it })
-                    Text("Ya guardé el token actual de forma segura")
+                    Text(stringResource(R.string.saved_current_token))
                 }
-                TextButton(onClick = { onChoose(IdentityDialog.Backup) }) { Text("Respaldar token actual…") }
+                TextButton(onClick = { onChoose(IdentityDialog.Backup) }) { Text(stringResource(R.string.backup_current_token)) }
             }
         },
         confirmButton = {
             Column {
-                TextButton(enabled = saved, onClick = { onChoose(IdentityDialog.Create) }) { Text("Crear una identidad nueva") }
-                TextButton(enabled = saved, onClick = { onChoose(IdentityDialog.Import) }) { Text("Usar un token existente") }
+                TextButton(enabled = saved, onClick = { onChoose(IdentityDialog.Create) }) { Text(stringResource(R.string.create_new_identity)) }
+                TextButton(enabled = saved, onClick = { onChoose(IdentityDialog.Import) }) { Text(stringResource(R.string.use_existing_token)) }
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -353,32 +355,33 @@ private fun ImportTokenDialog(replaces: Boolean, onDismiss: () -> Unit, onSave: 
     var token by remember { mutableStateOf("") }
     var confirmed by remember { mutableStateOf(!replaces) }
     var error by remember { mutableStateOf<String?>(null) }
+    val invalidToken = stringResource(R.string.token_invalid)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Importar token") },
+        title = { Text(stringResource(R.string.import_token)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Importa el token de otro dispositivo sólo si quieres acceder exactamente al mismo historial y a las mismas preferencias.")
+                Text(stringResource(R.string.import_text))
                 OutlinedTextField(
                     value = token,
                     onValueChange = { token = it.trim() },
-                    label = { Text("Token de 64 caracteres") },
+                    label = { Text(stringResource(R.string.token_64)) },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                 )
                 if (replaces) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { confirmed = !confirmed }) {
                     Checkbox(checked = confirmed, onCheckedChange = { confirmed = it })
-                    Text("Entiendo que esto reemplaza la identidad actual")
+                    Text(stringResource(R.string.understand_replace))
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
             TextButton(enabled = confirmed && token.isNotEmpty(), onClick = {
-                if (!Regex("^[A-Fa-f0-9]{64}$").matches(token)) error = "El token debe contener 64 caracteres hexadecimales." else onSave(token.lowercase())
-            }) { Text("Guardar") }
+                if (!Regex("^[A-Fa-f0-9]{64}$").matches(token)) error = invalidToken else onSave(token.lowercase())
+            }) { Text(stringResource(R.string.save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -392,12 +395,12 @@ private fun CreateIdentityDialog(bridge: String, onDismiss: () -> Unit, onCreate
     var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Nueva identidad") },
+        title = { Text(stringResource(R.string.new_identity)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("El token administrador se usa una sola vez para registrar esta identidad; no se guarda en el teléfono. Después respalda el token nuevo: no se puede recuperar si lo pierdes.")
-                OutlinedTextField(value = adminToken, onValueChange = { adminToken = it.trim() }, label = { Text("Token administrador del bridge") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-                OutlinedTextField(value = label, onValueChange = { label = it.take(80) }, label = { Text("Etiqueta opcional") }, singleLine = true)
+                Text(stringResource(R.string.new_identity_text))
+                OutlinedTextField(value = adminToken, onValueChange = { adminToken = it.trim() }, label = { Text(stringResource(R.string.admin_token_label)) }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+                OutlinedTextField(value = label, onValueChange = { label = it.take(80) }, label = { Text(stringResource(R.string.optional_label)) }, singleLine = true)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
@@ -417,9 +420,9 @@ private fun CreateIdentityDialog(bridge: String, onDismiss: () -> Unit, onCreate
                         busy = false
                     }
                 }
-            }) { Text(if (busy) "Registrando…" else "Registrar y usar") }
+            }) { Text(stringResource(if (busy) R.string.registering else R.string.register_and_use)) }
         },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancelar") } },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -432,7 +435,7 @@ private fun PhoneUpdates() {
     var status by remember { mutableStateOf<String?>(null) }
     var update by remember { mutableStateOf<TVUpdate?>(null) }
     var busy by remember { mutableStateOf(false) }
-    ListItem(headlineContent = { Text("Versión instalada") }, supportingContent = { Text(installed) })
+    ListItem(headlineContent = { Text(stringResource(R.string.installed_version)) }, supportingContent = { Text(installed) })
     Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         val candidate = update
         if (candidate == null) {
@@ -441,18 +444,18 @@ private fun PhoneUpdates() {
                 scope.launch {
                     try {
                         update = findUpdate(installed)
-                        status = if (update == null) "Tienes la versión más reciente." else "Hay una versión nueva: ${update?.tag}."
+                        status = update?.let { context.getString(R.string.new_version, it.tag) } ?: context.getString(R.string.latest_version)
                     } catch (error: Exception) {
-                        status = "No se pudo buscar: ${error.message}"
+                        status = context.getString(R.string.check_failed, error.message.orEmpty())
                     } finally {
                         busy = false
                     }
                 }
-            }) { Text(if (busy) "Buscando actualizaciones…" else "Buscar actualizaciones") }
+            }) { Text(stringResource(if (busy) R.string.checking_updates else R.string.check_updates)) }
         } else {
             Button(enabled = !busy, onClick = {
                 if (!context.packageManager.canRequestPackageInstalls()) {
-                    status = "Permite instalar aplicaciones desde AniBridge Player y vuelve a pulsar Instalar."
+                    status = context.getString(R.string.allow_install)
                     runCatching { context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))) }
                     return@Button
                 }
@@ -461,12 +464,12 @@ private fun PhoneUpdates() {
                     try {
                         installUpdate(context, downloadUpdate(context, candidate))
                     } catch (error: Exception) {
-                        status = "No se pudo instalar: ${error.message}"
+                        status = context.getString(R.string.install_failed, error.message.orEmpty())
                     } finally {
                         busy = false
                     }
                 }
-            }) { Text(if (busy) "Descargando…" else "Instalar ${candidate.tag}") }
+            }) { Text(if (busy) stringResource(R.string.downloading) else stringResource(R.string.install_tag, candidate.tag)) }
         }
         status?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }

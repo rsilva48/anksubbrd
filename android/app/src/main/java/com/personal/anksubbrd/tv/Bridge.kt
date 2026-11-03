@@ -60,8 +60,10 @@ data class Season(
     val seasonNumber: Int = 1,
     val label: String? = null,
 ) {
+    /** The bridge's labels are English ("Season 2", "Part 2"); the Spanish UI translates those words. */
     val displayLabel: String
-        get() = label?.replace("Season", "Temporada")?.replace("Part", "parte")?.replace("Special", "Especial") ?: title
+        get() = if (!Strings.spanish) label ?: title
+        else label?.replace("Season", "Temporada")?.replace("Part", "parte")?.replace("Special", "Especial") ?: title
 
     fun asAnime() = Anime(title = title, watchUrl = watchUrl, imageUrl = imageUrl, titleJp = titleJp)
 }
@@ -249,7 +251,7 @@ data class DeviceState(
     val kind: String? = null,
     val position: Double? = null,
     val duration: Double? = null,
-    /** "Saltar intro"/"Saltar outro" while that skip is offered. */
+    /** "Skip intro"/"Skip outro" (in the TV's language) while that skip is offered. */
     val skip: String? = null,
     /** Subtitle tracks of the episode, and the one shown (null: off). */
     val subtitles: List<SubtitleOption> = emptyList(),
@@ -400,14 +402,14 @@ class BridgeClient(val baseUrl: String, private val token: String) {
         return try {
             json.decodeFromString<T>(text)
         } catch (error: Exception) {
-            throw BridgeException("El bridge devolvió una respuesta que la app no pudo leer. ¿Está actualizado?")
+            throw BridgeException(Strings.get(R.string.error_unreadable_reply))
         }
     }
 
     private suspend fun sendRaw(method: String, path: String, query: List<Pair<String, String>>, body: String?, adminToken: String? = null): String = withContext(Dispatchers.IO) {
         val url = ("$baseUrl$path").toHttpUrlOrNull()?.newBuilder()?.apply {
             query.forEach { (name, value) -> addQueryParameter(name, value) }
-        }?.build() ?: throw BridgeException("La dirección del bridge no es válida.")
+        }?.build() ?: throw BridgeException(Strings.get(R.string.error_invalid_bridge_url))
         val request = Request.Builder()
             .url(url)
             .method(method, body?.toRequestBody("application/json".toMediaType()))
@@ -420,19 +422,19 @@ class BridgeClient(val baseUrl: String, private val token: String) {
             http.newCall(request).execute()
         } catch (error: IOException) {
             throw if (!Connectivity.isOnline) {
-                BridgeException("Sin conexión a internet.", offline = true)
+                BridgeException(Strings.get(R.string.error_offline), offline = true)
             } else {
-                BridgeException("No se pudo conectar con el bridge. Comprueba que esté encendido y accesible.")
+                BridgeException(Strings.get(R.string.error_unreachable))
             }
         }
         response.use {
             val text = it.body.string()
             if (!it.isSuccessful) {
                 if (it.code == 401) {
-                    throw BridgeException(if (adminToken != null) "El token administrador no es válido para este bridge." else "El bridge requiere una identidad válida. Vuelve a vincular este perfil.", 401)
+                    throw BridgeException(Strings.get(if (adminToken != null) R.string.error_admin_token_invalid else R.string.error_identity_required), 401)
                 }
                 val message = runCatching { json.decodeFromString(ErrorResponse.serializer(), text).error }.getOrNull()
-                throw BridgeException(message ?: "El bridge respondió HTTP ${it.code}.", it.code)
+                throw BridgeException(message ?: Strings.get(R.string.error_http, it.code), it.code)
             }
             text
         }

@@ -10,6 +10,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.annotation.StringRes
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.security.KeyStore
@@ -98,7 +100,7 @@ internal class PhoneIdentity(context: Context) {
     }
 }
 
-/** The connected TV of the remote control (one, until "Desconectar"). */
+/** The connected TV of the remote control (one, until "Disconnect"). */
 internal data class ConnectedTv(val id: String, val name: String)
 
 /** An episode to start on the TV from the remote sheet, sent once. */
@@ -134,7 +136,7 @@ internal class PhoneState(context: Context) {
         // History and preferences are kept per bridge and identity.
         val bytes = MessageDigest.getInstance("SHA-256").digest("$url\n$token".toByteArray())
         val scope = bytes.joinToString("") { "%02x".format(it) }.take(24)
-        return Session(Profile(scope, "Teléfono", token), BridgeClient(url, token), appContext)
+        return Session(Profile(scope, appContext.getString(R.string.phone_profile_name), token), BridgeClient(url, token), appContext)
     }
 
     fun useBridge(url: String) {
@@ -168,12 +170,12 @@ internal class PhoneState(context: Context) {
 
 internal val LocalPhone = staticCompositionLocalOf<PhoneState> { error("No PhoneState") }
 
-internal enum class PhoneTab(val label: String, val icon: ImageVector) {
-    Recents("Recientes", Icons.Filled.Star),
-    Continue("Continuar", Icons.Filled.PlayArrow),
-    Downloads("Descargas", PhoneIcons.Download),
-    Settings("Ajustes", Icons.Filled.Settings),
-    Search("Buscar", Icons.Filled.Search),
+internal enum class PhoneTab(@StringRes val label: Int, val icon: ImageVector) {
+    Recents(R.string.tab_recent, Icons.Filled.Star),
+    Continue(R.string.tab_continue, Icons.Filled.PlayArrow),
+    Downloads(R.string.tab_downloads, PhoneIcons.Download),
+    Settings(R.string.tab_settings, Icons.Filled.Settings),
+    Search(R.string.search, Icons.Filled.Search),
 }
 
 @Composable
@@ -257,7 +259,7 @@ private fun PhoneRoot() {
                                 tab = item
                             },
                             icon = { Icon(item.icon, contentDescription = null) },
-                            label = { Text(item.label, maxLines = 1) },
+                            label = { Text(stringResource(item.label), maxLines = 1) },
                         )
                     }
                 }
@@ -272,9 +274,9 @@ private fun PhoneRoot() {
                     // Works without a bridge or a connection.
                     tab == PhoneTab.Downloads -> PhoneDownloadsScreen(session) { app.playing = it }
                     session == null -> PhoneMessage(
-                        "Configura tu bridge",
-                        "Escribe la dirección de tu bridge en Ajustes y pruébala. Buscar, Recientes y Continuar se activan en cuanto responde.",
-                        action = "Ir a Ajustes" to { tab = PhoneTab.Settings },
+                        stringResource(R.string.setup_title),
+                        stringResource(R.string.phone_setup_text),
+                        action = stringResource(R.string.go_to_settings) to { tab = PhoneTab.Settings },
                     )
                     stack.isNotEmpty() -> PhoneSeries(session, stack.last(), onBack = { stack.removeAt(stack.lastIndex) })
                     tab == PhoneTab.Recents -> PhoneCatalog(session, searching = false, onOpen = open)
@@ -286,7 +288,7 @@ private fun PhoneRoot() {
         if (app.remoteOpen && session != null) PhoneRemoteSheet(app, session)
         // Offers the reminders once, as on iOS, once a bridge works.
         if (session != null && app.bridge != null && !ReleaseReminders.wasPrompted(context)) ReleasePrompt()
-        // A TV's QR (camera or the scanner in Ajustes).
+        // A TV's QR (camera or the scanner in Settings).
         val link by PhoneLinks.pending.collectAsState()
         when (val current = link) {
             is ScannedLink.Identity -> IdentityImportDialog(app, current) { PhoneLinks.pending.value = null }
@@ -319,7 +321,7 @@ internal fun Context.findActivity(): Activity? {
     return null
 }
 
-/** "¿Avisarte de nuevos episodios?", shown once. */
+/** "Get notified of new episodes?", shown once. */
 @Composable
 private fun ReleasePrompt() {
     val context = LocalContext.current
@@ -332,8 +334,8 @@ private fun ReleasePrompt() {
     if (!visible) return
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { ReleaseReminders.markPrompted(context); visible = false },
-        title = { Text("¿Avisarte de nuevos episodios?") },
-        text = { Text("La app puede avisarte cuando salga un episodio nuevo de las series que sigues en Continuar viendo. Puedes cambiarlo cuando quieras en Ajustes.") },
+        title = { Text(stringResource(R.string.release_prompt_title)) },
+        text = { Text(stringResource(R.string.release_prompt_text)) },
         confirmButton = {
             androidx.compose.material3.TextButton(onClick = {
                 if (Build.VERSION.SDK_INT >= 33 && !ReleaseReminders.hasPermission(context)) {
@@ -342,10 +344,10 @@ private fun ReleasePrompt() {
                     ReleaseReminders.setEnabled(context, true)
                     visible = false
                 }
-            }) { Text("Activar avisos") }
+            }) { Text(stringResource(R.string.enable_alerts)) }
         },
         dismissButton = {
-            androidx.compose.material3.TextButton(onClick = { ReleaseReminders.markPrompted(context); visible = false }) { Text("Ahora no") }
+            androidx.compose.material3.TextButton(onClick = { ReleaseReminders.markPrompted(context); visible = false }) { Text(stringResource(R.string.not_now)) }
         },
     )
 }

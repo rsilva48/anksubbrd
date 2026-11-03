@@ -107,7 +107,7 @@ final class ReleaseNotifier {
         let content = UNMutableNotificationContent()
         let japanese = item.titleJp.flatMap { $0.isEmpty ? nil : $0 }
         content.title = language == .jp ? japanese ?? item.title : item.title
-        content.body = "El episodio \(item.episode) en \(item.kind.displayName) ya debería estar disponible."
+        content.body = String(localized: "El episodio \(item.episode) en \(item.kind.displayName) ya debería estar disponible.")
         content.sound = .default
         content.threadIdentifier = catalogPath(of: item.watchUrl)
         content.userInfo = [

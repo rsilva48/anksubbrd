@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -73,7 +74,7 @@ fun SetupScreen(state: AppState, onDone: () -> Unit) {
 
     fun test() {
         val url = BridgeClient.canonicalUrl(scheme, host) ?: run {
-            message = "Escribe el dominio o la IP del bridge, por ejemplo bridge.midominio.com o 192.168.1.20:8787."
+            message = Strings.get(R.string.bridge_address_invalid)
             return
         }
         testing = true
@@ -81,7 +82,7 @@ fun SetupScreen(state: AppState, onDone: () -> Unit) {
         scope.launch {
             try {
                 val health = state.anonymousClient(url).health()
-                if (!health.ok) throw BridgeException("El bridge no respondió correctamente.")
+                if (!health.ok) throw BridgeException(Strings.get(R.string.bridge_bad_health))
                 state.setBridge(url)
                 onDone()
             } catch (error: BridgeException) {
@@ -93,9 +94,9 @@ fun SetupScreen(state: AppState, onDone: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 96.dp, vertical = 64.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Text("Configura tu bridge", style = MaterialTheme.typography.displaySmall)
+        Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.displaySmall)
         Text(
-            "Es la misma dirección que usas en la app del iPhone. Después, cada persona vincula su perfil escaneando un código con el teléfono.",
+            stringResource(R.string.setup_text_tv),
             style = MaterialTheme.typography.bodyLarge,
             color = Color.White.copy(alpha = 0.7f),
         )
@@ -118,12 +119,12 @@ fun SetupScreen(state: AppState, onDone: () -> Unit) {
                     else -> host = value
                 }
             },
-            placeholder = "bridge.midominio.com",
+            placeholder = stringResource(R.string.bridge_placeholder),
             keyboardType = KeyboardType.Uri,
             imeAction = ImeAction.Go,
             onSubmit = ::test,
         )
-        Button(onClick = ::test, enabled = !testing) { Text(if (testing) "Probando…" else "Probar y guardar") }
+        Button(onClick = ::test, enabled = !testing) { Text(stringResource(if (testing) R.string.testing else R.string.test_and_save)) }
         message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
@@ -154,24 +155,24 @@ fun ProfilesScreen(state: AppState, onSelect: (Profile) -> Unit, onAdd: () -> Un
     var creating by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 96.dp, vertical = 64.dp), verticalArrangement = Arrangement.spacedBy(32.dp)) {
-        Text("¿Quién está viendo?", style = MaterialTheme.typography.displaySmall)
+        Text(stringResource(R.string.who_is_watching), style = MaterialTheme.typography.displaySmall)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
             items(state.profiles, key = { it.id }) { profile ->
                 ProfileTile(name = profile.name, onClick = { onSelect(profile) }, onLongClick = { menuFor = profile })
             }
             if (state.profiles.isNotEmpty()) item {
-                ProfileTile(name = "Crear perfil", symbol = "+", onClick = { creating = true })
+                ProfileTile(name = stringResource(R.string.create_profile), symbol = "+", onClick = { creating = true })
             }
             item {
-                ProfileTile(name = "Vincular perfil", symbol = "⌁", onClick = onAdd)
+                ProfileTile(name = stringResource(R.string.link_profile), symbol = "⌁", onClick = onAdd)
             }
         }
         Text(
-            "Mantén pulsado un perfil para llevarlo al teléfono o quitarlo. Bridge: ${state.bridgeUrl.orEmpty()}",
+            stringResource(R.string.profiles_hint, state.bridgeUrl.orEmpty()),
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White.copy(alpha = 0.6f),
         )
-        OutlinedButton(onClick = onChangeBridge) { Text("Cambiar bridge") }
+        OutlinedButton(onClick = onChangeBridge) { Text(stringResource(R.string.change_bridge)) }
     }
 
     menuFor?.let { profile ->
@@ -180,9 +181,9 @@ fun ProfilesScreen(state: AppState, onSelect: (Profile) -> Unit, onAdd: () -> Un
                 Column(Modifier.padding(32.dp).ignoringHeldKey(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(profile.name, style = MaterialTheme.typography.titleLarge)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = { menuFor = null; transferring = profile }) { Text("Llevar al teléfono") }
-                        OutlinedButton(onClick = { menuFor = null; removing = profile }) { Text("Quitar") }
-                        OutlinedButton(onClick = { menuFor = null }) { Text("Cancelar") }
+                        Button(onClick = { menuFor = null; transferring = profile }) { Text(stringResource(R.string.take_to_phone)) }
+                        OutlinedButton(onClick = { menuFor = null; removing = profile }) { Text(stringResource(R.string.remove)) }
+                        OutlinedButton(onClick = { menuFor = null }) { Text(stringResource(R.string.cancel)) }
                     }
                 }
             }
@@ -202,11 +203,11 @@ fun ProfilesScreen(state: AppState, onSelect: (Profile) -> Unit, onAdd: () -> Un
         Dialog(onDismissRequest = { removing = null }) {
             Surface(shape = RoundedCornerShape(24.dp)) {
                 Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("¿Quitar el perfil «${profile.name}» de esta TV?", style = MaterialTheme.typography.titleLarge)
-                    Text("Su historial sigue en el bridge; puedes volver a vincularlo con el teléfono.", color = Color.White.copy(alpha = 0.7f))
+                    Text(stringResource(R.string.remove_profile_title, profile.name), style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.remove_profile_text), color = Color.White.copy(alpha = 0.7f))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = { state.removeProfile(profile); removing = null }) { Text("Quitar") }
-                        OutlinedButton(onClick = { removing = null }) { Text("Cancelar") }
+                        Button(onClick = { state.removeProfile(profile); removing = null }) { Text(stringResource(R.string.remove)) }
+                        OutlinedButton(onClick = { removing = null }) { Text(stringResource(R.string.cancel)) }
                     }
                 }
             }
@@ -233,7 +234,7 @@ private fun CreateProfileDialog(state: AppState, onDismiss: () -> Unit, onCreate
                 val identity = state.client(creator).createIdentity(label)
                 onCreated(state.addProfile(identity.label ?: label, identity.token))
             } catch (error: BridgeException) {
-                message = if (error.status == 404) "Este bridge todavía no permite crear perfiles. Actualízalo a la última versión." else error.message
+                message = if (error.status == 404) Strings.get(R.string.create_profile_unsupported) else error.message
             } finally {
                 busy = false
             }
@@ -243,16 +244,16 @@ private fun CreateProfileDialog(state: AppState, onDismiss: () -> Unit, onCreate
     Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
         Surface(shape = RoundedCornerShape(24.dp)) {
             Column(Modifier.padding(32.dp).width(560.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Crear perfil", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.create_profile), style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "Un perfil nuevo tiene su propio Continuar viendo y sus preferencias. Después puedes llevarlo al teléfono de esa persona con un código QR.",
+                    stringResource(R.string.create_profile_text),
                     color = Color.White.copy(alpha = 0.7f),
                 )
-                TvTextField(value = name, onValueChange = { name = it.take(40) }, placeholder = "Nombre del perfil", imeAction = ImeAction.Done, onSubmit = ::create)
+                TvTextField(value = name, onValueChange = { name = it.take(40) }, placeholder = stringResource(R.string.profile_name), imeAction = ImeAction.Done, onSubmit = ::create)
                 message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = ::create, enabled = !busy && name.isNotBlank()) { Text(if (busy) "Creando…" else "Crear") }
-                    OutlinedButton(onClick = onDismiss, enabled = !busy) { Text("Cancelar") }
+                    Button(onClick = ::create, enabled = !busy && name.isNotBlank()) { Text(stringResource(if (busy) R.string.creating else R.string.create)) }
+                    OutlinedButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.cancel)) }
                 }
             }
         }
@@ -278,29 +279,29 @@ private fun TransferProfileDialog(state: AppState, profile: Profile, onDismiss: 
         Surface(shape = RoundedCornerShape(24.dp)) {
             if (!showing) {
                 Column(Modifier.padding(32.dp).width(560.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("Llevar «${profile.name}» al teléfono", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.transfer_title, profile.name), style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "El código contiene la identidad de este perfil: quien lo escanee tendrá acceso a su historial y sus preferencias. Muéstralo sólo al teléfono de esa persona.",
+                        stringResource(R.string.transfer_warning),
                         color = Color.White.copy(alpha = 0.8f),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = { showing = true }) { Text("Mostrar código") }
-                        OutlinedButton(onClick = onDismiss) { Text("Cancelar") }
+                        Button(onClick = { showing = true }) { Text(stringResource(R.string.show_code)) }
+                        OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
                     }
                 }
             } else {
                 Row(Modifier.padding(32.dp), horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(300.dp).background(Color.White, RoundedCornerShape(16.dp)).padding(16.dp)) {
-                        Image(remember(link) { qrBitmap(link) }.asImageBitmap(), contentDescription = "Código QR del perfil", modifier = Modifier.fillMaxSize())
+                        Image(remember(link) { qrBitmap(link) }.asImageBitmap(), contentDescription = stringResource(R.string.profile_qr_description), modifier = Modifier.fillMaxSize())
                     }
                     Column(Modifier.width(360.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        Text("Escanéalo con AniBridge Player", style = MaterialTheme.typography.titleLarge)
+                        Text(stringResource(R.string.scan_with_app), style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "En el iPhone, con la cámara o en Ajustes › Escanear código. El teléfono usará el perfil «${profile.name}».",
+                            stringResource(R.string.transfer_scan_hint, profile.name),
                             color = Color.White.copy(alpha = 0.75f),
                         )
-                        Text("El código se oculta en un minuto.", color = Color.White.copy(alpha = 0.55f))
-                        Button(onClick = onDismiss) { Text("Listo") }
+                        Text(stringResource(R.string.code_hides), color = Color.White.copy(alpha = 0.55f))
+                        Button(onClick = onDismiss) { Text(stringResource(R.string.done)) }
                     }
                 }
             }
@@ -346,7 +347,7 @@ fun PairingScreen(state: AppState, onPaired: () -> Unit, onChangeBridge: () -> U
                     delay(2000)
                     val status = runCatching { client.pairingStatus(pairing.pairingId) }.getOrNull() ?: continue
                     if (status.status == "approved") {
-                        state.addProfile(status.label ?: "Perfil", status.token.orEmpty())
+                        state.addProfile(status.label ?: Strings.get(R.string.default_profile_name), status.token.orEmpty())
                         onPaired()
                         return@LaunchedEffect
                     }
@@ -362,22 +363,22 @@ fun PairingScreen(state: AppState, onPaired: () -> Unit, onChangeBridge: () -> U
 
     Row(Modifier.fillMaxSize().padding(horizontal = 96.dp, vertical = 64.dp), horizontalArrangement = Arrangement.spacedBy(64.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(320.dp).background(Color.White, RoundedCornerShape(16.dp)).padding(16.dp), contentAlignment = Alignment.Center) {
-            qr?.let { Image(it.asImageBitmap(), contentDescription = "Código QR para vincular", modifier = Modifier.fillMaxSize()) }
-                ?: Text("Generando código…", color = Color.Black)
+            qr?.let { Image(it.asImageBitmap(), contentDescription = stringResource(R.string.pairing_qr_description), modifier = Modifier.fillMaxSize()) }
+                ?: Text(stringResource(R.string.generating_code), color = Color.Black)
         }
         Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.width(560.dp)) {
-            Text("Vincula un perfil", style = MaterialTheme.typography.displaySmall)
-            Text("1. Escanea el código con la cámara de cualquier teléfono.", style = MaterialTheme.typography.titleMedium)
-            Text("2. En la página que se abre, elige «Abrir en la app» o pega un token. La primera vez puedes crear la identidad con el token administrador del bridge.", style = MaterialTheme.typography.titleMedium)
-            Text("3. Esta pantalla continúa sola.", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.pairing_title), style = MaterialTheme.typography.displaySmall)
+            Text(stringResource(R.string.pairing_step1), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.pairing_step2), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.pairing_step3), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             Text(
-                "El perfil usa esa identidad: el mismo Continuar viendo y las mismas preferencias. El código cambia cada 10 minutos.",
+                stringResource(R.string.pairing_note),
                 color = Color.White.copy(alpha = 0.65f),
             )
             Text("Bridge: $bridge", color = Color.White.copy(alpha = 0.5f))
             message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            OutlinedButton(onClick = onChangeBridge) { Text("Cambiar bridge") }
+            OutlinedButton(onClick = onChangeBridge) { Text(stringResource(R.string.change_bridge)) }
         }
     }
 }

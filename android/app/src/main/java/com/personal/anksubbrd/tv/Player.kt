@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -105,13 +106,13 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
     fun open(episode: Episode, saveCurrent: Boolean = true) {
         if (changing != null) return
         if (saveCurrent) save()
-        changing = "Abriendo el episodio ${episode.number}…"
+        changing = Strings.get(R.string.opening_episode, episode.number)
         scope.launch {
             try {
                 request = session.resolve(request.anime, request.series, episode, request.kind, request.playback.serverName)
                 error = null
             } catch (failure: BridgeException) {
-                error = "No se pudo abrir el episodio ${episode.number}. ${failure.message}"
+                error = Strings.get(R.string.open_episode_failed, episode.number, failure.message.orEmpty())
             } finally {
                 changing = null
             }
@@ -172,8 +173,8 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
             val preferences = session.preferences
             request.playback.intro?.takeIf { preferences.autoSkipIntro && position >= it.start && position < it.end }?.let { player.seekTo((it.end * 1000).toLong()) }
             request.playback.outro?.takeIf { preferences.autoSkipOutro && position >= it.start && position < it.end }?.let { player.seekTo((it.end * 1000).toLong()) }
-            skip = request.playback.intro?.takeIf { !preferences.autoSkipIntro && position >= it.start && position < it.end }?.let { "Saltar intro" to it }
-                ?: request.playback.outro?.takeIf { !preferences.autoSkipOutro && position >= it.start && position < it.end }?.let { "Saltar outro" to it }
+            skip = request.playback.intro?.takeIf { !preferences.autoSkipIntro && position >= it.start && position < it.end }?.let { Strings.get(R.string.skip_intro) to it }
+                ?: request.playback.outro?.takeIf { !preferences.autoSkipOutro && position >= it.start && position < it.end }?.let { Strings.get(R.string.skip_outro) to it }
             if (++ticks % 10 == 0 && player.isPlaying) save()
             Remote.state.value = DeviceState(
                 status = when {
@@ -220,7 +221,7 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
             }
 
             override fun onPlayerError(failure: PlaybackException) {
-                error = if (Connectivity.isOnline) "No se pudo reproducir este servidor (${failure.errorCodeName})." else "Sin conexión a internet."
+                error = if (Connectivity.isOnline) Strings.get(R.string.server_failed, failure.errorCodeName) else Strings.get(R.string.error_offline)
             }
         }
         player.addListener(listener)
@@ -367,7 +368,7 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
                 )
                 val episode = request.episode
                 Text(
-                    listOfNotNull("Episodio ${episode.number}", episode.subtitle, if (request.kind == "dub") "Dub" else "Sub").joinToString(" · "),
+                    listOfNotNull(stringResource(R.string.episode_number, episode.number), episode.subtitle, if (request.kind == "dub") "Dub" else "Sub").joinToString(" · "),
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White.copy(alpha = 0.8f),
                     maxLines = 1,
@@ -396,11 +397,11 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
             ) {
                 Text(message, style = MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { error = null; attempt++ }) { Text("Reintentar") }
+                    Button(onClick = { error = null; attempt++ }) { Text(stringResource(R.string.retry)) }
                     request.series.episodeAfter(request.episode.number, request.kind)?.let { next ->
-                        OutlinedButton(onClick = { error = null; open(next) }) { Text("Episodio ${next.number}") }
+                        OutlinedButton(onClick = { error = null; open(next) }) { Text(stringResource(R.string.episode_number, next.number)) }
                     }
-                    OutlinedButton(onClick = onExit) { Text("Salir") }
+                    OutlinedButton(onClick = onExit) { Text(stringResource(R.string.exit)) }
                 }
             }
         }
@@ -418,8 +419,8 @@ internal fun textTracks(player: Player) = player.currentTracks.groups.withIndex(
 internal fun subtitleOptions(player: Player): List<SubtitleOption> = textTracks(player).map { (id, group, index) ->
     val format = group.getTrackFormat(index)
     val language = format.language?.takeUnless { it == C.LANGUAGE_UNDETERMINED }
-        ?.let { Locale.forLanguageTag(it).getDisplayLanguage(Locale.forLanguageTag("es")).replaceFirstChar(Char::titlecase) }
-    SubtitleOption(id, format.label ?: language ?: "Pista ${index + 1}")
+        ?.let { Locale.forLanguageTag(it).getDisplayLanguage(Strings.locale).replaceFirstChar(Char::titlecase) }
+    SubtitleOption(id, format.label ?: language ?: Strings.get(R.string.track_number, index + 1))
 }
 
 internal fun selectedSubtitle(player: Player): String? =

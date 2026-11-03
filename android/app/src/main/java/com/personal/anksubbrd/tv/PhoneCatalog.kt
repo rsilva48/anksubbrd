@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,7 +82,7 @@ private object RecentSearches {
 }
 
 /**
- * Recientes (Sub, Dub or both; the configured kind first) or Buscar, in a
+ * Recent (Sub, Dub or both; the configured kind first) or Search, in a
  * paged poster grid, with the same filters as the other apps.
  */
 @Composable
@@ -143,16 +144,16 @@ internal fun PhoneCatalog(session: Session, searching: Boolean, onOpen: (Anime) 
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text(if (searching) "Buscar" else "Recientes") },
+            title = { Text(stringResource(if (searching) R.string.search else R.string.tab_recent)) },
             actions = {
                 if (!searching) {
                     var menu by remember { mutableStateOf(false) }
                     Box {
                         TextButton(onClick = { menu = true }) {
-                            Text(when (language) { "dub" -> "Dub"; "all" -> "Sub y Dub"; else -> "Sub" })
+                            Text(when (language) { "dub" -> "Dub"; "all" -> stringResource(R.string.sub_and_dub); else -> "Sub" })
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            listOf("sub" to "Sub", "dub" to "Dub", "all" to "Sub y Dub").forEach { (value, label) ->
+                            listOf("sub" to "Sub", "dub" to "Dub", "all" to stringResource(R.string.sub_and_dub)).forEach { (value, label) ->
                                 DropdownMenuItem(text = { Text(label) }, onClick = { language = value; menu = false })
                             }
                         }
@@ -160,7 +161,7 @@ internal fun PhoneCatalog(session: Session, searching: Boolean, onOpen: (Anime) 
                 }
                 IconButton(onClick = { showFilters = true }) {
                     BadgedBox(badge = { if (filters.isActive) Badge { Text(filters.activeCount.toString()) } }) {
-                        Icon(PhoneIcons.Filter, contentDescription = "Filtros")
+                        Icon(PhoneIcons.Filter, contentDescription = stringResource(R.string.filters))
                     }
                 }
             },
@@ -169,9 +170,9 @@ internal fun PhoneCatalog(session: Session, searching: Boolean, onOpen: (Anime) 
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                placeholder = { Text("Título de la serie") },
+                placeholder = { Text(stringResource(R.string.search_title_placeholder)) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Clear, contentDescription = "Borrar") } },
+                trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Filled.Clear, contentDescription = stringResource(R.string.clear_search)) } },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { search(query) }),
@@ -195,7 +196,7 @@ internal fun PhoneCatalog(session: Session, searching: Boolean, onOpen: (Anime) 
         ) {
             when {
                 searching && submitted == null && query.isEmpty() && recent.isNotEmpty() -> LazyColumn {
-                    item { Text("Búsquedas recientes", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(16.dp)) }
+                    item { Text(stringResource(R.string.recent_searches), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(16.dp)) }
                     items(recent) { text ->
                         ListItem(
                             headlineContent = { Text(text) },
@@ -205,9 +206,9 @@ internal fun PhoneCatalog(session: Session, searching: Boolean, onOpen: (Anime) 
                     }
                 }
                 visible.isEmpty() && loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                visible.isEmpty() && error != null -> PhoneMessage("No se pudo cargar", error.orEmpty(), action = "Reintentar" to { scope.launch { load(1) } })
-                searching && submitted == null -> PhoneMessage("Busca una serie", "Escribe un título y pulsa Buscar. Los filtros también se aplican a la búsqueda, y con filtros puedes buscar sin título.")
-                visible.isEmpty() -> PhoneMessage("Sin resultados", if (filters.isActive) "Cambia o limpia los filtros." else "El catálogo no devolvió novedades.")
+                visible.isEmpty() && error != null -> PhoneMessage(stringResource(R.string.load_failed), error.orEmpty(), action = stringResource(R.string.retry) to { scope.launch { load(1) } })
+                searching && submitted == null -> PhoneMessage(stringResource(R.string.search_prompt_title), stringResource(R.string.search_prompt_text))
+                visible.isEmpty() -> PhoneMessage(stringResource(R.string.no_results), stringResource(if (filters.isActive) R.string.no_results_filters else R.string.no_results_latest))
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(108.dp),
                     contentPadding = PaddingValues(12.dp),
@@ -223,9 +224,9 @@ internal fun PhoneCatalog(session: Session, searching: Boolean, onOpen: (Anime) 
                         Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                             when {
                                 loading -> CircularProgressIndicator()
-                                error != null -> TextButton(onClick = { scope.launch { load(page + 1) } }) { Text("Reintentar") }
+                                error != null -> TextButton(onClick = { scope.launch { load(page + 1) } }) { Text(stringResource(R.string.retry)) }
                                 // Score filtering can hide a whole page.
-                                else -> TextButton(onClick = { scope.launch { load(page + 1) } }) { Text("Cargar más") }
+                                else -> TextButton(onClick = { scope.launch { load(page + 1) } }) { Text(stringResource(R.string.load_more)) }
                             }
                         }
                     }
@@ -277,7 +278,7 @@ internal fun PhoneBadge(text: String, color: Color) {
     )
 }
 
-/** Filters in a bottom sheet: chips per category; nothing applies until "Aplicar". */
+/** Filters in a bottom sheet: chips per category; nothing applies until "Apply". */
 @Composable
 private fun PhoneFiltersSheet(current: CatalogFilters, options: CatalogFilterOptions?, hideAdult: Boolean, onDismiss: () -> Unit, onApply: (CatalogFilters) -> Unit) {
     var draft by remember { mutableStateOf(current) }
@@ -292,7 +293,7 @@ private fun PhoneFiltersSheet(current: CatalogFilters, options: CatalogFilterOpt
                 FilterChip(
                     selected = option.id in selected,
                     onClick = { update(if (option.id in selected) selected - option.id else selected + option.id) },
-                    label = { Text(option.label) },
+                    label = { Text(option.displayLabel) },
                 )
             }
         }
@@ -308,34 +309,36 @@ private fun PhoneFiltersSheet(current: CatalogFilters, options: CatalogFilterOpt
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Filtros", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            TextButton(onClick = { draft = CatalogFilters() }, enabled = draft.isActive) { Text("Limpiar") }
-            Button(onClick = { onApply(draft) }) { Text("Aplicar") }
+            Text(stringResource(R.string.filters), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            TextButton(onClick = { draft = CatalogFilters() }, enabled = draft.isActive) { Text(stringResource(R.string.clear)) }
+            Button(onClick = { onApply(draft) }) { Text(stringResource(R.string.apply)) }
         }
         HorizontalDivider(Modifier.padding(top = 8.dp))
+        val any = stringResource(R.string.filter_any)
+        val defaultSort = stringResource(R.string.filter_sort_default)
         LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
             item {
                 Text(
-                    "Puedes elegir varias opciones en cada filtro: aparecen las series que cumplan cualquiera de ellas. La puntuación mínima se aplica a los resultados ya cargados.",
+                    stringResource(R.string.filters_hint_phone),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            item { Section("Género", options?.genres.orEmpty(), draft.genres) { draft = draft.copy(genres = it) } }
-            item { Section("Temporada", BuiltInFilters.seasons, draft.seasons) { draft = draft.copy(seasons = it) } }
-            item { Section("Año", BuiltInFilters.years, draft.years) { draft = draft.copy(years = it) } }
-            item { Section("Estado", BuiltInFilters.statuses, draft.statuses) { draft = draft.copy(statuses = it) } }
-            item { Section("Tipo", options?.mediaTypes ?: BuiltInFilters.mediaTypes, draft.mediaTypes) { draft = draft.copy(mediaTypes = it) } }
-            item { Section("Origen", options?.sources.orEmpty(), draft.sources) { draft = draft.copy(sources = it) } }
-            item { Section("Clasificación", BuiltInFilters.ratings, draft.ratings) { draft = draft.copy(ratings = it) } }
+            item { Section(stringResource(R.string.filter_genre), options?.genres.orEmpty(), draft.genres) { draft = draft.copy(genres = it) } }
+            item { Section(stringResource(R.string.filter_season), BuiltInFilters.seasons, draft.seasons) { draft = draft.copy(seasons = it) } }
+            item { Section(stringResource(R.string.filter_year), BuiltInFilters.years, draft.years) { draft = draft.copy(years = it) } }
+            item { Section(stringResource(R.string.filter_status), BuiltInFilters.statuses, draft.statuses) { draft = draft.copy(statuses = it) } }
+            item { Section(stringResource(R.string.filter_type), options?.mediaTypes ?: BuiltInFilters.mediaTypes, draft.mediaTypes) { draft = draft.copy(mediaTypes = it) } }
+            item { Section(stringResource(R.string.filter_source), options?.sources.orEmpty(), draft.sources) { draft = draft.copy(sources = it) } }
+            item { Section(stringResource(R.string.filter_rating), BuiltInFilters.ratings, draft.ratings) { draft = draft.copy(ratings = it) } }
             if (options != null) item {
-                Single("Episodios", listOf<EpisodeRange?>(null).plus(EpisodeRange.entries).map { it to (it?.label ?: "Cualquiera") }, draft.episodes) { draft = draft.copy(episodes = it) }
+                Single(stringResource(R.string.filter_episodes), listOf<EpisodeRange?>(null).plus(EpisodeRange.entries).map { it to (it?.label ?: any) }, draft.episodes) { draft = draft.copy(episodes = it) }
             }
             item {
-                Single("Puntuación mínima", listOf(0, 5, 6, 7, 8, 9).map { it to if (it == 0) "Cualquiera" else "$it.0+" }, draft.minimumScore) { draft = draft.copy(minimumScore = it) }
+                Single(stringResource(R.string.filter_min_score), listOf(0, 5, 6, 7, 8, 9).map { it to if (it == 0) any else "$it.0+" }, draft.minimumScore) { draft = draft.copy(minimumScore = it) }
             }
             if (options != null && options.sorts.isNotEmpty()) item {
-                Single("Ordenar por", listOf("" to "Predeterminado") + options.sorts.map { it.id to it.label }, draft.sort) { draft = draft.copy(sort = it) }
+                Single(stringResource(R.string.filter_sort), listOf("" to defaultSort) + options.sorts.map { it.id to it.displayLabel }, draft.sort) { draft = draft.copy(sort = it) }
             }
         }
     }

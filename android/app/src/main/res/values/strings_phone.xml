@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phone screens (English; Spanish in values-es). -->
+<resources>
+    <!-- App and tabs -->
+    <string name="tab_downloads">Downloads</string>
+    <string name="tab_settings">Settings</string>
+    <string name="phone_profile_name">Phone</string>
+    <string name="phone_setup_text">Type your bridge\'s address in Settings and test it. Search, Recent and Continue turn on as soon as it answers.</string>
+    <string name="go_to_settings">Go to Settings</string>
+    <string name="release_prompt_title">Get notified of new episodes?</string>
+    <string name="release_prompt_text">The app can notify you when a new episode of the series you follow in Continue Watching comes out. You can change this anytime in Settings.</string>
+    <string name="enable_alerts">Turn on alerts</string>
+
+    <!-- Catalog and search -->
+    <string name="search_title_placeholder">Series title</string>
+    <string name="clear_search">Clear</string>
+    <string name="recent_searches">Recent searches</string>
+    <string name="load_failed">Couldn\'t load</string>
+    <string name="search_prompt_title">Search for a series</string>
+    <string name="search_prompt_text">Type a title and press Search. Filters also apply to the search, and with filters you can search without a title.</string>
+    <string name="no_results">No results</string>
+    <string name="no_results_filters">Change or clear the filters.</string>
+    <string name="no_results_latest">The catalog returned nothing new.</string>
+    <string name="load_more">Load more</string>
+    <string name="filters_hint_phone">You can pick several options in each filter: series that match any of them are shown. The minimum score applies to the results already loaded.</string>
+
+    <!-- Continue -->
+    <string name="continue_watching">Continue Watching</string>
+    <string name="watch_on_tv">Watch on TV</string>
+    <string name="nothing_to_continue">Nothing to continue</string>
+    <string name="continue_empty_phone">Series you play with this identity will appear here, at the second where you left them.</string>
+    <string name="remove_title">Remove “%1$s”?</string>
+    <string name="remove_continue_text">It\'s also removed from Continue on your other devices with this identity.</string>
+
+    <!-- Downloads -->
+    <string name="download_prepare_failed">Could not prepare the download (%1$s).</string>
+    <string name="episode_gone">Episode %1$d is no longer in the catalog.</string>
+    <string name="episode_no_kind_servers">Episode %1$d has no %2$s servers.</string>
+    <string name="status_download_failed">Download failed · %1$s · %2$s</string>
+    <string name="status_waiting">Waiting · %1$s · %2$s</string>
+    <string name="status_downloading">Downloading · %1$s · %2$s · %3$d %%</string>
+    <string name="series_episode">%1$s · episode %2$d</string>
+    <string name="no_downloads">No downloads</string>
+    <string name="no_downloads_text">On a series page, hold an episode to download it with its subtitles and watch it offline.</string>
+    <string name="options">Options</string>
+    <string name="watch_offline">Watch offline</string>
+    <string name="retry_download">Retry download</string>
+    <string name="cancel_download">Cancel download</string>
+    <string name="delete_download">Delete download</string>
+
+    <!-- Player -->
+    <string name="decode_failed">This phone could not decode the video (%1$s).</string>
+    <string name="download_open_failed">Could not open the download (%1$s). Delete it and download it again.</string>
+    <string name="offline_downloads_available">No internet connection. Downloaded episodes are still available in Downloads.</string>
+    <string name="previous_episode">Previous episode</string>
+    <string name="next_episode">Next episode</string>
+    <string name="retrying">Retrying…</string>
+    <string name="retry_failed">Could not retry. %1$s</string>
+    <string name="close_player">Close player</string>
+
+    <!-- New episode reminders -->
+    <string name="releases_channel">New episodes</string>
+    <string name="release_body">Episode %1$d in %2$s should be available now.</string>
+
+    <!-- TV remote -->
+    <string name="remote_unsupported">This bridge doesn\'t support the remote yet. Update it to the latest version.</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="connect_to_tv">Connect to a TV</string>
+    <string name="no_tvs">No TVs connected. Open AniBridge Player on the TV with a profile linked to this identity.</string>
+    <string name="searching_tvs">Looking for TVs…</string>
+    <string name="remember_tv">The app will remember the chosen TV until you press Disconnect.</string>
+    <string name="tv_unavailable">%1$s is not available. Turn on the TV and open AniBridge Player with a profile linked to this identity.</string>
+    <string name="connecting">Connecting…</string>
+    <string name="play_on_this_phone">Play on this phone</string>
+    <string name="play_on_tv">Play on the TV</string>
+    <string name="episode_with_title">Episode %1$d · %2$s</string>
+    <string name="loading_on_tv">Loading on the TV…</string>
+    <string name="rewind_10">Back 10 seconds</string>
+    <string name="forward_10">Forward 10 seconds</string>
+    <string name="pause">Pause</string>
+    <string name="play">Play</string>
+    <string name="subtitles_off">Off</string>
+    <string name="tv_volume_down">Turn the TV volume down</string>
+    <string name="tv_volume_up">Turn the TV volume up</string>
+    <string name="stop_on_tv">Stop on the TV</string>
+    <string name="tv_idle_hint">The TV isn\'t playing anything. On a series page, use “Watch on TV” to start an episode there.</string>
+    <string name="tv_cannot_open">The TV only starts episodes with AniBridge Player on screen. To have it open by itself, press “Open from the phone” in the TV app.</string>
+    <string name="tv_idle">Idle</string>
+    <string name="tv_playing">Playing</string>
+    <string name="tv_loading">Loading</string>
+    <string name="tv_paused">Paused</string>
+    <string name="tv_summary">%1$s: %2$s</string>
+    <string name="tv_summary_episode">%1$s: %2$s · episode %3$d</string>
+
+    <!-- TV codes (QR) -->
+    <string name="scanner_failed">Could not open the scanner: %1$s</string>
+    <string name="not_our_code">That code isn\'t from AniBridge Player.</string>
+    <string name="use_profile_title">Use the profile “%1$s”</string>
+    <string name="profile_in_use">This phone already uses that profile.</string>
+    <string name="use_profile_text">This phone will use the same Continue Watching and the same preferences as that profile.</string>
+    <string name="other_bridge_switch">The code is from the bridge %1$s and this phone uses %2$s. If you continue, the app will connect to %1$s.</string>
+    <string name="connect_bridge">If you continue, the app will connect to the bridge %1$s.</string>
+    <string name="saved_current_token_replace">I already saved the current identity\'s token (this replaces this phone\'s identity)</string>
+    <string name="bridge_unexpected">The bridge answered unexpectedly.</string>
+    <string name="use_this_profile">Use this profile</string>
+    <string name="link_a_tv">Link a TV</string>
+    <string name="tv_linked">Done: the TV now has the profile “%1$s”.</string>
+    <string name="tv_other_bridge">The TV uses the bridge %1$s, which is not the one set up here. Set up and test that same bridge in Settings and scan the code again.</string>
+    <string name="link_tv_text">The TV will use this phone\'s active identity: the same Continue Watching history and the same preferences. It will appear on the TV as a profile.</string>
+    <string name="tv_profile_name">Profile name on the TV</string>
+    <string name="tv_profile_placeholder">For example, your name</string>
+    <string name="setup_bridge_first">Set up the bridge address first.</string>
+    <string name="linking">Linking…</string>
+    <string name="link_tv">Link TV</string>
+
+    <!-- Series -->
+    <string name="offline_bridge_notice">No connection to the bridge: you can only watch downloaded episodes.</string>
+    <string name="series_not_loaded">The series hasn\'t loaded yet.</string>
+    <string name="offline_only_downloads">Offline: you can only watch downloaded episodes.</string>
+    <string name="offline_not_downloaded">Offline: episode %1$d isn\'t downloaded.</string>
+    <string name="preparing_playback">Preparing playback…</string>
+    <string name="loading_servers">Loading servers for episode %1$d…</string>
+    <string name="preparing_download">Preparing the download of episode %1$d…</string>
+    <string name="note_no_kind_servers">Episode %1$d: no %2$s servers available, not downloaded.</string>
+    <string name="note_episode_error">Episode %1$d: %2$s</string>
+    <string name="downloading_one">Downloading episode %1$d in %2$s. You\'ll find it in Downloads.</string>
+    <string name="downloading_many">Downloading %1$d episodes in %2$s. You\'ll find them in Downloads.</string>
+    <string name="back">Back</string>
+    <string name="download">Download</string>
+    <string name="download_menu_title">Download in %1$s to watch offline</string>
+    <string name="episode_next">Episode %1$d · next</string>
+    <string name="next_3">Next 3 episodes</string>
+    <string name="whole_series">Whole series · %1$d episodes</string>
+    <string name="remaining">The rest · episodes %1$d to %2$d</string>
+    <string name="episodes_of_total">%1$d of %2$d episodes</string>
+    <plurals name="episode_count">
+        <item quantity="one">%1$d episode</item>
+        <item quantity="other">%1$d episodes</item>
+    </plurals>
+    <string name="next_episode_airing">Next episode: %1$s</string>
+    <string name="synopsis">Synopsis</string>
+    <string name="translate">Translate</string>
+    <string name="season_selected">Season: %1$s</string>
+    <string name="new_badge">New</string>
+    <string name="downloaded">Downloaded</string>
+    <string name="retry_download_in">Retry download in %1$s</string>
+    <string name="download_in">Download in %1$s</string>
+    <string name="watch_offline_kind">Watch offline · %1$s</string>
+    <string name="delete_download_kind">Delete download · %1$s</string>
+    <string name="cancel_download_kind">Cancel download · %1$s</string>
+    <string name="watch_on_this_phone">Watch on this phone</string>
+    <string name="choose_server_online">Choose server (online)</string>
+    <string name="watch_season">Watch %1$s</string>
+    <plurals name="series_completed">
+        <item quantity="one">Series completed · you watched its only episode</item>
+        <item quantity="other">Series completed · you watched all %1$d episodes</item>
+    </plurals>
+    <string name="up_to_date_phone">You\'re up to date: you watched episode %1$d. It will show here when the next one is out in %2$s.</string>
+    <string name="rewatch">Watch episode %1$d again</string>
+    <string name="watch_episode_new">Watch episode %1$d (new)</string>
+    <string name="audio_english">English audio</string>
+    <string name="audio_japanese">Japanese audio with subtitles</string>
+    <string name="no_sources">This episode has no %1$s sources.</string>
+    <string name="install_translate">Install Google Translate to translate the synopsis.</string>
+
+    <!-- Settings -->
+    <string name="connected">Connected.</string>
+    <string name="connected_details">Connected (%1$s).</string>
+    <string name="needs_identity">%1$s This bridge requires a private identity: create or import one below.</string>
+    <string name="bridge_ready">%1$s Search, Recent and Continue are now available.</string>
+    <string name="active_bridge">Active: %1$s</string>
+    <string name="testing_connection">Testing connection…</string>
+    <string name="bridge_footer">Type only the domain or IP, with the port if needed (for example bridge.mydomain.com or 192.168.1.20:8787). The address is saved when the test succeeds.</string>
+    <string name="private_identity">Private identity</string>
+    <string name="test_bridge_first">First test and save the bridge address</string>
+    <string name="identity_configured">Private identity set up</string>
+    <string name="backup_token_ellipsis">Back up token…</string>
+    <string name="change_identity_ellipsis">Change identity…</string>
+    <string name="create_identity_ellipsis">Create private identity…</string>
+    <string name="import_token_ellipsis">Import token…</string>
+    <string name="scan_tv_code">Scan TV code…</string>
+    <string name="identity_footer">The token defines your history and preferences. It\'s stored encrypted on this phone, only for this address; share it only with the devices that should share the list and settings. The TV code can be a profile (“Take to phone”) or a TV link.</string>
+    <string name="catalog">Catalog</string>
+    <string name="title_language">Title language</string>
+    <string name="english">English</string>
+    <string name="japanese">Japanese</string>
+    <string name="hide_adult">Hide +18 series</string>
+    <string name="catalog_footer">In Japanese, Continue Watching keeps the English name and shows the Japanese title below it. Hide +18 series removes those rated R+ or Rx from Recent and Search.</string>
+    <string name="playback">Playback</string>
+    <string name="default_servers">Default servers</string>
+    <string name="subtitles_auto">Automatic (device language)</string>
+    <string name="subtitles_in_sub">Subtitles in Sub</string>
+    <string name="auto_next">Play the next episode</string>
+    <string name="auto_skip_intro">Skip intro automatically</string>
+    <string name="auto_skip_outro">Skip outro automatically</string>
+    <string name="playback_footer">Sub declares Japanese audio and turns on subtitles; Dub declares English audio. These preferences belong to the active identity and sync through the bridge to your other devices.</string>
+    <string name="this_device">This device</string>
+    <string name="notifications_denied">Android does not allow alerts from this app. Turn them on in the system settings → Notifications.</string>
+    <string name="new_episode_alerts">New episode alerts</string>
+    <string name="delete_watched_downloads">Delete watched downloads</string>
+    <string name="storage_used">Storage used</string>
+    <string name="delete_all_downloads">Delete all downloads</string>
+    <plurals name="delete_downloads_title">
+        <item quantity="one">Delete 1 download?</item>
+        <item quantity="other">Delete %1$d downloads?</item>
+    </plurals>
+    <string name="delete_downloads_text">The episodes will no longer be available offline.</string>
+    <string name="delete_all">Delete all</string>
+    <string name="device_footer">A download is deleted only when you finish watching that episode (reaching the outro or its last minutes), here or on another device with the same identity. Opening another episode doesn\'t delete it. Alerts use the catalog\'s estimated schedule for the series in Continue Watching (in the Sub or Dub kind you follow) and are rescheduled every time you open the app.</string>
+    <string name="about">About</string>
+    <string name="backup_token">Back up token</string>
+    <string name="backup_warning">Anyone with this token can access the associated history and preferences. Don\'t send it by message, email or screenshot without protection.</string>
+    <string name="understand_risk">I understand the risk</string>
+    <string name="copy">Copy</string>
+    <string name="clip_label">AniBridge token</string>
+    <string name="change_identity">Change identity</string>
+    <string name="change_identity_text">Changing the token makes you a different user. The current history and preferences stay on the server, but this phone won\'t be able to open them again without the current token. There is no account recovery.</string>
+    <string name="saved_current_token">I already saved the current token safely</string>
+    <string name="backup_current_token">Back up current token…</string>
+    <string name="create_new_identity">Create a new identity</string>
+    <string name="use_existing_token">Use an existing token</string>
+    <string name="import_token">Import token</string>
+    <string name="import_text">Import another device\'s token only if you want to access exactly the same history and the same preferences.</string>
+    <string name="token_64">64-character token</string>
+    <string name="understand_replace">I understand this replaces the current identity</string>
+    <string name="token_invalid">The token must contain 64 hexadecimal characters.</string>
+    <string name="save">Save</string>
+    <string name="new_identity">New identity</string>
+    <string name="new_identity_text">The administrator token is used only once to register this identity; it isn\'t stored on the phone. Then back up the new token: it can\'t be recovered if you lose it.</string>
+    <string name="admin_token_label">Bridge administrator token</string>
+    <string name="optional_label">Optional label</string>
+    <string name="registering">Registering…</string>
+    <string name="register_and_use">Register and use</string>
+    <string name="installed_version">Installed version</string>
+    <string name="latest_version">You have the latest version.</string>
+    <string name="new_version">A new version is available: %1$s.</string>
+    <string name="checking_updates">Checking for updates…</string>
+    <string name="check_updates">Check for updates</string>
+    <string name="allow_install">Allow installing apps from AniBridge Player and press Install again.</string>
+    <string name="install_tag">Install %1$s</string>
+</resources>

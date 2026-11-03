@@ -99,12 +99,21 @@ final class TVNowPlaying {
 
     private func show(_ state: RemoteDeviceState, device: RemoteDevice) {
         let playing = state.status == "playing"
+        let title: String
+        if let episode = state.episode {
+            if let episodeTitle = state.episodeTitle {
+                title = String(localized: "Episodio \(episode) · \(episodeTitle)")
+            } else {
+                title = String(localized: "Episodio \(episode)")
+            }
+        } else {
+            title = state.seriesTitle ?? device.name
+        }
+        let album = String(localized: "En \(device.name)")
         var info: [String: Any] = [
-            MPMediaItemPropertyTitle: state.episode.map { episode in
-                state.episodeTitle.map { "Episodio \(episode) · \($0)" } ?? "Episodio \(episode)"
-            } ?? (state.seriesTitle ?? device.name),
+            MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: state.seriesTitle ?? "",
-            MPMediaItemPropertyAlbumTitle: "En \(device.name)",
+            MPMediaItemPropertyAlbumTitle: album,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
             MPNowPlayingInfoPropertyPlaybackRate: playing ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,

@@ -56,6 +56,8 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -93,7 +95,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
             if (stored != null) {
                 series = stored
                 offline = true
-                notice = "Sin conexión con el bridge: solo puedes ver los episodios descargados."
+                notice = Strings.get(R.string.offline_bridge_notice)
             } else {
                 error = failure.message
             }
@@ -120,8 +122,8 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
 
     // Series sessions on the bridge expire after 20 minutes (HTTP 410).
     suspend fun <T> withSeries(block: suspend (Series) -> T): T {
-        val loaded = series ?: throw BridgeException("La serie aún no se cargó.")
-        if (offline) throw BridgeException("Sin conexión: solo puedes ver los episodios descargados.")
+        val loaded = series ?: throw BridgeException(Strings.get(R.string.series_not_loaded))
+        if (offline) throw BridgeException(Strings.get(R.string.offline_only_downloads))
         return try {
             block(loaded)
         } catch (failure: BridgeException) {
@@ -136,10 +138,10 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
         val loaded = series ?: return
         if (busy != null) return
         if (offline) {
-            error = "Sin conexión: el episodio ${episode.number} no está descargado."
+            error = Strings.get(R.string.offline_not_downloaded, episode.number)
             return
         }
-        busy = "Preparando reproducción…"
+        busy = Strings.get(R.string.preparing_playback)
         scope.launch {
             try {
                 app.playing = session.resolve(current, loaded, episode, playKind, preferredServer)
@@ -153,7 +155,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
 
     fun chooseServer(episode: Episode) {
         if (busy != null) return
-        busy = "Cargando servidores del episodio ${episode.number}…"
+        busy = Strings.get(R.string.loading_servers, episode.number)
         scope.launch {
             try {
                 serverChoice = episode to withSeries { session.client.servers(it.seriesKey, episode.number) }
@@ -166,7 +168,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
     }
 
     fun playServer(episode: Episode, server: Server) {
-        busy = "Preparando reproducción…"
+        busy = Strings.get(R.string.preparing_playback)
         scope.launch {
             try {
                 val playback = withSeries { session.client.play(it.seriesKey, episode.number, server.index) }
@@ -188,13 +190,13 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
 
     /** With a TV connected (and a connection) the episode goes there; otherwise here. */
     fun open(episode: Episode) {
-        if (offline || !app.playOnTv(tvCommand(episode), "$title · episodio ${episode.number}") { openHere(episode) }) openHere(episode)
+        if (offline || !app.playOnTv(tvCommand(episode), Strings.get(R.string.series_episode, title, episode.number)) { openHere(episode) }) openHere(episode)
     }
 
     /** Continue and next: the download, or the saved server and kind straight away (or on the TV). */
     fun resume(episode: Episode, preferredServer: String?, playKind: String) {
         fun here() = recordOf(episode.number, playKind)?.takeIf { it.isCompleted }?.let { playStored(it) } ?: play(episode, preferredServer, playKind)
-        if (offline || !app.playOnTv(tvCommand(episode), "$title · episodio ${episode.number}") { here() }) here()
+        if (offline || !app.playOnTv(tvCommand(episode), Strings.get(R.string.series_episode, title, episode.number)) { here() }) here()
     }
 
     /** Downloads episodes one at a time, each from a working server of the kind. */
@@ -205,24 +207,24 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
         scope.launch {
             val notes = mutableListOf<String>()
             for (episode in episodes) {
-                busy = "Preparando la descarga del episodio ${episode.number}…"
+                busy = Strings.get(R.string.preparing_download, episode.number)
                 try {
                     val request = session.resolve(current, series ?: break, episode, downloadKind, entry?.takeIf { it.serverKind == downloadKind }?.serverName)
                     series = request.series
                     if (request.kind != downloadKind) {
-                        notes += "Episodio ${episode.number}: sin servidores ${kindLabel(downloadKind)} disponibles, no se descarga."
+                        notes += Strings.get(R.string.note_no_kind_servers, episode.number, kindLabel(downloadKind))
                         continue
                     }
                     PhoneDownloads.start(context, request)
                 } catch (failure: BridgeException) {
-                    notes += "Episodio ${episode.number}: ${failure.message}"
+                    notes += Strings.get(R.string.note_episode_error, episode.number, failure.message.orEmpty())
                     if (failure.offline) break
                 }
             }
             busy = null
             notice = notes.joinToString("\n").ifEmpty {
-                if (episodes.size == 1) "Descargando el episodio ${episodes.first().number} en ${kindLabel(downloadKind)}. Lo verás en Descargas."
-                else "Descargando ${episodes.size} episodios en ${kindLabel(downloadKind)}. Los verás en Descargas."
+                if (episodes.size == 1) Strings.get(R.string.downloading_one, episodes.first().number, kindLabel(downloadKind))
+                else Strings.get(R.string.downloading_many, episodes.size, kindLabel(downloadKind))
             }
         }
     }
@@ -230,35 +232,35 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Atrás") } },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back)) } },
             actions = {
                 val loaded = series
                 if (loaded != null && !offline) {
-                    // "Descargar": the next episodes of the kind being followed.
+                    // "Download": the next episodes of the kind being followed.
                     var menu by remember { mutableStateOf(false) }
                     val start = entry?.let { if (it.isCompleted) it.episode + 1 else it.episode } ?: loaded.episodes.firstOrNull()?.number ?: 1
                     val pending = loaded.episodes.filter { it.number >= start && it.isAvailable(kind) && recordOf(it.number, kind)?.isFailed != false }
                     Box {
-                        IconButton(onClick = { menu = true }, enabled = pending.isNotEmpty() && busy == null) { Icon(PhoneIcons.Download, contentDescription = "Descargar") }
+                        IconButton(onClick = { menu = true }, enabled = pending.isNotEmpty() && busy == null) { Icon(PhoneIcons.Download, contentDescription = stringResource(R.string.download)) }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             Text(
-                                "Descargar en ${kindLabel(kind)} para ver sin conexión",
+                                stringResource(R.string.download_menu_title, kindLabel(kind)),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
                             pending.firstOrNull()?.let { first ->
-                                DropdownMenuItem(text = { Text(if (entry != null) "Episodio ${first.number} · siguiente" else "Episodio ${first.number}") }, onClick = {
+                                DropdownMenuItem(text = { Text(if (entry != null) stringResource(R.string.episode_next, first.number) else stringResource(R.string.episode_number, first.number)) }, onClick = {
                                     menu = false
                                     download(listOf(first), kind)
                                 })
                             }
-                            if (pending.size > 3) DropdownMenuItem(text = { Text("Siguientes 3 episodios") }, onClick = {
+                            if (pending.size > 3) DropdownMenuItem(text = { Text(stringResource(R.string.next_3)) }, onClick = {
                                 menu = false
                                 download(pending.take(3), kind)
                             })
                             if (pending.size > 1) DropdownMenuItem(
-                                text = { Text(if (entry == null) "Serie completa · ${pending.size} episodios" else "Los que faltan · episodios ${pending.first().number} a ${pending.last().number}") },
+                                text = { Text(if (entry == null) stringResource(R.string.whole_series, pending.size) else stringResource(R.string.remaining, pending.first().number, pending.last().number)) },
                                 onClick = {
                                     menu = false
                                     download(pending, kind)
@@ -270,9 +272,9 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                 if (loaded != null && !offline) IconButton(onClick = {
                     // Opens the remote; the episode is offered, not sent.
                     val suggested = suggestedEpisode(loaded, entry, current)
-                    app.tvPlay = suggested?.let { TvPlayRequest(tvCommand(it), "$title · episodio ${it.number}", autoplay = false) }
+                    app.tvPlay = suggested?.let { TvPlayRequest(tvCommand(it), Strings.get(R.string.series_episode, title, it.number), autoplay = false) }
                     app.remoteOpen = true
-                }) { Icon(PhoneIcons.Tv, contentDescription = "Ver en TV") }
+                }) { Icon(PhoneIcons.Tv, contentDescription = stringResource(R.string.watch_on_tv)) }
             },
         )
         busy?.let {
@@ -298,7 +300,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                         if (loaded != null) {
                             val meta = listOfNotNull(
                                 loaded.mediaType,
-                                when (loaded.status) { "airing" -> "En emisión"; "finished" -> "Finalizado"; "upcoming" -> "Próximamente"; else -> null },
+                                seriesStatusLabel(loaded.status),
                                 loaded.score?.let { "★ %.1f".format(it) },
                                 // The catalog sends "?" when it has no rating.
                                 loaded.rating?.takeUnless { it == "?" },
@@ -306,11 +308,12 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                             if (meta.isNotEmpty()) Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             val total = loaded.totalEpisodes
                             Text(
-                                if (total != null && total > loaded.episodes.size) "${loaded.episodes.size} de $total episodios" else "${loaded.episodes.size} episodios",
+                                if (total != null && total > loaded.episodes.size) stringResource(R.string.episodes_of_total, loaded.episodes.size, total)
+                                else pluralStringResource(R.plurals.episode_count, loaded.episodes.size, loaded.episodes.size),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             airingLabel(loaded.nextEpisodeAt)?.let {
-                                Text("Próximo episodio: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                Text(stringResource(R.string.next_episode_airing, it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
@@ -319,8 +322,8 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
             if (loaded == null) {
                 item {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(error ?: "Cargando episodios…", color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (error != null) OutlinedButton(onClick = { reload++ }) { Icon(Icons.Filled.Refresh, null); Text(" Reintentar") }
+                        Text(error ?: stringResource(R.string.loading_episodes), color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (error != null) OutlinedButton(onClick = { reload++ }) { Icon(Icons.Filled.Refresh, null); Text(" " + stringResource(R.string.retry)) }
                     }
                 }
                 return@LazyColumn
@@ -337,11 +340,11 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                 item {
                     Column(Modifier.padding(16.dp).clickable { synopsisExpanded = !synopsisExpanded }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Sinopsis", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                            Text(stringResource(R.string.synopsis), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                             // The catalog's synopses are in English.
-                            if (java.util.Locale.getDefault().language != "en") {
+                            if (Strings.locale.language != "en") {
                                 val context = androidx.compose.ui.platform.LocalContext.current
-                                TextButton(onClick = { translate(context, synopsis) }) { Text("Traducir") }
+                                TextButton(onClick = { translate(context, synopsis) }) { Text(stringResource(R.string.translate)) }
                             }
                         }
                         Text(synopsis, style = MaterialTheme.typography.bodyMedium, maxLines = if (synopsisExpanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
@@ -353,7 +356,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                 val selected = loaded.seasons.firstOrNull { catalogPath(it.watchUrl) == catalogPath(current.watchUrl) }
                 Box(Modifier.padding(horizontal = 16.dp)) {
                     OutlinedButton(onClick = { menu = true }) {
-                        Text("Temporada: ${selected?.displayLabel ?: "—"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(stringResource(R.string.season_selected, selected?.displayLabel ?: "—"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -367,7 +370,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                     }
                 }
             }
-            item { Text("Episodios", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 16.dp, top = 16.dp)) }
+            item { Text(stringResource(R.string.filter_episodes), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 16.dp, top = 16.dp)) }
             items(loaded.episodes, key = { it.number }) { episode ->
                 var menu by remember { mutableStateOf(false) }
                 val watched = entry != null && (episode.number < entry.episode || (episode.number == entry.episode && entry.isCompleted))
@@ -378,12 +381,13 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                 val playable = !offline || records.any { it.isCompleted }
                 Box {
                     ListItem(
-                        headlineContent = { Text("${episode.number}. ${episode.subtitle ?: "Episodio ${episode.number}"}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                        headlineContent = { Text("${episode.number}. ${episode.subtitle ?: stringResource(R.string.episode_number, episode.number)}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
                         supportingContent = {
+                            val notYet = stringResource(R.string.not_yet_in, if (kind == "dub") "Dub" else "Sub")
                             val notes = listOfNotNull(
-                                progress?.let { "Visto hasta ${formatTime(it)}" },
-                                if (episode.number == current.episode) "Nuevo" else null,
-                                if (!offline && !episode.isAvailable(kind)) "Aún sin ${if (kind == "dub") "Dub" else "Sub"}" else null,
+                                progress?.let { stringResource(R.string.watched_until, formatTime(it)) },
+                                if (episode.number == current.episode) stringResource(R.string.new_badge) else null,
+                                if (!offline && !episode.isAvailable(kind)) notYet else null,
                             ) + records.sortedBy { it.info.kind }.map { downloadStatus(context, it) }
                             if (notes.isNotEmpty()) Text(notes.joinToString(" · "))
                         },
@@ -392,7 +396,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                                 CircularProgressIndicator(progress = { active.percent / 100f }, modifier = Modifier.size(24.dp), strokeWidth = 3.dp)
                             } else {
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    if (records.any { it.isCompleted }) Icon(PhoneIcons.Download, contentDescription = "Descargado", tint = MaterialTheme.colorScheme.primary)
+                                    if (records.any { it.isCompleted }) Icon(PhoneIcons.Download, contentDescription = stringResource(R.string.downloaded), tint = MaterialTheme.colorScheme.primary)
                                     Icon(if (watched) Icons.Filled.Check else if (app.connectedTv != null && !offline) PhoneIcons.Tv else Icons.Filled.PlayArrow, contentDescription = null)
                                 }
                             }
@@ -407,7 +411,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                             val label = kindLabel(recordKind)
                             when {
                                 record == null || record.isFailed -> if (!offline) DropdownMenuItem(
-                                    text = { Text(if (record != null) "Reintentar descarga en $label" else "Descargar en $label") },
+                                    text = { Text(if (record != null) stringResource(R.string.retry_download_in, label) else stringResource(R.string.download_in, label)) },
                                     leadingIcon = { Icon(PhoneIcons.Download, null) },
                                     onClick = {
                                         menu = false
@@ -416,27 +420,27 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
                                     },
                                 )
                                 record.isCompleted -> {
-                                    DropdownMenuItem(text = { Text("Ver sin conexión · $label") }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = {
+                                    DropdownMenuItem(text = { Text(stringResource(R.string.watch_offline_kind, label)) }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = {
                                         menu = false
                                         playStored(record)
                                     })
-                                    DropdownMenuItem(text = { Text("Borrar descarga · $label") }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
+                                    DropdownMenuItem(text = { Text(stringResource(R.string.delete_download_kind, label)) }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
                                 }
-                                else -> DropdownMenuItem(text = { Text("Cancelar descarga · $label") }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
+                                else -> DropdownMenuItem(text = { Text(stringResource(R.string.cancel_download_kind, label)) }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
                             }
-                            if (record?.isFailed == true) DropdownMenuItem(text = { Text("Borrar descarga · $label") }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
+                            if (record?.isFailed == true) DropdownMenuItem(text = { Text(stringResource(R.string.delete_download_kind, label)) }, onClick = { menu = false; PhoneDownloads.remove(context, record) })
                         }
                         if (!offline) {
-                            DropdownMenuItem(text = { Text("Ver en TV") }, leadingIcon = { Icon(PhoneIcons.Tv, null) }, onClick = {
+                            DropdownMenuItem(text = { Text(stringResource(R.string.watch_on_tv)) }, leadingIcon = { Icon(PhoneIcons.Tv, null) }, onClick = {
                                 menu = false
-                                app.tvPlay = TvPlayRequest(tvCommand(episode), "$title · episodio ${episode.number}", autoplay = true) { openHere(episode) }
+                                app.tvPlay = TvPlayRequest(tvCommand(episode), Strings.get(R.string.series_episode, title, episode.number), autoplay = true) { openHere(episode) }
                                 app.remoteOpen = true
                             })
-                            if (app.connectedTv != null) DropdownMenuItem(text = { Text("Ver en este teléfono") }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = {
+                            if (app.connectedTv != null) DropdownMenuItem(text = { Text(stringResource(R.string.watch_on_this_phone)) }, leadingIcon = { Icon(Icons.Filled.PlayArrow, null) }, onClick = {
                                 menu = false
                                 openHere(episode)
                             })
-                            DropdownMenuItem(text = { Text("Elegir servidor en línea") }, onClick = { menu = false; chooseServer(episode) })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.choose_server_online)) }, onClick = { menu = false; chooseServer(episode) })
                         }
                     }
                 }
@@ -452,7 +456,7 @@ internal fun PhoneSeries(session: Session, anime: Anime, onBack: () -> Unit) {
     }
 }
 
-/** The episode "Ver en TV" offers: in progress, else the next of the same kind, else the newest or the first. */
+/** The episode "Watch on TV" offers: in progress, else the next of the same kind, else the newest or the first. */
 private fun suggestedEpisode(series: Series, entry: HistoryEntry?, anime: Anime): Episode? {
     if (entry == null) return series.episodes.firstOrNull { it.number == anime.episode } ?: series.episodes.firstOrNull()
     if (!entry.isCompleted) return series.episodes.firstOrNull { it.number == entry.episode }
@@ -478,7 +482,7 @@ private fun PrimaryAction(
         if (!entry.isCompleted) {
             Button(onClick = { onResume(watchedEpisode, entry.serverName, playKind) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(icon, null)
-                Text(" Continuar episodio ${entry.episode} · ${formatTime(entry.positionSeconds)}")
+                Text(" " + stringResource(R.string.continue_episode_at, entry.episode, formatTime(entry.positionSeconds)))
             }
             return
         }
@@ -486,7 +490,7 @@ private fun PrimaryAction(
         if (next != null) {
             Button(onClick = { onResume(next, entry.serverName, kind) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(icon, null)
-                Text(" Ver episodio ${next.number} · siguiente")
+                Text(" " + stringResource(R.string.watch_episode_next, next.number))
             }
             return
         }
@@ -497,23 +501,23 @@ private fun PrimaryAction(
             ?.let { index -> series.seasons.drop(index + 1) }.orEmpty()
         val nextSeason = following.firstOrNull { !extraSeason.containsMatchIn(it.title) } ?: following.firstOrNull()
         if (finished && nextSeason != null) {
-            Button(onClick = { onSeason(nextSeason) }, modifier = Modifier.fillMaxWidth()) { Text("Ver ${nextSeason.displayLabel}") }
+            Button(onClick = { onSeason(nextSeason) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.watch_season, nextSeason.displayLabel)) }
         }
         Text(
-            if (finished) "Serie completada · viste los ${entry.episode} episodios"
-            else "Estás al día: viste el episodio ${entry.episode}. Aparecerá aquí cuando salga el siguiente en ${if (kind == "dub") "Dub" else "Sub"}.",
+            if (finished) pluralStringResource(R.plurals.series_completed, entry.episode, entry.episode)
+            else stringResource(R.string.up_to_date_phone, entry.episode, if (kind == "dub") "Dub" else "Sub"),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         FilledTonalButton(onClick = { onResume(watchedEpisode, entry.serverName, playKind) }, modifier = Modifier.fillMaxWidth()) {
-            Text("Volver a ver el episodio ${entry.episode}")
+            Text(stringResource(R.string.rewatch, entry.episode))
         }
         return
     }
     val first = series.episodes.firstOrNull { it.number == anime.episode } ?: series.episodes.firstOrNull() ?: return
     Button(onClick = { onOpen(first) }, modifier = Modifier.fillMaxWidth()) {
         Icon(icon, null)
-        Text(if (first.number == anime.episode) " Ver episodio ${first.number} (nuevo)" else " Empezar con el episodio ${first.number}")
+        Text(" " + if (first.number == anime.episode) stringResource(R.string.watch_episode_new, first.number) else stringResource(R.string.start_with_episode, first.number))
     }
 }
 
@@ -524,7 +528,7 @@ internal fun PhoneServerPicker(episode: Episode, servers: List<Server>, defaultK
     var selected by remember { mutableStateOf(if (servers.any { it.type == defaultKind }) defaultKind else servers.firstOrNull()?.type ?: "sub") }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Episodio ${episode.number}", style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.episode_number, episode.number), style = MaterialTheme.typography.titleLarge)
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                 kinds.forEachIndexed { index, value ->
                     SegmentedButton(
@@ -535,13 +539,13 @@ internal fun PhoneServerPicker(episode: Episode, servers: List<Server>, defaultK
                 }
             }
             Text(
-                if (selected == "dub") "Audio en inglés" else "Audio en japonés con subtítulos",
+                stringResource(if (selected == "dub") R.string.audio_english else R.string.audio_japanese),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             val ofKind = servers.filter { it.type == selected }
             if (ofKind.isEmpty()) {
-                Text("Este episodio no publicó fuentes ${if (selected == "dub") "Dub" else "Sub"}.", modifier = Modifier.padding(vertical = 24.dp))
+                Text(stringResource(R.string.no_sources, if (selected == "dub") "Dub" else "Sub"), modifier = Modifier.padding(vertical = 24.dp))
             }
             ofKind.forEach { server ->
                 ListItem(
@@ -571,6 +575,6 @@ private fun translate(context: android.content.Context, text: String) {
         else -> android.content.Intent(android.content.Intent.ACTION_TRANSLATE).putExtra(android.content.Intent.EXTRA_TEXT, text)
     }
     runCatching { context.startActivity(intent) }.onFailure {
-        android.widget.Toast.makeText(context, "Instala Google Translate para traducir la sinopsis.", android.widget.Toast.LENGTH_LONG).show()
+        android.widget.Toast.makeText(context, context.getString(R.string.install_translate), android.widget.Toast.LENGTH_LONG).show()
     }
 }

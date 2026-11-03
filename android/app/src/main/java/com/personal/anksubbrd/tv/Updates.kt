@@ -23,6 +23,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.IntentCompat
@@ -45,7 +46,7 @@ import okhttp3.Request
 import org.json.JSONArray
 
 private const val APK_NAME = "AniBridgePlayer-TV.apk"
-private const val UNKNOWN_APPS_SETTING = "Instalar apps desconocidas"
+private val unknownAppsSetting: String get() = Strings.get(R.string.unknown_apps_setting)
 private const val MAX_APK_BYTES = 200L * 1024 * 1024
 private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS).followSslRedirects(false).build()
@@ -63,11 +64,11 @@ private fun newer(a: List<Int>, b: List<Int>): Boolean =
 // Android-only releases deliberately do not replace GitHub's iOS "latest".
 // Find the newest stable release containing an APK instead.
 internal suspend fun findUpdate(installed: String): TVUpdate? = withContext(Dispatchers.IO) {
-    val current = versionOf(installed) ?: error("Versión instalada desconocida")
+    val current = versionOf(installed) ?: error(Strings.get(R.string.update_unknown_version))
     val request = Request.Builder().url("https://api.github.com/repos/rsilva48/anksubbrd/releases?per_page=100")
         .header("Accept", "application/vnd.github+json").build()
     http.newCall(request).execute().use { response ->
-        if (!response.isSuccessful) error("GitHub respondió ${response.code}")
+        if (!response.isSuccessful) error(Strings.get(R.string.update_github_status, response.code))
         val releases = JSONArray(response.body.string())
         var latest: TVUpdate? = null
         for (i in 0 until releases.length()) {
@@ -98,9 +99,9 @@ internal suspend fun downloadUpdate(context: Context, update: TVUpdate): File = 
     try {
         val digest = MessageDigest.getInstance("SHA-256")
         http.newCall(Request.Builder().url(update.url).build()).execute().use { response ->
-            if (!response.isSuccessful) error("No se pudo descargar el APK (${response.code})")
+            if (!response.isSuccessful) error(Strings.get(R.string.update_download_failed, response.code))
             val body = response.body
-            if (body.contentLength() > MAX_APK_BYTES) error("El APK es demasiado grande")
+            if (body.contentLength() > MAX_APK_BYTES) error(Strings.get(R.string.update_too_large))
             var total = 0L
             body.byteStream().use { input -> file.outputStream().use { output ->
                 val buffer = ByteArray(32 * 1024)
@@ -108,14 +109,14 @@ internal suspend fun downloadUpdate(context: Context, update: TVUpdate): File = 
                     val count = input.read(buffer)
                     if (count < 0) break
                     total += count
-                    if (total > MAX_APK_BYTES) error("El APK es demasiado grande")
+                    if (total > MAX_APK_BYTES) error(Strings.get(R.string.update_too_large))
                     digest.update(buffer, 0, count)
                     output.write(buffer, 0, count)
                 }
             } }
         }
         val actual = digest.digest().joinToString("") { "%02x".format(it) }
-        if (actual != update.digest) error("El APK no coincide con la huella publicada por GitHub")
+        if (actual != update.digest) error(Strings.get(R.string.update_digest_mismatch))
         file
     } catch (e: Exception) {
         file.delete()
@@ -159,9 +160,11 @@ class UpdateResultReceiver : BroadcastReceiver() {
                 context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
             PackageInstaller.STATUS_SUCCESS -> installFailure.value = null
-            PackageInstaller.STATUS_FAILURE_ABORTED -> installFailure.value = "Instalación cancelada."
-            else -> installFailure.value = "No se pudo instalar: " +
-                (intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "error desconocido")
+            PackageInstaller.STATUS_FAILURE_ABORTED -> installFailure.value = context.getString(R.string.install_cancelled)
+            else -> installFailure.value = context.getString(
+                R.string.install_failed,
+                intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: context.getString(R.string.unknown_error),
+            )
         }
     }
 }
@@ -182,7 +185,7 @@ fun TVUpdateControl() {
         try {
             installUpdate(context, downloadUpdate(context, candidate))
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { message = "No se pudo instalar: ${e.message}" }
+        catch (e: Exception) { message = context.getString(R.string.install_failed, e.message.orEmpty()) }
         finally { busy = false }
     }
 
@@ -192,7 +195,7 @@ fun TVUpdateControl() {
         awaitingPermission?.let { candidate ->
             awaitingPermission = null
             if (context.packageManager.canRequestPackageInstalls()) scope.launch { install(candidate) }
-            else message = "Todavía no está permitido. " + specialAccessHint(context, UNKNOWN_APPS_SETTING)
+            else message = context.getString(R.string.not_allowed_yet, specialAccessHint(context, unknownAppsSetting))
         }
         onPauseOrDispose { }
     }
@@ -203,9 +206,9 @@ fun TVUpdateControl() {
             val current = context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
             update = findUpdate(current)
             if (update != null) { message = null; show = true }
-            else if (manual) { message = "No hay una actualización disponible."; show = true }
+            else if (manual) { message = context.getString(R.string.no_update); show = true }
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { if (manual) { message = "No se pudo buscar: ${e.message}"; show = true } }
+        catch (e: Exception) { if (manual) { message = context.getString(R.string.check_failed, e.message.orEmpty()); show = true } }
         finally { busy = false }
     }
 
@@ -224,24 +227,24 @@ fun TVUpdateControl() {
         }
     }
     OutlinedButton(onClick = { scope.launch { check(true) } }, enabled = !busy) {
-        Text(if (busy) "Buscando…" else "Actualizaciones")
+        Text(stringResource(if (busy) R.string.checking else R.string.updates))
     }
     if (show) Dialog(onDismissRequest = { if (!busy) show = false }) {
         Surface(shape = RoundedCornerShape(24.dp)) {
             Column(Modifier.padding(32.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(update?.let { "Actualización ${it.tag}" } ?: "Actualizaciones", style = MaterialTheme.typography.titleLarge)
-                Text(message ?: "Hay una versión nueva para Android TV. Android pedirá confirmar la instalación.")
+                Text(update?.let { stringResource(R.string.update_title, it.tag) } ?: stringResource(R.string.updates), style = MaterialTheme.typography.titleLarge)
+                Text(message ?: stringResource(R.string.update_available_tv))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     update?.let { candidate ->
                         Button(enabled = !busy, onClick = {
                             if (!context.packageManager.canRequestPackageInstalls()) {
-                                message = "Android pide permitir que esta app instale actualizaciones. " + specialAccessHint(context, UNKNOWN_APPS_SETTING)
+                                message = context.getString(R.string.install_permission_needed, specialAccessHint(context, unknownAppsSetting))
                                 if (openSpecialAccess(context, Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)) awaitingPermission = candidate
-                                else message = "No se pudo abrir «$UNKNOWN_APPS_SETTING» en Ajustes."
+                                else message = context.getString(R.string.open_setting_failed, unknownAppsSetting)
                             } else scope.launch { install(candidate) }
-                        }) { Text(if (busy) "Descargando…" else "Instalar") }
+                        }) { Text(stringResource(if (busy) R.string.downloading else R.string.install)) }
                     }
-                    OutlinedButton(enabled = !busy, onClick = { show = false }) { Text("Cerrar") }
+                    OutlinedButton(enabled = !busy, onClick = { show = false }) { Text(stringResource(R.string.close)) }
                 }
             }
         }

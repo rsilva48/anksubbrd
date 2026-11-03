@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -68,16 +69,26 @@ data class CatalogFilters(
 }
 
 /** Episode-count presets: typing numbers with a TV remote is slow. */
-enum class EpisodeRange(val label: String, val min: Int?, val max: Int?) {
-    Single("1 (película o especial)", 1, 1),
-    Short("2 a 13", 2, 13),
-    Season("12 a 26", 12, 26),
-    Long("24 a 52", 24, 52),
-    VeryLong("50 o más", 50, null),
+enum class EpisodeRange(val min: Int, val max: Int?) {
+    Single(1, 1),
+    Short(2, 13),
+    Season(12, 26),
+    Long(24, 52),
+    VeryLong(50, null);
+
+    val label: String
+        get() = when {
+            this == Single -> Strings.get(R.string.episodes_single)
+            max == null -> Strings.get(R.string.episodes_at_least, min)
+            else -> Strings.get(R.string.episodes_range, min, max)
+        }
 }
 
+/** An option; the bridge sends `label` in Spanish and `labelEn` in English. */
 @Serializable
-data class FilterOption(val id: String, val label: String, val adult: Boolean = false)
+data class FilterOption(val id: String, val label: String, val adult: Boolean = false, val labelEn: String? = null) {
+    val displayLabel: String get() = if (Strings.spanish) label else labelEn ?: label
+}
 
 /** Option lists published by the bridge; genre ids belong to the catalog. */
 @Serializable
@@ -89,8 +100,13 @@ data class CatalogFilterOptions(
 )
 
 internal object BuiltInFilters {
-    val seasons = listOf("winter" to "Invierno", "spring" to "Primavera", "summer" to "Verano", "fall" to "Otoño").map { FilterOption(it.first, it.second) }
-    val statuses = listOf("currently-airing" to "En emisión", "finished-airing" to "Finalizado", "not-yet-aired" to "Próximamente").map { FilterOption(it.first, it.second) }
+    // Labels in the app's language.
+    val seasons: List<FilterOption>
+        get() = listOf("winter" to R.string.season_winter, "spring" to R.string.season_spring, "summer" to R.string.season_summer, "fall" to R.string.season_fall)
+            .map { FilterOption(it.first, Strings.get(it.second)) }
+    val statuses: List<FilterOption>
+        get() = listOf("currently-airing" to R.string.status_airing, "finished-airing" to R.string.status_finished, "not-yet-aired" to R.string.status_upcoming)
+            .map { FilterOption(it.first, Strings.get(it.second)) }
     val ratings = listOf("G", "PG", "PG-13", "R", "R+", "Rx").map { FilterOption(it, it) }
     // For bridges without the option lists.
     val mediaTypes = listOf("TV", "Movie", "ONA", "OVA", "Special").map { FilterOption(it, it) }
@@ -98,14 +114,14 @@ internal object BuiltInFilters {
         get() = (Calendar.getInstance().get(Calendar.YEAR) + 1 downTo 1980).map { FilterOption(it.toString(), it.toString()) }
 }
 
-/** Short description of the active filters, shown next to the Filtros button. */
+/** Short description of the active filters, shown next to the Filters button. */
 fun CatalogFilters.summary(options: CatalogFilterOptions?): String {
-    fun labels(values: Set<String>, list: List<FilterOption>) = list.filter { it.id in values }.map { it.label }
+    fun labels(values: Set<String>, list: List<FilterOption>) = list.filter { it.id in values }.map { it.displayLabel }
     val parts = labels(genres, options?.genres.orEmpty()) + labels(seasons, BuiltInFilters.seasons) + years.sortedDescending() +
         labels(statuses, BuiltInFilters.statuses) + labels(mediaTypes, options?.mediaTypes ?: BuiltInFilters.mediaTypes) +
         labels(sources, options?.sources.orEmpty()) + ratings.sorted() + listOfNotNull(
-            options?.sorts?.firstOrNull { it.id == sort }?.label,
-            episodes?.let { "${it.label} episodios" },
+            options?.sorts?.firstOrNull { it.id == sort }?.displayLabel,
+            episodes?.let { Strings.get(R.string.filters_summary_episodes, it.label) },
             minimumScore.takeIf { it > 0 }?.let { "★ $it+" },
         )
     return parts.joinToString(" · ")
@@ -113,7 +129,7 @@ fun CatalogFilters.summary(options: CatalogFilterOptions?): String {
 
 /**
  * Full-screen filter picker: one row of chips per category, navigable with
- * the D-pad. Choices apply only with "Aplicar".
+ * the D-pad. Choices apply only with "Apply".
  */
 @Composable
 fun CatalogFiltersDialog(
@@ -134,7 +150,7 @@ fun CatalogFiltersDialog(
                 list.filter { !(hideAdult && it.adult) }.forEach { option ->
                     FilterChip(selected = option.id in selected, onClick = {
                         update(if (option.id in selected) selected - option.id else selected + option.id)
-                    }) { Text(option.label) }
+                    }) { Text(option.displayLabel) }
                 }
             }
         }
@@ -155,35 +171,37 @@ fun CatalogFiltersDialog(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(Modifier.fillMaxSize().background(Color(0xFF0B0B12)).padding(horizontal = 64.dp, vertical = 40.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Filtros", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(end = 24.dp))
-                Button(onClick = { onApply(draft) }) { Text("Aplicar") }
-                OutlinedButton(onClick = { draft = CatalogFilters() }, enabled = draft.isActive) { Text("Limpiar") }
-                OutlinedButton(onClick = onDismiss) { Text("Cancelar") }
+                Text(stringResource(R.string.filters), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(end = 24.dp))
+                Button(onClick = { onApply(draft) }) { Text(stringResource(R.string.apply)) }
+                OutlinedButton(onClick = { draft = CatalogFilters() }, enabled = draft.isActive) { Text(stringResource(R.string.clear)) }
+                OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
             }
             Text(
-                "Puedes elegir varias opciones en cada filtro: aparecen las series que cumplan cualquiera de ellas.",
+                stringResource(R.string.filters_hint_tv),
                 color = Color.White.copy(alpha = 0.6f),
             )
+            val any = stringResource(R.string.filter_any)
+            val defaultSort = stringResource(R.string.filter_sort_default)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(24.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
-                item { Section("Género", options?.genres.orEmpty(), draft.genres) { draft = draft.copy(genres = it) } }
-                item { Section("Temporada", BuiltInFilters.seasons, draft.seasons) { draft = draft.copy(seasons = it) } }
-                item { Section("Año", BuiltInFilters.years, draft.years) { draft = draft.copy(years = it) } }
-                item { Section("Estado", BuiltInFilters.statuses, draft.statuses) { draft = draft.copy(statuses = it) } }
-                item { Section("Tipo", options?.mediaTypes ?: BuiltInFilters.mediaTypes, draft.mediaTypes) { draft = draft.copy(mediaTypes = it) } }
-                item { Section("Origen", options?.sources.orEmpty(), draft.sources) { draft = draft.copy(sources = it) } }
-                item { Section("Clasificación", BuiltInFilters.ratings, draft.ratings) { draft = draft.copy(ratings = it) } }
+                item { Section(stringResource(R.string.filter_genre), options?.genres.orEmpty(), draft.genres) { draft = draft.copy(genres = it) } }
+                item { Section(stringResource(R.string.filter_season), BuiltInFilters.seasons, draft.seasons) { draft = draft.copy(seasons = it) } }
+                item { Section(stringResource(R.string.filter_year), BuiltInFilters.years, draft.years) { draft = draft.copy(years = it) } }
+                item { Section(stringResource(R.string.filter_status), BuiltInFilters.statuses, draft.statuses) { draft = draft.copy(statuses = it) } }
+                item { Section(stringResource(R.string.filter_type), options?.mediaTypes ?: BuiltInFilters.mediaTypes, draft.mediaTypes) { draft = draft.copy(mediaTypes = it) } }
+                item { Section(stringResource(R.string.filter_source), options?.sources.orEmpty(), draft.sources) { draft = draft.copy(sources = it) } }
+                item { Section(stringResource(R.string.filter_rating), BuiltInFilters.ratings, draft.ratings) { draft = draft.copy(ratings = it) } }
                 if (options != null) item {
-                    SingleChoice("Episodios", listOf<EpisodeRange?>(null) .plus(EpisodeRange.entries).map { it to (it?.label ?: "Cualquiera") }, draft.episodes) {
+                    SingleChoice(stringResource(R.string.filter_episodes), listOf<EpisodeRange?>(null) .plus(EpisodeRange.entries).map { it to (it?.label ?: any) }, draft.episodes) {
                         draft = draft.copy(episodes = it)
                     }
                 }
                 item {
-                    SingleChoice("Puntuación mínima", listOf(0, 5, 6, 7, 8, 9).map { it to if (it == 0) "Cualquiera" else "$it.0+" }, draft.minimumScore) {
+                    SingleChoice(stringResource(R.string.filter_min_score), listOf(0, 5, 6, 7, 8, 9).map { it to if (it == 0) any else "$it.0+" }, draft.minimumScore) {
                         draft = draft.copy(minimumScore = it)
                     }
                 }
                 if (options != null && options.sorts.isNotEmpty()) item {
-                    SingleChoice("Ordenar por", listOf("" to "Predeterminado") + options.sorts.map { it.id to it.label }, draft.sort) {
+                    SingleChoice(stringResource(R.string.filter_sort), listOf("" to defaultSort) + options.sorts.map { it.id to it.displayLabel }, draft.sort) {
                         draft = draft.copy(sort = it)
                     }
                 }

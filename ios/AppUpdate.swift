@@ -95,7 +95,7 @@ final class AppUpdateCenter {
         defer { isChecking = false }
         do {
             guard let installed = Self.parse(Self.installedVersion) else {
-                statusMessage = "Esta compilación (\(Self.installedVersion)) no tiene una versión de release."
+                statusMessage = String(localized: "Esta compilación (\(Self.installedVersion)) no tiene una versión de release.")
                 return
             }
             let newer = try await fetchReleases()
@@ -105,18 +105,18 @@ final class AppUpdateCenter {
                 }
                 .sorted { ($1.version ?? []).lexicographicallyPrecedes($0.version ?? []) }
             guard let latest = newer.first else {
-                statusMessage = "Tienes la versión más reciente (\(Self.installedVersion))."
+                statusMessage = String(localized: "Tienes la versión más reciente (\(Self.installedVersion)).")
                 return
             }
-            statusMessage = "Disponible la versión \(latest.tagName)."
+            statusMessage = String(localized: "Disponible la versión \(latest.tagName).")
             if !userInitiated, UserDefaults.standard.string(forKey: Self.skippedVersionKey) == latest.tagName { return }
             pendingUpdate = AvailableUpdate(releases: newer)
         } catch is CancellationError {
             return
         } catch {
             statusMessage = NetworkStatus.shared.isOnline
-                ? "No se pudo consultar GitHub: \(error.localizedDescription)"
-                : "Sin conexión: no se pudo buscar actualizaciones."
+                ? String(localized: "No se pudo consultar GitHub: \(error.localizedDescription)")
+                : String(localized: "Sin conexión: no se pudo buscar actualizaciones.")
         }
     }
 

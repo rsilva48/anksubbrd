@@ -59,7 +59,7 @@ final class PlaybackResolver {
                 guard let match = reply.servers.first(where: { $0.name == preferredName && $0.kind == wanted })
                     ?? reply.servers.first(where: { $0.kind == wanted })
                     ?? reply.servers.first else {
-                    throw BridgeRequestError(message: "El episodio \(episode.number) no publicó servidores.")
+                    throw BridgeRequestError(message: String(localized: "El episodio \(episode.number) no publicó servidores."))
                 }
                 chosen = match
             }
@@ -163,8 +163,8 @@ struct EpisodesScreen: View {
             if isOffline {
                 Section {
                     Label(profile.isOnline
-                          ? "No se pudo conectar con el bridge. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados."
-                          : "Sin conexión. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados.",
+                          ? String(localized: "No se pudo conectar con el bridge. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados.")
+                          : String(localized: "Sin conexión. Se muestran los datos guardados y sólo se pueden reproducir los episodios descargados."),
                           systemImage: "wifi.slash")
                         .font(.footnote)
                     Button("Reintentar") { Task { await loadSeries() } }
@@ -296,9 +296,9 @@ struct EpisodesScreen: View {
 
     private func episodeCountLine(_ series: Series) -> String {
         if let total = series.totalEpisodes, total > series.episodes.count {
-            return "\(series.episodes.count) de \(total) episodios"
+            return String(localized: "\(series.episodes.count) de \(total) episodios")
         }
-        return "\(series.episodes.count) episodios"
+        return String(localized: "\(series.episodes.count) episodios")
     }
 
     /// The season that follows this one in the watch order, skipping extras
@@ -317,7 +317,7 @@ struct EpisodesScreen: View {
                let episode = series.episodes.first(where: { $0.number == entry.episode }) {
                 let kind = entry.kind ?? profile.preferences.defaultTrack
                 if !entry.isCompleted {
-                    actionButton("Continuar episodio \(entry.episode) · \(formatTime(entry.positionSeconds))", systemImage: playSymbol) {
+                    actionButton(String(localized: "Continuar episodio \(entry.episode) · \(formatTime(entry.positionSeconds))"), systemImage: playSymbol) {
                         if !playOnTV(episode) {
                             start { try await $0.session(for: episode, preferredName: entry.serverName, kind: entry.kind) }
                         }
@@ -325,7 +325,7 @@ struct EpisodesScreen: View {
                 } else if let next = series.episode(after: entry.episode, kind: kind) {
                     // Finished episodes never reopen on their last second:
                     // the next one with the same Sub/Dub kind starts instead.
-                    actionButton("Ver episodio \(next.number) · siguiente", systemImage: playSymbol) {
+                    actionButton(String(localized: "Ver episodio \(next.number) · siguiente"), systemImage: playSymbol) {
                         if !playOnTV(next) {
                             start { try await $0.session(for: next, preferredName: entry.serverName, kind: kind) }
                         }
@@ -333,12 +333,14 @@ struct EpisodesScreen: View {
                 } else {
                     let finished = isFinalEpisode(entry.episode, totalEpisodes: series.totalEpisodes, status: series.status, latestEpisode: series.episodes.last?.number)
                     if finished, let nextSeason = followingSeason {
-                        actionButton("Ver \(label(for: nextSeason))", systemImage: "forward.fill") {
+                        actionButton(String(localized: "Ver \(label(for: nextSeason))"), systemImage: "forward.fill") {
                             selectedSeasonURL = nextSeason.watchUrl
                         }
                     }
                     Label(
-                        finished ? "Serie completada · viste los \(entry.episode) episodios" : "Estás al día: viste el episodio \(entry.episode). Aparecerá aquí cuando salga el siguiente en \(kind.displayName).",
+                        finished
+                            ? String(localized: "Serie completada · viste los \(entry.episode) episodios")
+                            : String(localized: "Estás al día: viste el episodio \(entry.episode). Aparecerá aquí cuando salga el siguiente en \(kind.displayName)."),
                         systemImage: "checkmark.circle.fill"
                     )
                     .font(.subheadline)
@@ -357,7 +359,7 @@ struct EpisodesScreen: View {
                 Button {
                     open(episode)
                 } label: {
-                    Label(episode.number == latestEpisode ? "Ver episodio \(episode.number) (nuevo)" : "Empezar con el episodio \(episode.number)", systemImage: playSymbol)
+                    Label(episode.number == latestEpisode ? String(localized: "Ver episodio \(episode.number) (nuevo)") : String(localized: "Empezar con el episodio \(episode.number)"), systemImage: playSymbol)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glassProminent)
@@ -417,7 +419,7 @@ struct EpisodesScreen: View {
                         chooseServer(for: episode)
                     }
                     if let record = downloads.record(watchUrl: current.watchUrl, episode: episode.number) {
-                        Button(record.state == .downloading ? "Cancelar descarga" : "Borrar descarga", systemImage: "trash", role: .destructive) {
+                        Button(record.state == .downloading ? String(localized: "Cancelar descarga") : String(localized: "Borrar descarga"), systemImage: "trash", role: .destructive) {
                             downloads.remove(record)
                         }
                     }
@@ -439,7 +441,7 @@ struct EpisodesScreen: View {
     private func label(for season: Season) -> String {
         if let label = season.localizedLabel { return label }
         let sameNumber = seasons.filter { $0.seasonNumber == season.seasonNumber }.count > 1
-        return sameNumber ? season.anime.displayTitle(language) : "Temporada \(season.seasonNumber)"
+        return sameNumber ? season.anime.displayTitle(language) : String(localized: "Temporada \(season.seasonNumber)")
     }
 
     private func loadSeries() async {
@@ -466,7 +468,7 @@ struct EpisodesScreen: View {
                 seasons = saved.seasons
                 resolver = PlaybackResolver(series: saved, anime: current, profile: profile)
             } else if (error as? BridgeRequestError)?.isOffline == true {
-                errorMessage = "Sin conexión. Esta serie aún no está guardada en el dispositivo: ábrela una vez con conexión para verla sin red. Se cargará sola al volver la conexión."
+                errorMessage = String(localized: "Sin conexión. Esta serie aún no está guardada en el dispositivo: ábrela una vez con conexión para verla sin red. Se cargará sola al volver la conexión.")
             } else {
                 errorMessage = error.localizedDescription
             }
@@ -488,7 +490,7 @@ struct EpisodesScreen: View {
                         requestDownload([episode], kind: record.kind)
                     }
                 }
-                Button(record.state == .downloading ? "Cancelar descarga" : "Borrar descarga", systemImage: "trash", role: .destructive) {
+                Button(record.state == .downloading ? String(localized: "Cancelar descarga") : String(localized: "Borrar descarga"), systemImage: "trash", role: .destructive) {
                     downloads.remove(record)
                 }
             } label: {
@@ -535,7 +537,7 @@ struct EpisodesScreen: View {
         remoteEpisode = episode
         remoteRequest = RemotePlayRequest(
             command: episode.map { RemoteCommand.play(current.watchUrl, episode: $0.number, kind: kind) },
-            title: episode.map { "\(current.displayTitle(language)) · episodio \($0.number)" },
+            title: episode.map { String(localized: "\(current.displayTitle(language)) · episodio \($0.number)") },
             autoplay: autoplay
         )
     }
@@ -570,7 +572,7 @@ struct EpisodesScreen: View {
         return Menu {
             Section("Descargar en \(kind.displayName) para ver sin conexión") {
                 if let next = pending.first {
-                    Button(entry == nil ? "Episodio \(next.number)" : "Episodio \(next.number) · siguiente") {
+                    Button(entry == nil ? String(localized: "Episodio \(next.number)") : String(localized: "Episodio \(next.number) · siguiente")) {
                         requestDownload([next], kind: kind)
                     }
                 }
@@ -580,7 +582,7 @@ struct EpisodesScreen: View {
                     }
                 }
                 if pending.count > 1, let last = pending.last {
-                    Button(entry == nil ? "Serie completa · \(pending.count) episodios" : "Los que faltan · episodios \(pending[0].number) a \(last.number)") {
+                    Button(entry == nil ? String(localized: "Serie completa · \(pending.count) episodios") : String(localized: "Los que faltan · episodios \(pending[0].number) a \(last.number)")) {
                         requestDownload(pending, kind: kind)
                     }
                 }
@@ -599,7 +601,7 @@ struct EpisodesScreen: View {
     private func requestDownload(_ episodes: [Episode], kind: StreamKind) {
         guard let resolver, busyMessage == nil, let first = episodes.first else { return }
         Task {
-            busyMessage = "Cargando servidores del episodio \(first.number)…"
+            busyMessage = String(localized: "Cargando servidores del episodio \(first.number)…")
             defer { busyMessage = nil }
             do {
                 let servers = try await resolver.servers(for: first)
@@ -623,7 +625,7 @@ struct EpisodesScreen: View {
             defer { busyMessage = nil }
             var notes: [String] = []
             for episode in episodes {
-                busyMessage = "Preparando la descarga del episodio \(episode.number)…"
+                busyMessage = String(localized: "Preparando la descarga del episodio \(episode.number)…")
                 do {
                     // The picked server first (it belongs to the first
                     // episode), then any server of the same kind.
@@ -635,17 +637,17 @@ struct EpisodesScreen: View {
                         resolved = try await resolver.downloadSession(for: episode, kind: server.kind, preferredName: server.name, excluding: episode == first ? [server.name] : [])
                     }
                     guard let session = resolved else {
-                        notes.append("Episodio \(episode.number): sin servidores \(server.kind.displayName) disponibles, no se descarga.")
+                        notes.append(String(localized: "Episodio \(episode.number): sin servidores \(server.kind.displayName) disponibles, no se descarga."))
                         continue
                     }
                     if session.playback.serverName != server.name {
-                        notes.append("Episodio \(episode.number): \(server.name) no estaba disponible, se usa \(session.playback.serverName).")
+                        notes.append(String(localized: "Episodio \(episode.number): \(server.name) no estaba disponible, se usa \(session.playback.serverName)."))
                     }
                     await downloads.start(session, triedServers: session.playback.serverName == server.name ? [] : [server.name])
                 } catch is CancellationError {
                     return
                 } catch {
-                    notes.append("Episodio \(episode.number): \(error.localizedDescription)")
+                    notes.append(String(localized: "Episodio \(episode.number): \(error.localizedDescription)"))
                 }
             }
             downloadNotice = notes.isEmpty ? nil : notes.joined(separator: "\n")
@@ -655,7 +657,7 @@ struct EpisodesScreen: View {
     private func chooseServer(for episode: Episode) {
         guard let resolver, busyMessage == nil else { return }
         Task {
-            busyMessage = "Cargando servidores del episodio \(episode.number)…"
+            busyMessage = String(localized: "Cargando servidores del episodio \(episode.number)…")
             defer { busyMessage = nil }
             do {
                 let servers = try await resolver.servers(for: episode)
@@ -677,7 +679,7 @@ struct EpisodesScreen: View {
     private func start(_ resolve: @escaping (PlaybackResolver) async throws -> PlaybackSession) {
         guard let resolver, busyMessage == nil, activePlayer == nil else { return }
         Task {
-            busyMessage = "Preparando reproducción…"
+            busyMessage = String(localized: "Preparando reproducción…")
             defer { busyMessage = nil }
             do {
                 let session = try await resolve(resolver)
@@ -706,7 +708,7 @@ private struct EpisodeRow: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 34, alignment: .leading)
             VStack(alignment: .leading, spacing: 3) {
-                Text(episode.subtitle ?? "Episodio \(episode.number)")
+                Text(episode.subtitle ?? String(localized: "Episodio \(episode.number)"))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
                 if let progress {
@@ -727,7 +729,7 @@ private struct EpisodeRow: View {
             Spacer(minLength: 0)
             Image(systemName: watched ? "checkmark.circle.fill" : "play.circle")
                 .foregroundStyle(watched ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                .accessibilityLabel(watched ? "Visto" : "Reproducir")
+                .accessibilityLabel(watched ? Text("Visto") : Text("Reproducir"))
         }
         .contentShape(Rectangle())
     }
@@ -756,7 +758,7 @@ private struct SynopsisText: View {
                 .textSelection(.enabled)
             HStack(spacing: 16) {
                 if text.count > 220 {
-                    Button(expanded ? "Menos" : "Más") {
+                    Button(expanded ? String(localized: "Menos") : String(localized: "Más")) {
                         withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
                     }
                 }
@@ -766,7 +768,7 @@ private struct SynopsisText: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Button(showsTranslation ? "Ver original" : "Traducir", systemImage: "translate", action: toggleTranslation)
+                        Button(showsTranslation ? String(localized: "Ver original") : String(localized: "Traducir"), systemImage: "translate", action: toggleTranslation)
                     }
                 }
             }
@@ -817,7 +819,7 @@ private struct DownloadRequest: Identifiable {
     var id: Int { choice.id }
 
     var title: String {
-        episodes.count == 1 ? "Descargar episodio \(choice.episode.number)" : "Descargar \(episodes.count) episodios"
+        episodes.count == 1 ? String(localized: "Descargar episodio \(choice.episode.number)") : String(localized: "Descargar \(episodes.count) episodios")
     }
 }
 
@@ -856,7 +858,7 @@ struct ServerPicker: View {
                     }
                 }
             }
-            .navigationTitle(title ?? "Episodio \(choice.episode.number)")
+            .navigationTitle(title ?? String(localized: "Episodio \(choice.episode.number)"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
@@ -212,7 +213,7 @@ internal object PhoneDownloads {
                 helper.prepare(object : DownloadHelper.Callback {
                     override fun onPrepared(helper: DownloadHelper, tracksInfoAvailable: Boolean) = continuation.resume(Unit)
                     override fun onPrepareError(helper: DownloadHelper, e: IOException) =
-                        continuation.resumeWithException(BridgeException("No se pudo preparar la descarga (${e.message})."))
+                        continuation.resumeWithException(BridgeException(Strings.get(R.string.download_prepare_failed, e.message.orEmpty())))
                 })
             }
             // Every subtitle language of the stream, as on iOS.
@@ -235,10 +236,10 @@ internal object PhoneDownloads {
         val info = target.info
         val anime = Anime(title = info.seriesTitle, watchUrl = info.watchUrl, imageUrl = info.imageUrl, titleJp = info.titleJp)
         val series = session.client.series(info.watchUrl)
-        val episode = series.episodes.firstOrNull { it.number == info.episode } ?: throw BridgeException("El episodio ${info.episode} ya no está en el catálogo.")
+        val episode = series.episodes.firstOrNull { it.number == info.episode } ?: throw BridgeException(Strings.get(R.string.episode_gone, info.episode))
         val other = session.client.servers(series.seriesKey, episode.number).firstOrNull { it.type == info.kind && it.name != info.serverName }?.name
         val request = session.resolve(anime, series, episode, info.kind, other ?: info.serverName)
-        if (request.kind != info.kind) throw BridgeException("El episodio ${info.episode} no tiene servidores ${kindLabel(info.kind)}.")
+        if (request.kind != info.kind) throw BridgeException(Strings.get(R.string.episode_no_kind_servers, info.episode, kindLabel(info.kind)))
         remove(context, target)
         start(context, request)
     }
@@ -255,7 +256,7 @@ internal object PhoneDownloads {
 
     fun totalBytes(): Long = all.value.sumOf { it.bytes }
 
-    /** "Borrar descargas ya vistas" (on by default, as on iOS). */
+    /** "Delete watched downloads" (on by default, as on iOS). */
     fun autoDelete(context: Context) = prefs(context).getBoolean(KEY_AUTO_DELETE, true)
 
     fun setAutoDelete(context: Context, value: Boolean) = prefs(context).edit().putBoolean(KEY_AUTO_DELETE, value).apply()
@@ -335,14 +336,14 @@ internal fun rememberDownloads(): State<List<EpisodeDownload>> {
     return state
 }
 
-/** "Descargando · Sub · 45 %", "Sub · server · 230 MB", … */
+/** "Downloading · Sub · server · 45 %", "Sub · server · 230 MB", … */
 internal fun downloadStatus(context: Context, download: EpisodeDownload): String {
     val kind = kindLabel(download.info.kind)
     return when {
         download.isCompleted -> listOf(kind, download.info.serverName, Formatter.formatShortFileSize(context, download.bytes)).joinToString(" · ")
-        download.isFailed -> "No se pudo descargar · $kind · ${download.info.serverName}"
-        download.percent <= 0f -> "Esperando · $kind · ${download.info.serverName}"
-        else -> "Descargando · $kind · ${download.info.serverName} · ${download.percent.toInt()} %"
+        download.isFailed -> context.getString(R.string.status_download_failed, kind, download.info.serverName)
+        download.percent <= 0f -> context.getString(R.string.status_waiting, kind, download.info.serverName)
+        else -> context.getString(R.string.status_downloading, kind, download.info.serverName, download.percent.toInt())
     }
 }
 
@@ -362,7 +363,7 @@ class PhoneDownloadService : DownloadService(
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val title = downloads.firstNotNullOfOrNull { download ->
             runCatching { BridgeClient.json.decodeFromString(DownloadInfo.serializer(), String(download.request.data)) }.getOrNull()
-                ?.let { "${it.seriesTitle} · episodio ${it.episode}" }
+                ?.let { getString(R.string.series_episode, it.seriesTitle, it.episode) }
         }
         return DownloadNotificationHelper(this, PhoneDownloads.notificationChannel())
             .buildProgressNotification(this, android.R.drawable.stat_sys_download, open, title, downloads, notMetRequirements)
@@ -373,7 +374,7 @@ class PhoneDownloadService : DownloadService(
     }
 }
 
-/** The Descargas tab: grouped by series, playable without a connection. */
+/** The Downloads tab: grouped by series, playable without a connection. */
 @Composable
 internal fun PhoneDownloadsScreen(session: Session?, onPlay: (PlaybackRequest) -> Unit) {
     val context = LocalContext.current
@@ -384,7 +385,7 @@ internal fun PhoneDownloadsScreen(session: Session?, onPlay: (PlaybackRequest) -
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("Descargas") },
+            title = { Text(stringResource(R.string.tab_downloads)) },
             actions = {
                 if (downloads.isNotEmpty()) Text(
                     Formatter.formatShortFileSize(context, downloads.sumOf { it.bytes }),
@@ -396,7 +397,7 @@ internal fun PhoneDownloadsScreen(session: Session?, onPlay: (PlaybackRequest) -
         )
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
         if (downloads.isEmpty()) {
-            PhoneMessage("Sin descargas", "En la ficha de una serie, mantén pulsado un episodio para descargarlo con sus subtítulos y verlo sin conexión.")
+            PhoneMessage(stringResource(R.string.no_downloads), stringResource(R.string.no_downloads_text))
             return@Column
         }
         val japanese = session?.japanese == true
@@ -428,12 +429,12 @@ internal fun PhoneDownloadsScreen(session: Session?, onPlay: (PlaybackRequest) -
                             },
                             headlineContent = {
                                 val title = info.episodeTitle.trim().takeUnless { it.isEmpty() || it == "Episode ${info.episode}" }
-                                Text(listOfNotNull("Episodio ${info.episode}", title).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(listOfNotNull(stringResource(R.string.episode_number, info.episode), title).joinToString(" · "), maxLines = 2, overflow = TextOverflow.Ellipsis)
                             },
                             supportingContent = {
                                 Column {
                                     Text(
-                                        listOfNotNull(downloadStatus(context, download), watchedUntil?.let { "Visto hasta ${formatTime(it)}" }).joinToString(" · "),
+                                        listOfNotNull(downloadStatus(context, download), watchedUntil?.let { stringResource(R.string.watched_until, formatTime(it)) }).joinToString(" · "),
                                         color = if (download.isFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     if (download.isActive) {
@@ -442,7 +443,7 @@ internal fun PhoneDownloadsScreen(session: Session?, onPlay: (PlaybackRequest) -
                                     }
                                 }
                             },
-                            trailingContent = { IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Opciones") } },
+                            trailingContent = { IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.options)) } },
                             modifier = Modifier
                                 .alpha(if (download.isCompleted || download.isActive) 1f else 0.7f)
                                 .combinedClickable(
@@ -451,11 +452,11 @@ internal fun PhoneDownloadsScreen(session: Session?, onPlay: (PlaybackRequest) -
                                 ),
                         )
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            if (download.isCompleted && session != null) DropdownMenuItem(text = { Text("Ver sin conexión") }, onClick = {
+                            if (download.isCompleted && session != null) DropdownMenuItem(text = { Text(stringResource(R.string.watch_offline)) }, onClick = {
                                 menu = false
                                 onPlay(PhoneDownloads.playback(download))
                             })
-                            if (download.isFailed && session != null) DropdownMenuItem(text = { Text("Reintentar descarga") }, onClick = {
+                            if (download.isFailed && session != null) DropdownMenuItem(text = { Text(stringResource(R.string.retry_download)) }, onClick = {
                                 menu = false
                                 error = null
                                 scope.launch {
@@ -466,7 +467,7 @@ internal fun PhoneDownloadsScreen(session: Session?, onPlay: (PlaybackRequest) -
                                     }
                                 }
                             })
-                            DropdownMenuItem(text = { Text(if (download.isActive) "Cancelar descarga" else "Borrar descarga") }, onClick = {
+                            DropdownMenuItem(text = { Text(stringResource(if (download.isActive) R.string.cancel_download else R.string.delete_download)) }, onClick = {
                                 menu = false
                                 PhoneDownloads.remove(context, download)
                             })

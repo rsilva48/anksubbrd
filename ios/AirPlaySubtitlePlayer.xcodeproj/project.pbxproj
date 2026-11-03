@@ -23,6 +23,8 @@
 		A10000000000000000000114 /* RemoteControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000214 /* RemoteControl.swift */; };
 		A10000000000000000000115 /* TVNowPlaying.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000215 /* TVNowPlaying.swift */; };
 		A10000000000000000000116 /* IdentityTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000216 /* IdentityTransfer.swift */; };
+		A10000000000000000000311 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000301 /* Localizable.xcstrings */; };
+		A10000000000000000000312 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000302 /* InfoPlist.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -45,6 +47,8 @@
 		A10000000000000000000214 /* RemoteControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteControl.swift; sourceTree = "<group>"; };
 		A10000000000000000000215 /* TVNowPlaying.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TVNowPlaying.swift; sourceTree = "<group>"; };
 		A10000000000000000000216 /* IdentityTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityTransfer.swift; sourceTree = "<group>"; };
+		A10000000000000000000301 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		A10000000000000000000302 /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,7 +57,7 @@
 
 /* Begin PBXGroup section */
 		A10000000000000000000007 = {isa = PBXGroup; children = (A10000000000000000000008 /* AirPlaySubtitlePlayer */, A10000000000000000000009 /* Products */); sourceTree = "<group>"; };
-		A10000000000000000000008 /* AirPlaySubtitlePlayer */ = {isa = PBXGroup; children = (A10000000000000000000201 /* AirPlaySubtitlePlayerApp.swift */, A10000000000000000000202 /* Models.swift */, A10000000000000000000203 /* BridgeClient.swift */, A10000000000000000000204 /* ProfileStore.swift */, A10000000000000000000205 /* SharedViews.swift */, A10000000000000000000206 /* CatalogScreens.swift */, A10000000000000000000207 /* EpisodesScreen.swift */, A10000000000000000000208 /* HistoryScreen.swift */, A10000000000000000000209 /* SettingsScreen.swift */, A10000000000000000000210 /* Player.swift */, A10000000000000000000211 /* AppUpdate.swift */, A10000000000000000000212 /* Downloads.swift */, A10000000000000000000213 /* ReleaseNotifications.swift */, A10000000000000000000214 /* RemoteControl.swift */, A10000000000000000000215 /* TVNowPlaying.swift */, A10000000000000000000216 /* IdentityTransfer.swift */, A10000000000000000000004 /* Info.plist */, A10000000000000000000021 /* Assets.xcassets */); path = .; sourceTree = "<group>"; };
+		A10000000000000000000008 /* AirPlaySubtitlePlayer */ = {isa = PBXGroup; children = (A10000000000000000000201 /* AirPlaySubtitlePlayerApp.swift */, A10000000000000000000202 /* Models.swift */, A10000000000000000000203 /* BridgeClient.swift */, A10000000000000000000204 /* ProfileStore.swift */, A10000000000000000000205 /* SharedViews.swift */, A10000000000000000000206 /* CatalogScreens.swift */, A10000000000000000000207 /* EpisodesScreen.swift */, A10000000000000000000208 /* HistoryScreen.swift */, A10000000000000000000209 /* SettingsScreen.swift */, A10000000000000000000210 /* Player.swift */, A10000000000000000000211 /* AppUpdate.swift */, A10000000000000000000212 /* Downloads.swift */, A10000000000000000000213 /* ReleaseNotifications.swift */, A10000000000000000000214 /* RemoteControl.swift */, A10000000000000000000215 /* TVNowPlaying.swift */, A10000000000000000000216 /* IdentityTransfer.swift */, A10000000000000000000004 /* Info.plist */, A10000000000000000000021 /* Assets.xcassets */, A10000000000000000000301 /* Localizable.xcstrings */, A10000000000000000000302 /* InfoPlist.xcstrings */); path = .; sourceTree = "<group>"; };
 		A10000000000000000000009 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000005 /* AirPlaySubtitlePlayer.app */,); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -62,11 +66,11 @@
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		A10000000000000000000014 /* Project object */ = {isa = PBXProject; attributes = { LastUpgradeCheck = 2600; TargetAttributes = { A10000000000000000000010 = { CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A10000000000000000000015 /* Build configuration list for PBXProject \"AirPlaySubtitlePlayer\" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = es; hasScannedForEncodings = 0; knownRegions = (es, Base,); mainGroup = A10000000000000000000007; productRefGroup = A10000000000000000000009 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A10000000000000000000010 /* AirPlaySubtitlePlayer */,); };
+		A10000000000000000000014 /* Project object */ = {isa = PBXProject; attributes = { LastUpgradeCheck = 2600; TargetAttributes = { A10000000000000000000010 = { CreatedOnToolsVersion = 16.0; }; }; }; buildConfigurationList = A10000000000000000000015 /* Build configuration list for PBXProject \"AirPlaySubtitlePlayer\" */; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, es, Base,); mainGroup = A10000000000000000000007; productRefGroup = A10000000000000000000009 /* Products */; projectDirPath = ""; projectRoot = ""; targets = (A10000000000000000000010 /* AirPlaySubtitlePlayer */,); };
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A10000000000000000000013 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000020 /* Assets.xcassets in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000013 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000020 /* Assets.xcassets in Resources */, A10000000000000000000311 /* Localizable.xcstrings in Resources */, A10000000000000000000312 /* InfoPlist.xcstrings in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */

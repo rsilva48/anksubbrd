@@ -43,7 +43,7 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
     }
 
     fun initialLoadTimedOut() {
-        if (history.isEmpty()) historyError = "No se pudo cargar el historial. Comprueba la conexión con el bridge."
+        if (history.isEmpty()) historyError = Strings.get(R.string.history_load_failed)
     }
 
     suspend fun refresh() {
@@ -120,7 +120,7 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
         val servers = retrying { client.servers(it.seriesKey, episode.number) }
         val ofKind = servers.filter { it.type == kind }
         val ordered = ofKind.filter { it.name == preferredServer } + ofKind.filter { it.name != preferredServer } + servers.filter { it.type != kind }
-        if (ordered.isEmpty()) throw BridgeException("El episodio ${episode.number} no publicó servidores.")
+        if (ordered.isEmpty()) throw BridgeException(Strings.get(R.string.no_servers, episode.number))
         var lastError: Exception? = null
         for (server in ordered) {
             try {
@@ -131,6 +131,6 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
                 lastError = error
             }
         }
-        throw lastError ?: BridgeException("No se pudo abrir el episodio ${episode.number}.")
+        throw lastError ?: BridgeException(Strings.get(R.string.open_episode_failed_short, episode.number))
     }
 }

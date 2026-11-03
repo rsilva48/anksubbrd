@@ -563,25 +563,73 @@ function pendingPairing(code) {
 // opens /setup?code=…, where the person pastes an existing token or, the
 // first time, the administrator token to create an identity. The
 // administrator token is only checked, never stored; each code allows a few
-// attempts.
-async function completeSetup(fields) {
+// attempts. The page is in Spanish or English, after the browser's language.
+const setupStrings = {
+  es: {
+    lang: 'es', profile: 'Perfil',
+    expired: 'El código caducó o ya se usó. Abre de nuevo el código QR en la TV.',
+    tooMany: 'Demasiados intentos con este código. Abre un código nuevo en la TV.',
+    noAdmin: 'Este bridge no tiene token administrador configurado.',
+    badAdmin: 'El token administrador no es válido.',
+    badToken: 'Ese token no corresponde a ninguna identidad de este bridge.',
+    expiredTitle: 'Código caducado', linkTitle: 'Vincular la TV', doneTitle: 'Listo', failedTitle: 'No se pudo vincular',
+    done: (label) => `La TV ya tiene el perfil «${label}». Puedes cerrar esta página.`,
+    doneNote: 'Para guardar este perfil en otro dispositivo, usa «Llevar al teléfono» en los perfiles de la TV.',
+    nameLabel: 'Nombre del perfil en la TV', namePlaceholder: 'Por ejemplo, tu nombre',
+    haveApp: '¿Tienes AniBridge Player en este teléfono?',
+    haveAppNote: 'La TV usará la identidad de la app: el mismo historial y las mismas preferencias.',
+    openApp: 'Abrir en la app',
+    existing: 'Usar una identidad existente', tokenLabel: 'Token de 64 caracteres', link: 'Vincular la TV',
+    create: 'Crear una identidad nueva',
+    createNote: 'La primera vez, con el token administrador del bridge. Sólo se usa para crear la identidad: no se guarda. Después, la TV puede crear más perfiles sin él.',
+    adminLabel: 'Token administrador', createAndLink: 'Crear y vincular la TV',
+    expiresNote: 'El código caduca en 10 minutos.',
+  },
+  en: {
+    lang: 'en', profile: 'Profile',
+    expired: 'The code expired or was already used. Open the QR code on the TV again.',
+    tooMany: 'Too many attempts with this code. Open a new code on the TV.',
+    noAdmin: 'This bridge has no administrator token configured.',
+    badAdmin: 'The administrator token is not valid.',
+    badToken: 'That token does not belong to any identity on this bridge.',
+    expiredTitle: 'Code expired', linkTitle: 'Link the TV', doneTitle: 'Done', failedTitle: 'Could not link',
+    done: (label) => `The TV now has the profile “${label}”. You can close this page.`,
+    doneNote: 'To keep this profile on another device, use “Take to phone” in the TV’s profiles.',
+    nameLabel: 'Profile name on the TV', namePlaceholder: 'For example, your name',
+    haveApp: 'Do you have AniBridge Player on this phone?',
+    haveAppNote: 'The TV will use the app’s identity: the same history and the same preferences.',
+    openApp: 'Open in the app',
+    existing: 'Use an existing identity', tokenLabel: '64-character token', link: 'Link the TV',
+    create: 'Create a new identity',
+    createNote: 'The first time, with the bridge’s administrator token. It is only used to create the identity and is not stored. Afterwards, the TV can create more profiles without it.',
+    adminLabel: 'Administrator token', createAndLink: 'Create and link the TV',
+    expiresNote: 'The code expires in 10 minutes.',
+  },
+};
+// The first of the browser's languages that the page has; English otherwise.
+function setupLanguage(request) {
+  const languages = String(request?.headers?.['accept-language'] ?? '').split(',')
+    .map((part) => part.trim().split(';')[0].slice(0, 2).toLowerCase());
+  return setupStrings[languages.find((language) => setupStrings[language]) ?? 'en'];
+}
+async function completeSetup(fields, text = setupStrings.es) {
   const pairing = pendingPairing(fields.code);
-  if (!pairing) throw new HttpError(404, 'El código caducó o ya se usó. Abre de nuevo el código QR en la TV.');
+  if (!pairing) throw new HttpError(404, text.expired);
   pairing.attempts = (pairing.attempts ?? 0) + 1;
   if (pairing.attempts > 5) {
     pairing.expiresAt = 0;
-    throw new HttpError(429, 'Demasiados intentos con este código. Abre un código nuevo en la TV.');
+    throw new HttpError(429, text.tooMany);
   }
-  const label = historyText(fields.label, 'Perfil', 40);
+  const label = historyText(fields.label, text.profile, 40);
   let token;
   if (fields.mode === 'create') {
-    if (!bridgeAdminToken) throw new HttpError(409, 'Este bridge no tiene token administrador configurado.');
-    if (!sameSecret(cleanText(fields.adminToken), bridgeAdminToken)) throw new HttpError(401, 'El token administrador no es válido.');
+    if (!bridgeAdminToken) throw new HttpError(409, text.noAdmin);
+    if (!sameSecret(cleanText(fields.adminToken), bridgeAdminToken)) throw new HttpError(401, text.badAdmin);
     token = randomBytes(32).toString('hex');
     await registerUser(token, label);
   } else {
     token = cleanText(fields.token).toLowerCase();
-    if (!validUserToken(token) || !(await userForToken(token))) throw new HttpError(401, 'Ese token no corresponde a ninguna identidad de este bridge.');
+    if (!validUserToken(token) || !(await userForToken(token))) throw new HttpError(401, text.badToken);
   }
   approvePairing(fields.code, label, { token });
   return { label };
@@ -590,7 +638,7 @@ async function completeSetup(fields) {
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
-function setupPage(response, status, title, content) {
+function setupPage(response, status, title, content, text = setupStrings.es) {
   response.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -598,19 +646,19 @@ function setupPage(response, status, title, content) {
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   });
-  response.end(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
+  response.end(`<!doctype html><html lang="${text.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px;background:#0b0b12;color:#eee}main{max-width:520px;margin:auto}h1{font-size:1.5rem}section{background:#1a1a26;border-radius:16px;padding:16px;margin:16px 0}label{display:block;margin:10px 0 4px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #444;background:#0b0b12;color:#eee;font:inherit}button,a.button{display:block;width:100%;box-sizing:border-box;margin-top:14px;padding:12px;border:0;border-radius:10px;background:#6366f1;color:#fff;font:inherit;text-align:center;text-decoration:none}p.note{color:#aaa;font-size:.9rem}p.error{color:#fca5a5}</style>
 </head><body><main><h1>${escapeHtml(title)}</h1>${content}</main></body></html>`);
 }
-function setupForm(request, code, error = '') {
+function setupForm(request, code, error = '', text = setupStrings.es) {
   const app = `anksubbrd://pair?bridge=${encodeURIComponent(requestOrigin(request))}&code=${encodeURIComponent(code)}`;
   const hidden = `<input type="hidden" name="code" value="${escapeHtml(code)}">`;
-  const nameField = '<label for="label-MODE">Nombre del perfil en la TV</label><input id="label-MODE" name="label" maxlength="40" placeholder="Por ejemplo, tu nombre" autocomplete="off">';
+  const nameField = `<label for="label-MODE">${text.nameLabel}</label><input id="label-MODE" name="label" maxlength="40" placeholder="${text.namePlaceholder}" autocomplete="off">`;
   return `${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
-<section><strong>¿Tienes AniBridge Player en este teléfono?</strong><p class="note">La TV usará la identidad de la app: el mismo historial y las mismas preferencias.</p><a class="button" href="${escapeHtml(app)}">Abrir en la app</a></section>
-<section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="existing"><strong>Usar una identidad existente</strong>${nameField.replaceAll('MODE', 'existing')}<label for="token">Token de 64 caracteres</label><input id="token" name="token" autocomplete="off" autocapitalize="off" spellcheck="false" required minlength="64" maxlength="64"><button type="submit">Vincular la TV</button></form></section>
-${bridgeAdminToken ? `<section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="create"><strong>Crear una identidad nueva</strong><p class="note">La primera vez, con el token administrador del bridge. Sólo se usa para crear la identidad: no se guarda. Después, la TV puede crear más perfiles sin él.</p>${nameField.replaceAll('MODE', 'create')}<label for="admin">Token administrador</label><input id="admin" name="adminToken" type="password" autocomplete="off" required><button type="submit">Crear y vincular la TV</button></form></section>` : ''}
-<p class="note">El código caduca en 10 minutos.</p>`;
+<section><strong>${text.haveApp}</strong><p class="note">${text.haveAppNote}</p><a class="button" href="${escapeHtml(app)}">${text.openApp}</a></section>
+<section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="existing"><strong>${text.existing}</strong>${nameField.replaceAll('MODE', 'existing')}<label for="token">${text.tokenLabel}</label><input id="token" name="token" autocomplete="off" autocapitalize="off" spellcheck="false" required minlength="64" maxlength="64"><button type="submit">${text.link}</button></form></section>
+${bridgeAdminToken ? `<section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="create"><strong>${text.create}</strong><p class="note">${text.createNote}</p>${nameField.replaceAll('MODE', 'create')}<label for="admin">${text.adminLabel}</label><input id="admin" name="adminToken" type="password" autocomplete="off" required><button type="submit">${text.createAndLink}</button></form></section>` : ''}
+<p class="note">${text.expiresNote}</p>`;
 }
 
 function approvePairing(code, label, user) {
@@ -879,29 +927,38 @@ function createAnkProvider(configuredOrigin) {
   }
   // Filters accept several values each (`season=fall&season=summer`), sent to
   // the catalog as `season[]=fall&season[]=summer` like its filter page. The
-  // option lists (GET /api/catalog/filters) carry Spanish labels; genre ids
-  // belong to the catalog, so the apps take them from there.
+  // option lists (GET /api/catalog/filters) carry Spanish labels (`label`)
+  // and English ones (`labelEn`); genre ids belong to the catalog, so the apps
+  // take them from there.
+  const option = ([id, label, labelEn, adult]) => ({ id: String(id), label, labelEn, ...(adult ? { adult: true } : {}) });
   const catalogFilters = {
     genres: [
-      [1, 'Acción'], [2344, 'Acción y aventura'], [2, 'Aventura'], [2345, 'Animación'], [538, 'Autos'], [2330, 'Boys Love'],
-      [12, 'Ciencia ficción'], [2352, 'Ciencia ficción y fantasía'], [8, 'Comedia'], [453, 'Demencia'], [119, 'Demonios'],
-      [29, 'Deportes'], [62, 'Drama'], [214, 'Ecchi'], [2322, 'Erótico', true], [14, 'Escolar'], [124, 'Espacio'], [3, 'Fantasía'],
-      [2326, 'Gastronomía'], [2328, 'Girls Love'], [215, 'Harem'], [2374, 'Hentai', true], [70, 'Histórico'], [46, 'Infantil'],
-      [74, 'Isekai'], [404, 'Josei'], [180, 'Juegos'], [203, 'Magia'], [2310, 'Mahou Shoujo'], [114, 'Artes marciales'],
-      [123, 'Mecha'], [125, 'Militar'], [57, 'Misterio'], [242, 'Música'], [162, 'Parodia'], [136, 'Policial'], [2357, 'Premiada'],
-      [73, 'Psicológico'], [35, 'Recuentos de la vida'], [28, 'Romance'], [163, 'Samurái'], [50, 'Seinen'], [252, 'Shoujo'],
-      [235, 'Shoujo Ai'], [15, 'Shounen'], [233, 'Shounen Ai'], [9, 'Sobrenatural'], [16, 'Superpoderes'], [2316, 'Suspenso'],
-      [222, 'Terror'], [54, 'Thriller'], [58, 'Vampiros'],
-    ].map(([id, label, adult]) => ({ id: String(id), label, ...(adult ? { adult: true } : {}) })),
-    mediaTypes: [['TV', 'TV'], ['Movie', 'Película'], ['ONA', 'ONA'], ['OVA', 'OVA'], ['Special', 'Especial'], ['TV Special', 'Especial de TV'],
-      ['TV_SHORT', 'TV corto'], ['Music', 'Música'], ['PV', 'PV'], ['CM', 'CM']].map(([id, label]) => ({ id, label })),
-    sources: [['manga', 'Manga'], ['light_novel', 'Novela ligera'], ['original', 'Original'], ['web_manga', 'Manga web'],
-      ['web_novel', 'Novela web'], ['novel', 'Novela'], ['visual_novel', 'Novela visual'], ['video_game', 'Videojuego'],
-      ['game', 'Juego'], ['4-koma_manga', 'Manga 4-koma'], ['book', 'Libro'], ['picture_book', 'Libro ilustrado'],
-      ['card_game', 'Juego de cartas'], ['mixed_media', 'Multimedia'], ['music', 'Música'], ['radio', 'Radio'], ['other', 'Otro']].map(([id, label]) => ({ id, label })),
-    sorts: [['latest-updated', 'Actualizados recientemente'], ['latest-added', 'Añadidos recientemente'], ['score', 'Puntuación'],
-      ['most-viewed', 'Más vistos'], ['release-date', 'Fecha de estreno'], ['name-az', 'Nombre (A-Z)'],
-      ['number_of_episodes', 'Número de episodios'], ['default', 'Relevancia']].map(([id, label]) => ({ id, label })),
+      [1, 'Acción', 'Action'], [2344, 'Acción y aventura', 'Action & Adventure'], [2, 'Aventura', 'Adventure'], [2345, 'Animación', 'Animation'],
+      [538, 'Autos', 'Cars'], [2330, 'Boys Love', 'Boys Love'], [12, 'Ciencia ficción', 'Sci-Fi'], [2352, 'Ciencia ficción y fantasía', 'Sci-Fi & Fantasy'],
+      [8, 'Comedia', 'Comedy'], [453, 'Demencia', 'Dementia'], [119, 'Demonios', 'Demons'], [29, 'Deportes', 'Sports'], [62, 'Drama', 'Drama'],
+      [214, 'Ecchi', 'Ecchi'], [2322, 'Erótico', 'Erotica', true], [14, 'Escolar', 'School'], [124, 'Espacio', 'Space'], [3, 'Fantasía', 'Fantasy'],
+      [2326, 'Gastronomía', 'Gourmet'], [2328, 'Girls Love', 'Girls Love'], [215, 'Harem', 'Harem'], [2374, 'Hentai', 'Hentai', true],
+      [70, 'Histórico', 'Historical'], [46, 'Infantil', 'Kids'], [74, 'Isekai', 'Isekai'], [404, 'Josei', 'Josei'], [180, 'Juegos', 'Game'],
+      [203, 'Magia', 'Magic'], [2310, 'Mahou Shoujo', 'Mahou Shoujo'], [114, 'Artes marciales', 'Martial Arts'], [123, 'Mecha', 'Mecha'],
+      [125, 'Militar', 'Military'], [57, 'Misterio', 'Mystery'], [242, 'Música', 'Music'], [162, 'Parodia', 'Parody'], [136, 'Policial', 'Police'],
+      [2357, 'Premiada', 'Award Winning'], [73, 'Psicológico', 'Psychological'], [35, 'Recuentos de la vida', 'Slice of Life'],
+      [28, 'Romance', 'Romance'], [163, 'Samurái', 'Samurai'], [50, 'Seinen', 'Seinen'], [252, 'Shoujo', 'Shoujo'], [235, 'Shoujo Ai', 'Shoujo Ai'],
+      [15, 'Shounen', 'Shounen'], [233, 'Shounen Ai', 'Shounen Ai'], [9, 'Sobrenatural', 'Supernatural'], [16, 'Superpoderes', 'Super Power'],
+      [2316, 'Suspenso', 'Suspense'], [222, 'Terror', 'Horror'], [54, 'Thriller', 'Thriller'], [58, 'Vampiros', 'Vampire'],
+    ].map(option),
+    mediaTypes: [['TV', 'TV', 'TV'], ['Movie', 'Película', 'Movie'], ['ONA', 'ONA', 'ONA'], ['OVA', 'OVA', 'OVA'], ['Special', 'Especial', 'Special'],
+      ['TV Special', 'Especial de TV', 'TV Special'], ['TV_SHORT', 'TV corto', 'TV Short'], ['Music', 'Música', 'Music'], ['PV', 'PV', 'PV'],
+      ['CM', 'CM', 'CM']].map(option),
+    sources: [['manga', 'Manga', 'Manga'], ['light_novel', 'Novela ligera', 'Light novel'], ['original', 'Original', 'Original'],
+      ['web_manga', 'Manga web', 'Web manga'], ['web_novel', 'Novela web', 'Web novel'], ['novel', 'Novela', 'Novel'],
+      ['visual_novel', 'Novela visual', 'Visual novel'], ['video_game', 'Videojuego', 'Video game'], ['game', 'Juego', 'Game'],
+      ['4-koma_manga', 'Manga 4-koma', '4-koma manga'], ['book', 'Libro', 'Book'], ['picture_book', 'Libro ilustrado', 'Picture book'],
+      ['card_game', 'Juego de cartas', 'Card game'], ['mixed_media', 'Multimedia', 'Mixed media'], ['music', 'Música', 'Music'],
+      ['radio', 'Radio', 'Radio'], ['other', 'Otro', 'Other']].map(option),
+    sorts: [['latest-updated', 'Actualizados recientemente', 'Recently updated'], ['latest-added', 'Añadidos recientemente', 'Recently added'],
+      ['score', 'Puntuación', 'Score'], ['most-viewed', 'Más vistos', 'Most viewed'], ['release-date', 'Fecha de estreno', 'Release date'],
+      ['name-az', 'Nombre (A-Z)', 'Name (A-Z)'], ['number_of_episodes', 'Número de episodios', 'Number of episodes'],
+      ['default', 'Relevancia', 'Relevance']].map(option),
   };
   function filterValues(params, name, allowed) {
     const values = [...new Set(params.getAll(name).map(cleanText).filter(Boolean))];
@@ -1405,19 +1462,20 @@ const server = http.createServer(async (request, response) => {
     }
     // First setup page for a TV, from any phone browser.
     if (requestUrl.pathname === '/setup' && (request.method === 'GET' || request.method === 'POST')) {
+      const text = setupLanguage(request);
       if (request.method === 'GET') {
         const code = cleanText(requestUrl.searchParams.get('code'));
-        if (!pendingPairing(code)) return setupPage(response, 404, 'Código caducado', '<p>El código caducó o ya se usó. Abre de nuevo el código QR en la TV.</p>');
-        return setupPage(response, 200, 'Vincular la TV', setupForm(request, code));
+        if (!pendingPairing(code)) return setupPage(response, 404, text.expiredTitle, `<p>${text.expired}</p>`, text);
+        return setupPage(response, 200, text.linkTitle, setupForm(request, code, '', text), text);
       }
       const fields = Object.fromEntries(new URLSearchParams(await readBody(request)));
       try {
-        const { label } = await completeSetup(fields);
-        return setupPage(response, 200, 'Listo', `<p>La TV ya tiene el perfil «${escapeHtml(label)}». Puedes cerrar esta página.</p><p class="note">Para guardar este perfil en otro dispositivo, usa «Llevar al teléfono» en los perfiles de la TV.</p>`);
+        const { label } = await completeSetup(fields, text);
+        return setupPage(response, 200, text.doneTitle, `<p>${text.done(escapeHtml(label))}</p><p class="note">${text.doneNote}</p>`, text);
       } catch (error) {
         const status = error instanceof HttpError ? error.status : 500;
-        if (status === 404 || status === 429) return setupPage(response, status, 'No se pudo vincular', `<p class="error">${escapeHtml(error.message)}</p>`);
-        return setupPage(response, status, 'Vincular la TV', setupForm(request, cleanText(fields.code), error.message));
+        if (status === 404 || status === 429) return setupPage(response, status, text.failedTitle, `<p class="error">${escapeHtml(error.message)}</p>`, text);
+        return setupPage(response, status, text.linkTitle, setupForm(request, cleanText(fields.code), error.message, text), text);
       }
     }
     // Pairing start and status are open: the TV has no identity yet.

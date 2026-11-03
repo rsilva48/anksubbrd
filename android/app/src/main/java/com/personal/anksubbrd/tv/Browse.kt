@@ -46,6 +46,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,7 +72,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun HomeScreen(session: Session, onOpen: (Anime) -> Unit, onSwitchProfile: () -> Unit) {
-    val tabs = listOf("Continuar", "Recientes", "Buscar")
+    val tabs = listOf(stringResource(R.string.tab_continue), stringResource(R.string.tab_recent), stringResource(R.string.search))
     var selected by remember { mutableIntStateOf(0) }
 
     var initialLoading by remember(session) { mutableStateOf(session.history.isEmpty()) }
@@ -107,7 +109,7 @@ fun HomeScreen(session: Session, onOpen: (Anime) -> Unit, onSwitchProfile: () ->
             RemoteAccessControl()
             TVUpdateControl()
             Spacer(Modifier.width(12.dp))
-            OutlinedButton(onClick = onSwitchProfile) { Text("Perfil: ${session.profile.name}") }
+            OutlinedButton(onClick = onSwitchProfile) { Text(stringResource(R.string.profile_button, session.profile.name)) }
         }
         Spacer(Modifier.height(20.dp))
         when (selected) {
@@ -127,8 +129,8 @@ private fun StartupScreen() {
                 contentDescription = null,
                 modifier = Modifier.size(96.dp).clip(RoundedCornerShape(24.dp)),
             )
-            Text("AniBridge Player", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-            Text("Preparando tu biblioteca", style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.65f))
+            Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineMedium, color = Color.White)
+            Text(stringResource(R.string.startup_preparing), style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.65f))
             AndroidView(
                 factory = { context -> android.widget.ProgressBar(context).apply {
                     isIndeterminate = true
@@ -151,14 +153,14 @@ private fun ContinueTab(session: Session, onOpen: (Anime) -> Unit) {
     LaunchedEffect(finished) { session.loadStatuses() }
     val states = entries.associate { it.watchUrl to continueState(session, it) }
     val sections = listOf(
-        Triple("Nuevos episodios", null as String?, entries.filter { states[it.watchUrl]?.section == 0 }),
-        Triple("En curso", null, entries.filter { states[it.watchUrl]?.section == 1 }),
-        Triple("Al día", "Pasan a «Nuevos episodios» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.", entries.filter { states[it.watchUrl]?.section == 2 }),
-        Triple("Completados", null, entries.filter { states[it.watchUrl]?.section == 3 }),
+        Triple(stringResource(R.string.continue_new_episodes), null as String?, entries.filter { states[it.watchUrl]?.section == 0 }),
+        Triple(stringResource(R.string.continue_in_progress), null, entries.filter { states[it.watchUrl]?.section == 1 }),
+        Triple(stringResource(R.string.continue_up_to_date), stringResource(R.string.continue_up_to_date_footer), entries.filter { states[it.watchUrl]?.section == 2 }),
+        Triple(stringResource(R.string.continue_completed), null, entries.filter { states[it.watchUrl]?.section == 3 }),
     ).filter { it.third.isNotEmpty() }
     when {
         entries.isEmpty() && session.historyError != null -> Message(session.historyError.orEmpty())
-        entries.isEmpty() -> Message("Las series que veas en este perfil (aquí o en el teléfono) aparecerán aquí.")
+        entries.isEmpty() -> Message(stringResource(R.string.continue_empty_tv))
         else -> PosterGrid {
             for ((heading, footer, group) in sections) {
                 item(key = "section:$heading", span = { GridItemSpan(maxLineSpan) }) {
@@ -188,19 +190,19 @@ private fun ContinueTab(session: Session, onOpen: (Anime) -> Unit) {
                 Column(Modifier.padding(32.dp).ignoringHeldKey(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(title(entry), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
-                        "Quitarla de Continuar también la quita en el teléfono y en las demás TVs de este perfil.",
+                        stringResource(R.string.continue_remove_note_tv),
                         color = Color.White.copy(alpha = 0.7f),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(onClick = {
                             menuFor = null
                             onOpen(entry.asAnime())
-                        }) { Text("Abrir") }
+                        }) { Text(stringResource(R.string.open)) }
                         OutlinedButton(onClick = {
                             menuFor = null
                             scope.launch { session.remove(entry) }
-                        }) { Text("Quitar de Continuar") }
-                        OutlinedButton(onClick = { menuFor = null }) { Text("Cancelar") }
+                        }) { Text(stringResource(R.string.remove_from_continue)) }
+                        OutlinedButton(onClick = { menuFor = null }) { Text(stringResource(R.string.cancel)) }
                     }
                 }
             }
@@ -280,7 +282,7 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
 
     @Composable
     fun FiltersButton() {
-        OutlinedButton(onClick = { showFilters = true }) { Text(if (filters.isActive) "Filtros (${filters.activeCount})" else "Filtros") }
+        OutlinedButton(onClick = { showFilters = true }) { Text(if (filters.isActive) stringResource(R.string.filters_count, filters.activeCount) else stringResource(R.string.filters)) }
     }
 
     @Composable
@@ -298,17 +300,17 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
                 TvTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = "Título de la serie (opcional con filtros)",
+                    placeholder = stringResource(R.string.search_placeholder_tv),
                     imeAction = ImeAction.Search,
                     onSubmit = ::search,
                     modifier = Modifier.width(640.dp),
                 )
-                Button(onClick = ::search, enabled = query.isNotBlank() || filters.isActive) { Text("Buscar") }
+                Button(onClick = ::search, enabled = query.isNotBlank() || filters.isActive) { Text(stringResource(R.string.search)) }
             }
             FiltersSummary()
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                listOf("sub" to "Sub", "dub" to "Dub", "all" to "Sub y Dub").forEach { (value, label) ->
+                listOf("sub" to "Sub", "dub" to "Dub", "all" to stringResource(R.string.sub_and_dub)).forEach { (value, label) ->
                     if (language == value) Button(onClick = { language = value }) { Text(label) }
                     else OutlinedButton(onClick = { language = value }) { Text(label) }
                 }
@@ -330,10 +332,10 @@ private fun CatalogTab(session: Session, onOpen: (Anime) -> Unit, searching: Boo
             onDismiss = { showFilters = false },
         )
         when {
-            visible.isEmpty() && loading -> Message("Cargando…")
+            visible.isEmpty() && loading -> Message(stringResource(R.string.loading))
             visible.isEmpty() && error != null -> Message(error.orEmpty())
-            visible.isEmpty() && searching && searched == null -> Message("Elige filtros, escribe un título o ambos, y pulsa Buscar.")
-            visible.isEmpty() -> Message("Sin resultados.")
+            visible.isEmpty() && searching && searched == null -> Message(stringResource(R.string.search_prompt_tv))
+            visible.isEmpty() -> Message(stringResource(R.string.no_results_tv))
             else -> PosterGrid {
                 itemsIndexed(visible, key = { _, anime -> anime.watchUrl }) { index, anime ->
                     if (index == visible.lastIndex && hasNext && !loading) {
@@ -412,7 +414,7 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
     fun play(episode: Episode) {
         val loaded = series ?: return
         if (busy != null) return
-        busy = "Preparando el episodio ${episode.number}…"
+        busy = Strings.get(R.string.preparing_episode, episode.number)
         scope.launch {
             try {
                 val preferred = entry?.serverName?.takeIf { entry.serverKind == kind }
@@ -441,10 +443,14 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
             if (loaded != null) {
                 val meta = listOfNotNull(
                     loaded.mediaType,
-                    when (loaded.status) { "airing" -> "En emisión"; "finished" -> "Finalizado"; "upcoming" -> "Próximamente"; else -> null },
+                    seriesStatusLabel(loaded.status),
                     loaded.score?.let { "★ %.1f".format(it) },
                     loaded.rating,
-                    "${loaded.episodes.size}${loaded.totalEpisodes?.let { "/$it" } ?: ""} episodios",
+                    pluralStringResource(
+                        R.plurals.episode_count_text,
+                        loaded.totalEpisodes ?: loaded.episodes.size,
+                        "${loaded.episodes.size}${loaded.totalEpisodes?.let { "/$it" } ?: ""}",
+                    ),
                 )
                 Text(meta.joinToString(" · "), color = Color.White.copy(alpha = 0.6f))
                 loaded.synopsis?.let { Text(it, maxLines = 4, overflow = TextOverflow.Ellipsis, color = Color.White.copy(alpha = 0.85f)) }
@@ -456,14 +462,14 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (next != null) {
                         val label = when {
-                            entry != null && !entry.isCompleted && next.number == entry.episode -> "Continuar episodio ${next.number} · ${formatTime(entry.positionSeconds)}"
-                            entry != null -> "Ver episodio ${next.number} · siguiente"
-                            else -> "Empezar con el episodio ${next.number}"
+                            entry != null && !entry.isCompleted && next.number == entry.episode -> stringResource(R.string.continue_episode_at, next.number, formatTime(entry.positionSeconds))
+                            entry != null -> stringResource(R.string.watch_episode_next, next.number)
+                            else -> stringResource(R.string.start_with_episode, next.number)
                         }
                         Button(onClick = { play(next) }, modifier = Modifier.focusRequester(playFocus)) { Text(label) }
                         LaunchedEffect(current.watchUrl, next.number) { playFocus.requestFocus() }
                     } else if (entry != null) {
-                        Text("Estás al día: viste el episodio ${entry.episode}.", color = Color.White.copy(alpha = 0.7f))
+                        Text(stringResource(R.string.up_to_date_watched, entry.episode), color = Color.White.copy(alpha = 0.7f))
                     }
                 }
                 if (loaded.seasons.size > 1) {
@@ -473,17 +479,18 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
                     items(loaded.episodes, key = { it.number }) { episode ->
+                        val notYet = stringResource(R.string.not_yet_in, if (kind == "dub") "Dub" else "Sub")
                         val watched = entry != null && (episode.number < entry.episode || (episode.number == entry.episode && entry.isCompleted))
                         val progress = entry?.takeIf { it.episode == episode.number && !it.isCompleted }?.positionSeconds
                         ListItem(
                             selected = false,
                             onClick = { play(episode) },
-                            headlineContent = { Text("${episode.number}. ${episode.subtitle ?: "Episodio ${episode.number}"}", maxLines = 1) },
+                            headlineContent = { Text("${episode.number}. ${episode.subtitle ?: stringResource(R.string.episode_number, episode.number)}", maxLines = 1) },
                             supportingContent = {
                                 val notes = listOfNotNull(
-                                    progress?.let { "Visto hasta ${formatTime(it)}" },
-                                    if (watched) "Visto" else null,
-                                    if (!episode.isAvailable(kind)) "Aún sin ${if (kind == "dub") "Dub" else "Sub"}" else null,
+                                    progress?.let { stringResource(R.string.watched_until, formatTime(it)) },
+                                    if (watched) stringResource(R.string.watched) else null,
+                                    if (!episode.isAvailable(kind)) notYet else null,
                                 )
                                 if (notes.isNotEmpty()) Text(notes.joinToString(" · "))
                             },
@@ -491,7 +498,7 @@ fun DetailsScreen(session: Session, anime: Anime, onPlay: (PlaybackRequest) -> U
                     }
                 }
             } else {
-                Text(error ?: "Cargando episodios…", color = if (error != null) MaterialTheme.colorScheme.error else Color.White.copy(alpha = 0.7f))
+                Text(error ?: stringResource(R.string.loading_episodes), color = if (error != null) MaterialTheme.colorScheme.error else Color.White.copy(alpha = 0.7f))
             }
         }
     }
@@ -508,7 +515,7 @@ private fun SeasonRow(seasons: List<Season>, current: Anime, onSelect: (Season) 
     LaunchedEffect(seasons, index) { if (index > 0) state.scrollToItem(index) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            if (index >= 0) "Temporadas y extras · ${index + 1} de ${seasons.size}" else "Temporadas y extras · ${seasons.size}",
+            if (index >= 0) stringResource(R.string.seasons_position, index + 1, seasons.size) else stringResource(R.string.seasons_count, seasons.size),
             style = MaterialTheme.typography.labelLarge,
             color = Color.White.copy(alpha = 0.6f),
         )
@@ -575,11 +582,11 @@ internal sealed interface ContinueState {
     val isNews: Boolean get() = this is NewEpisodes || this is NextSeason
 
     fun label(entry: HistoryEntry): String = when (this) {
-        InProgress -> "Episodio ${entry.episode} · ${formatTime(entry.positionSeconds)}"
-        is NewEpisodes -> if (count == 1) "Nuevo: episodio ${entry.episode + 1}" else "$count episodios nuevos desde el ${entry.episode + 1}"
-        is NextSeason -> "Nueva temporada: ${season.displayLabel}"
-        is CaughtUp -> airingLabel(nextAt)?.let { "Al día · episodio ${entry.episode} · próximo: $it" } ?: "Al día · viste el episodio ${entry.episode}"
-        Completed -> "Completada · ${entry.episode} episodios"
+        InProgress -> Strings.get(R.string.state_in_progress, entry.episode, formatTime(entry.positionSeconds))
+        is NewEpisodes -> if (count == 1) Strings.get(R.string.state_new_one, entry.episode + 1) else Strings.get(R.string.state_new_many, count, entry.episode + 1)
+        is NextSeason -> Strings.get(R.string.state_next_season, season.displayLabel)
+        is CaughtUp -> airingLabel(nextAt)?.let { Strings.get(R.string.state_caught_up_next, entry.episode, it) } ?: Strings.get(R.string.state_caught_up, entry.episode)
+        Completed -> Strings.plural(R.plurals.state_completed, entry.episode, entry.episode)
     }
 }
 
@@ -596,9 +603,20 @@ internal fun continueState(session: Session, entry: HistoryEntry): ContinueState
     return ContinueState.Completed
 }
 
-/** "jue 5 nov, 11:28" in the TV's time zone, for a release still in the future. */
+/** "jue 5 nov, 11:28" ("Thu, Nov 5, 11:28 AM") in the device's time zone, for a release still in the future. */
 internal fun airingLabel(unixSeconds: Double?): String? {
     val millis = unixSeconds?.takeIf { it > 0 }?.let { (it * 1000).toLong() } ?: return null
     if (millis <= System.currentTimeMillis()) return null
-    return java.text.SimpleDateFormat("EEE d MMM, HH:mm", java.util.Locale.forLanguageTag("es")).format(java.util.Date(millis)).replace(".", "")
+    val locale = Strings.locale
+    val pattern = if (Strings.spanish) "EEE d MMM, HH:mm" else android.text.format.DateFormat.getBestDateTimePattern(locale, "EEEdMMMjmm")
+    return java.text.SimpleDateFormat(pattern, locale).format(java.util.Date(millis)).replace(".", "")
+}
+
+/** The catalog's airing status ("airing", "finished", "upcoming"), or null. */
+@Composable
+internal fun seriesStatusLabel(status: String?): String? = when (status) {
+    "airing" -> stringResource(R.string.status_airing)
+    "finished" -> stringResource(R.string.status_finished)
+    "upcoming" -> stringResource(R.string.status_upcoming)
+    else -> null
 }

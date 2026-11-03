@@ -16,10 +16,10 @@ enum PlaybackSpeed: Float, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .slow: return "0,75×"
-        case .normal: return "Normal"
-        case .fast: return "1,25×"
-        case .faster: return "1,5×"
+        case .slow: return String(localized: "0,75×")
+        case .normal: return String(localized: "Normal")
+        case .fast: return String(localized: "1,25×")
+        case .faster: return String(localized: "1,5×")
         case .double: return "2×"
         }
     }
@@ -88,8 +88,8 @@ final class PlayerModel: Identifiable {
 
     var activeSkip: (title: String, end: Double)? {
         let preferences = profile.preferences
-        if let intro = session.playback.intro, intro.contains(currentTime), !preferences.autoSkipIntro { return ("Saltar intro", intro.end) }
-        if let outro = session.playback.outro, outro.contains(currentTime), !preferences.autoSkipOutro { return ("Saltar outro", outro.end) }
+        if let intro = session.playback.intro, intro.contains(currentTime), !preferences.autoSkipIntro { return (String(localized: "Saltar intro"), intro.end) }
+        if let outro = session.playback.outro, outro.contains(currentTime), !preferences.autoSkipOutro { return (String(localized: "Saltar outro"), outro.end) }
         return nil
     }
 
@@ -239,7 +239,7 @@ final class PlayerModel: Identifiable {
             } catch is CancellationError {
                 return
             } catch {
-                errorMessage = "No se pudo abrir el episodio \(episode.number). \(error.localizedDescription)"
+                errorMessage = String(localized: "No se pudo abrir el episodio \(episode.number). \(error.localizedDescription)")
             }
         }
     }
@@ -267,7 +267,7 @@ final class PlayerModel: Identifiable {
             } catch is CancellationError {
                 return
             } catch {
-                errorMessage = "No se pudo reintentar. \(error.localizedDescription)"
+                errorMessage = String(localized: "No se pudo reintentar. \(error.localizedDescription)")
             }
         }
     }
@@ -294,7 +294,7 @@ final class PlayerModel: Identifiable {
         hasLoadedMediaOptions = false
         lastSavedSecond = -1
         guard let url = URL(string: session.playback.playbackUrl) else {
-            errorMessage = "La URL de reproducción no es válida."
+            errorMessage = String(localized: "La URL de reproducción no es válida.")
             return
         }
         profile.open(session.historyEntry)
@@ -303,7 +303,7 @@ final class PlayerModel: Identifiable {
         // A download plays from its package; an incomplete one would need the
         // bridge source it came from, which has expired by now.
         if session.downloadID != nil, let cache = asset.assetCache, !cache.isPlayableOffline {
-            errorMessage = "Esta descarga no se completó y no puede verse sin conexión. Bórrala y descárgala de nuevo."
+            errorMessage = String(localized: "Esta descarga no se completó y no puede verse sin conexión. Bórrala y descárgala de nuevo.")
         }
         let item = AVPlayerItem(asset: asset)
         player.replaceCurrentItem(with: item)
@@ -320,8 +320,8 @@ final class PlayerModel: Identifiable {
                   item.status != .readyToPlay, self.errorMessage == nil else { return }
             self.failureReported = true
             self.fail(self.session.downloadID == nil
-                ? "El servidor no respondió a tiempo. Reintenta o elige otro servidor."
-                : "No se pudo abrir la descarga. Bórrala y descárgala de nuevo.")
+                ? String(localized: "El servidor no respondió a tiempo. Reintenta o elige otro servidor.")
+                : String(localized: "No se pudo abrir la descarga. Bórrala y descárgala de nuevo."))
         }
         updateNowPlaying()
         player.defaultRate = speed.rawValue
@@ -514,9 +514,9 @@ final class PlayerModel: Identifiable {
     private func fail(_ message: String?) {
         isBuffering = false
         if session.downloadID == nil, !NetworkStatus.shared.isOnline {
-            errorMessage = "Sin conexión. Este episodio no está descargado; descárgalo para verlo sin red."
+            errorMessage = String(localized: "Sin conexión. Este episodio no está descargado; descárgalo para verlo sin red.")
         } else {
-            errorMessage = message ?? "No se pudo reproducir este servidor."
+            errorMessage = message ?? String(localized: "No se pudo reproducir este servidor.")
         }
     }
 
@@ -775,7 +775,7 @@ struct PlayerScreen: View {
                 })
         }
         .ignoresSafeArea()
-        .accessibilityLabel(controlsVisible ? "Ocultar controles" : "Mostrar controles")
+        .accessibilityLabel(controlsVisible ? Text("Ocultar controles") : Text("Mostrar controles"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { toggleControls() }
     }
@@ -867,7 +867,7 @@ struct PlayerScreen: View {
         HStack {
             if adjusting == .brightness || (controlsVisible && showsSideBars) {
                 LevelBar(
-                    title: "Brillo",
+                    title: String(localized: "Brillo"),
                     systemImage: brightness < 0.5 ? "sun.min.fill" : "sun.max.fill",
                     value: brightness,
                     onChange: setBrightness,
@@ -878,7 +878,7 @@ struct PlayerScreen: View {
             Spacer(minLength: 0)
             if adjusting == .volume || (controlsVisible && showsSideBars) {
                 LevelBar(
-                    title: "Volumen",
+                    title: String(localized: "Volumen"),
                     systemImage: volumeSymbol,
                     value: Double(volume.level),
                     onChange: { volume.set(Float($0)); showLevel(.volume) },
@@ -1015,7 +1015,7 @@ struct PlayerScreen: View {
                     GlassIcon(systemName: model.isPlaying ? "pause.fill" : "play.fill", size: compact ? 68 : 80, font: .largeTitle)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(model.isPlaying ? "Pausar" : "Reproducir")
+                .accessibilityLabel(model.isPlaying ? Text("Pausar") : Text("Reproducir"))
 
                 Button {
                     model.skip(by: 10)
@@ -1074,7 +1074,7 @@ struct PlayerScreen: View {
                             GlassIcon(systemName: model.videoGravity == .resizeAspect ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(model.videoGravity == .resizeAspect ? "Llenar pantalla" : "Ajustar a pantalla")
+                        .accessibilityLabel(model.videoGravity == .resizeAspect ? Text("Llenar pantalla") : Text("Ajustar a pantalla"))
                     }
                 }
             }
@@ -1204,12 +1204,12 @@ private struct MediaOptionsSheet: View {
         NavigationStack {
             List {
                 Section("Subtítulos") {
-                    option("Desactivados", selected: model.selectedLegible == nil) { model.selectLegible(nil) }
+                    option(String(localized: "Desactivados"), selected: model.selectedLegible == nil) { model.selectLegible(nil) }
                     ForEach(model.legibleOptions, id: \.self) { track in
                         option(track.displayName, selected: model.selectedLegible == track) { model.selectLegible(track) }
                     }
                     if model.legibleOptions.isEmpty {
-                        Text(model.hasLoadedMediaOptions ? "Este servidor no publicó subtítulos." : "Cargando pistas…")
+                        (model.hasLoadedMediaOptions ? Text("Este servidor no publicó subtítulos.") : Text("Cargando pistas…"))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -1294,7 +1294,7 @@ private struct LevelBar: View {
         )
         .accessibilityElement()
         .accessibilityLabel(title)
-        .accessibilityValue("\(Int((value * 100).rounded())) %")
+        .accessibilityValue(Text(value, format: .percent.precision(.fractionLength(0))))
         .accessibilityAdjustableAction { direction in
             onChange(value + (direction == .increment ? 0.1 : -0.1))
         }

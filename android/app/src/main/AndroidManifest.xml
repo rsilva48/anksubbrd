@@ -28,6 +28,8 @@
 
     <!-- Cleartext is allowed for bridges on the home network (http://192.168.x.x). -->
     <application
+        android:name=".AniBridgeApp"
+        android:localeConfig="@xml/locales_config"
         android:allowBackup="true"
         android:banner="@drawable/banner"
         android:icon="@mipmap/ic_launcher"

@@ -34,7 +34,7 @@ final class NetworkStatus: @unchecked Sendable {
 }
 
 enum OfflineMessage {
-    static let general = "Sin conexión a internet. Los episodios descargados siguen disponibles en Descargas."
+    static var general: String { String(localized: "Sin conexión a internet. Los episodios descargados siguen disponibles en Descargas.") }
 }
 
 enum BridgeScheme: String, CaseIterable, Identifiable {
@@ -117,7 +117,7 @@ enum BridgeClient {
     static func get<T: Decodable>(base: String, path: String, query: [URLQueryItem] = [], timeoutInterval: TimeInterval = 30) async throws -> T {
         var components = try components(base: base, path: path)
         if !query.isEmpty { components.queryItems = query }
-        guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
+        guard let url = components.url else { throw BridgeRequestError(message: String(localized: "La dirección del bridge no es válida.")) }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeoutInterval
         authorize(&request, bridgeBaseURL: base)
@@ -134,14 +134,14 @@ enum BridgeClient {
 
     static func provisionUser<T: Decodable, Body: Encodable>(base: String, administratorToken: String, body: Body) async throws -> T {
         let components = try components(base: base, path: "/api/admin/users")
-        guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
+        guard let url = components.url else { throw BridgeRequestError(message: String(localized: "La dirección del bridge no es válida.")) }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(administratorToken.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "X-Bridge-Admin-Token")
         request.httpBody = try JSONEncoder().encode(body)
-        return try await send(request, unauthorizedMessage: "El token administrador no es válido para este bridge.")
+        return try await send(request, unauthorizedMessage: String(localized: "El token administrador no es válido para este bridge."))
     }
 
     /// `true` when the bridge rejects requests without a user token.
@@ -158,7 +158,7 @@ enum BridgeClient {
 
     private static func sendJSON<T: Decodable, Body: Encodable>(method: String, base: String, path: String, body: Body, timeoutInterval: TimeInterval) async throws -> T {
         let components = try components(base: base, path: path)
-        guard let url = components.url else { throw BridgeRequestError(message: "La dirección del bridge no es válida.") }
+        guard let url = components.url else { throw BridgeRequestError(message: String(localized: "La dirección del bridge no es válida.")) }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = timeoutInterval
@@ -170,7 +170,7 @@ enum BridgeClient {
 
     private static func components(base: String, path: String) throws -> URLComponents {
         guard let canonical = BridgeEndpoint.canonicalURL(base), var components = URLComponents(string: canonical) else {
-            throw BridgeRequestError(message: "Configura primero la dirección del bridge.")
+            throw BridgeRequestError(message: String(localized: "Configura primero la dirección del bridge."))
         }
         components.path = path
         return components
@@ -183,7 +183,7 @@ enum BridgeClient {
         }
     }
 
-    private static func send<T: Decodable>(_ request: URLRequest, unauthorizedMessage: String = "El bridge requiere una identidad privada válida. Configúrala en Ajustes.") async throws -> T {
+    private static func send<T: Decodable>(_ request: URLRequest, unauthorizedMessage: String? = nil) async throws -> T {
         let result: (Data, URLResponse)
         do {
             result = try await URLSession.shared.data(for: request)
@@ -196,19 +196,19 @@ enum BridgeClient {
         }
         let (data, response) = result
         guard let http = response as? HTTPURLResponse else {
-            throw BridgeRequestError(message: "El bridge no respondió correctamente.")
+            throw BridgeRequestError(message: String(localized: "El bridge no respondió correctamente."))
         }
         guard (200...299).contains(http.statusCode) else {
             if http.statusCode == 401 {
-                throw BridgeRequestError(message: unauthorizedMessage, statusCode: 401)
+                throw BridgeRequestError(message: unauthorizedMessage ?? String(localized: "El bridge requiere una identidad privada válida. Configúrala en Ajustes."), statusCode: 401)
             }
             let bridgeMessage = try? JSONDecoder().decode(BridgeErrorResponse.self, from: data).error
-            throw BridgeRequestError(message: bridgeMessage ?? "El bridge respondió HTTP \(http.statusCode).", statusCode: http.statusCode)
+            throw BridgeRequestError(message: bridgeMessage ?? String(localized: "El bridge respondió HTTP \(http.statusCode)."), statusCode: http.statusCode)
         }
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
-            throw BridgeRequestError(message: "El bridge devolvió una respuesta que la app no pudo leer. ¿Está actualizado?")
+            throw BridgeRequestError(message: String(localized: "El bridge devolvió una respuesta que la app no pudo leer. ¿Está actualizado?"))
         }
     }
 
@@ -230,19 +230,19 @@ enum BridgeClient {
     private static func message(for error: URLError, host: String?) -> String {
         switch error.code {
         case .appTransportSecurityRequiresSecureConnection:
-            return "iOS sólo permite HTTP dentro de tu red local. Usa HTTPS para un dominio público."
+            return String(localized: "iOS sólo permite HTTP dentro de tu red local. Usa HTTPS para un dominio público.")
         case .timedOut:
-            return "El bridge no respondió a tiempo."
+            return String(localized: "El bridge no respondió a tiempo.")
         case .cannotFindHost, .dnsLookupFailed:
-            return "No se encontró el host del bridge. Revisa el dominio o la IP."
+            return String(localized: "No se encontró el host del bridge. Revisa el dominio o la IP.")
         case .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet:
             // Online but unreachable: for a bridge on the home network the
             // usual cause is the local network permission.
             return isLocalNetwork(host)
-                ? "No se pudo llegar al bridge en tu red local. Comprueba que esté encendido y que la app tenga permiso en Ajustes → Privacidad y seguridad → Red local."
-                : "No se pudo conectar con el bridge. Comprueba que esté encendido y accesible."
+                ? String(localized: "No se pudo llegar al bridge en tu red local. Comprueba que esté encendido y que la app tenga permiso en Ajustes → Privacidad y seguridad → Red local.")
+                : String(localized: "No se pudo conectar con el bridge. Comprueba que esté encendido y accesible.")
         case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate, .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot:
-            return "Falló la conexión HTTPS. Revisa el certificado del dominio o usa HTTP si es una IP local."
+            return String(localized: "Falló la conexión HTTPS. Revisa el certificado del dominio o usa HTTP si es una IP local.")
         default:
             return error.localizedDescription
         }
@@ -270,10 +270,10 @@ enum SecureTokenStore {
 
     static func restoreFromICloud(for bridgeBaseURL: String) throws -> String {
         guard let account = BridgeEndpoint.tokenAccount(for: bridgeBaseURL) else {
-            throw BridgeRequestError(message: "Primero configura una URL válida del bridge.")
+            throw BridgeRequestError(message: String(localized: "Primero configura una URL válida del bridge."))
         }
         guard let token = token(forAccount: account, synchronizable: true) else {
-            throw BridgeRequestError(message: "No hay una identidad para esta URL en el Llavero de iCloud todavía.")
+            throw BridgeRequestError(message: String(localized: "No hay una identidad para esta URL en el Llavero de iCloud todavía."))
         }
         return token
     }
@@ -295,7 +295,7 @@ enum SecureTokenStore {
         guard let existing = token(forAccount: account, synchronizable: false) else { return false }
         try save(existing, for: bridgeBaseURL)
         guard token(forAccount: account, synchronizable: true) == existing else {
-            throw BridgeRequestError(message: "No se pudo verificar la copia sincronizable del token. La copia anterior sigue intacta.")
+            throw BridgeRequestError(message: String(localized: "No se pudo verificar la copia sincronizable del token. La copia anterior sigue intacta."))
         }
         return true
     }
@@ -308,24 +308,24 @@ enum SecureTokenStore {
             kSecAttrSynchronizable as String: true,
         ]
         let data = Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
-        guard !data.isEmpty else { throw BridgeRequestError(message: "El token no puede estar vacío.") }
+        guard !data.isEmpty else { throw BridgeRequestError(message: String(localized: "El token no puede estar vacío.")) }
         let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecSuccess { return }
-        guard status == errSecItemNotFound else { throw BridgeRequestError(message: "No se pudo guardar el token en el Llavero.") }
+        guard status == errSecItemNotFound else { throw BridgeRequestError(message: String(localized: "No se pudo guardar el token en el Llavero.")) }
         var add = query
         attributes.forEach { add[$0.key] = $0.value }
         guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else {
-            throw BridgeRequestError(message: "No se pudo guardar el token en el Llavero.")
+            throw BridgeRequestError(message: String(localized: "No se pudo guardar el token en el Llavero."))
         }
     }
 
     private static func account(for bridgeBaseURL: String) throws -> String {
         guard let account = BridgeEndpoint.tokenAccount(for: bridgeBaseURL) else {
-            throw BridgeRequestError(message: "Primero configura una URL válida del bridge.")
+            throw BridgeRequestError(message: String(localized: "Primero configura una URL válida del bridge."))
         }
         return account
     }
@@ -363,7 +363,7 @@ enum TokenGenerator {
     static func make() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-            throw BridgeRequestError(message: "No se pudo generar un token seguro.")
+            throw BridgeRequestError(message: String(localized: "No se pudo generar un token seguro."))
         }
         return bytes.map { String(format: "%02x", $0) }.joined()
     }
