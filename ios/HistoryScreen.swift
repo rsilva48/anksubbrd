@@ -30,11 +30,13 @@ private enum ContinueState {
     case caughtUp(next: Date?)
     case completed
 
+    /// New episodes first, then in progress, caught up and completed.
     var section: Int {
         switch self {
-        case .inProgress, .newEpisodes, .nextSeason: return 0
-        case .caughtUp: return 1
-        case .completed: return 2
+        case .newEpisodes: return 0
+        case .inProgress, .nextSeason: return 1
+        case .caughtUp: return 2
+        case .completed: return 3
         }
     }
 }
@@ -65,9 +67,10 @@ private struct HistoryList: View {
                 ContentUnavailableView("Nada para continuar", systemImage: "play.circle", description: Text("Las series que reproduzcas con esta identidad aparecerán aquí con el segundo en que las dejaste."))
             } else {
                 let states = Dictionary(entries.map { ($0.id, state(of: $0)) }, uniquingKeysWith: { first, _ in first })
-                section("En curso", entries: entries.filter { states[$0.id]?.section == 0 }, states: states)
-                section("Al día", entries: entries.filter { states[$0.id]?.section == 1 }, states: states, footer: "Vuelven a «En curso» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.")
-                section("Completados", entries: entries.filter { states[$0.id]?.section == 2 }, states: states)
+                section("Nuevos episodios", entries: entries.filter { states[$0.id]?.section == 0 }, states: states)
+                section("En curso", entries: entries.filter { states[$0.id]?.section == 1 }, states: states)
+                section("Al día", entries: entries.filter { states[$0.id]?.section == 2 }, states: states, footer: "Pasan a «Nuevos episodios» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.")
+                section("Completados", entries: entries.filter { states[$0.id]?.section == 3 }, states: states)
             }
         }
         .task(id: finishedURLs) { await loadStatuses() }

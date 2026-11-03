@@ -152,9 +152,10 @@ private fun ContinueTab(session: Session, onOpen: (Anime) -> Unit) {
     LaunchedEffect(finished) { session.loadStatuses() }
     val states = entries.associate { it.watchUrl to continueState(session, it) }
     val sections = listOf(
-        Triple("En curso", null as String?, entries.filter { states[it.watchUrl]?.section == 0 }),
-        Triple("Al día", "Vuelven a «En curso» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.", entries.filter { states[it.watchUrl]?.section == 1 }),
-        Triple("Completados", null, entries.filter { states[it.watchUrl]?.section == 2 }),
+        Triple("Nuevos episodios", null as String?, entries.filter { states[it.watchUrl]?.section == 0 }),
+        Triple("En curso", null, entries.filter { states[it.watchUrl]?.section == 1 }),
+        Triple("Al día", "Pasan a «Nuevos episodios» cuando sale el siguiente episodio en Sub o Dub, según lo que estabas viendo.", entries.filter { states[it.watchUrl]?.section == 2 }),
+        Triple("Completados", null, entries.filter { states[it.watchUrl]?.section == 3 }),
     ).filter { it.third.isNotEmpty() }
     when {
         entries.isEmpty() && session.historyError != null -> Message(session.historyError.orEmpty())
@@ -523,11 +524,13 @@ private sealed interface ContinueState {
     data class CaughtUp(val nextAt: Double?) : ContinueState
     data object Completed : ContinueState
 
+    /** New episodes first, then in progress, caught up and completed. */
     val section: Int
         get() = when (this) {
-            InProgress, is NewEpisodes, is NextSeason -> 0
-            is CaughtUp -> 1
-            Completed -> 2
+            is NewEpisodes -> 0
+            InProgress, is NextSeason -> 1
+            is CaughtUp -> 2
+            Completed -> 3
         }
 
     val isNews: Boolean get() = this is NewEpisodes || this is NextSeason
