@@ -4,7 +4,7 @@ struct HistoryScreen: View {
     @Environment(ProfileStore.self) private var profile
 
     var body: some View {
-        NavigationStack {
+        AdaptiveSeriesNavigation {
             HistoryList()
         }
         .task(id: profile.scope) {

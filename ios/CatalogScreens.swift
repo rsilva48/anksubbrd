@@ -295,7 +295,7 @@ struct LatestScreen: View {
     private var key: FeedKey { FeedKey(scope: profile.scope, query: "", filters: filters, language: language, online: profile.isOnline) }
 
     var body: some View {
-        NavigationStack {
+        AdaptiveSeriesNavigation {
             CatalogGrid(feed: feed, filters: filters, language: profile.preferences.titleLanguage, hideAdult: profile.preferences.hideAdult) {
                 ContentUnavailableView("Sin resultados", systemImage: "sparkles", description: Text(filters.isActive ? "Cambia o limpia los filtros." : "El catálogo no devolvió novedades."))
             }
@@ -361,7 +361,7 @@ struct SearchScreen: View {
     }
 
     var body: some View {
-        NavigationStack {
+        AdaptiveSeriesNavigation {
             // On iPhone the search field replaces the navigation bar, so the
             // filter button sits above the results instead of in the toolbar.
             CatalogGrid(

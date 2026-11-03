@@ -249,3 +249,25 @@ struct GlassIcon: View {
             .glassEffect(.regular.interactive(), in: .circle)
     }
 }
+
+/// Recientes, Buscar and Continuar: a stack on compact width; on regular
+/// width (an unfolded iPhone Duo, iPad, large iPhones in landscape) the list
+/// stays on the left and the series opens beside it. Links in the list show
+/// their destination in the detail column, so the screens do not change.
+struct AdaptiveSeriesNavigation<Content: View>: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        if horizontalSizeClass == .regular {
+            NavigationSplitView {
+                content()
+                    .navigationSplitViewColumnWidth(min: 340, ideal: 440, max: 600)
+            } detail: {
+                ContentUnavailableView("Elige una serie", systemImage: "sidebar.left", description: Text("Se abre aquí, junto a la lista."))
+            }
+        } else {
+            NavigationStack(root: content)
+        }
+    }
+}

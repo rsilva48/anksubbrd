@@ -39,6 +39,10 @@ Las URLs y tokens temporales del proveedor no se registran en disco y desaparece
 
 Usa el botón AirPlay del reproductor, no **Duplicar pantalla**: la app configura la sesión de vídeo de larga duración para que el TV reciba vídeo, audio y pistas VTT.
 
+### Pantallas anchas (iPhone Duo, iPad)
+
+Con pantalla ancha (el iPhone Duo abierto, iPad o un iPhone grande en horizontal), Recientes, Buscar y Continuar muestran la lista a la izquierda y la ficha de la serie a la derecha. Plegado o en vertical, cada pestaña es una sola columna como siempre.
+
 ### Continuar viendo
 
 Guarda la serie, episodio, servidor, tipo (Sub/Dub) y segundo actual de las últimas 50 series. **Continuar** reanuda directamente con el mismo servidor y tipo. Un episodio cuenta como visto al llegar al outro o a sus últimos minutos; entonces la serie ofrece el siguiente episodio del mismo tipo en lugar de reabrir el final del anterior.
