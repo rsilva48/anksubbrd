@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -27,8 +28,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
@@ -67,6 +70,8 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
     var playerView by remember { mutableStateOf<PlayerView?>(null) }
     /** "−10 s · 01:38" after seeking with the controls hidden. */
     var seekNotice by remember { mutableStateOf<String?>(null) }
+    /** The player controls are on screen (paused, or after a key): the title shows with them. */
+    var controlsVisible by remember { mutableStateOf(false) }
     /** Subtitle language chosen from the phone ("off" hides them), kept for the next episodes. */
     var remoteSubtitles by remember { mutableStateOf<String?>(null) }
     val player = remember { ExoPlayer.Builder(context).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build() }
@@ -326,6 +331,7 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
                     })
                     // The play/pause button gets the focus every time the controls show.
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                        controlsVisible = visibility == View.VISIBLE
                         if (visibility == View.VISIBLE) focusPlayPause(this) else requestFocus()
                     })
                     hideController()
@@ -342,6 +348,33 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
                 }
             },
         )
+
+        // Series and episode with the controls, as on the phone.
+        if (controlsVisible && error == null) {
+            Column(
+                Modifier.align(Alignment.TopStart).fillMaxWidth()
+                    .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)))
+                    .padding(start = 48.dp, end = 48.dp, top = 32.dp, bottom = 48.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val japanese = session.japanese
+                Text(
+                    (if (japanese) request.series.titleJp ?: request.anime.titleJp else null) ?: request.series.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val episode = request.episode
+                Text(
+                    listOfNotNull("Episodio ${episode.number}", episode.subtitle, if (request.kind == "dub") "Dub" else "Sub").joinToString(" · "),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
 
         seekNotice?.let { notice ->
             LaunchedEffect(notice) {
