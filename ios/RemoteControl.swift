@@ -432,6 +432,10 @@ final class TVVolumeRelay {
     @ObservationIgnored private var target: Target?
     @ObservationIgnored private var observation: NSKeyValueObservation?
     @ObservationIgnored private var baseline: Float = 0.5
+    /// The last volume seen; a press is the change from it.
+    @ObservationIgnored private var lastValue: Float = 0.5
+    /// A volume the relay set, whose change notification is not a press.
+    @ObservationIgnored private var requested: Float?
     /// The volume before the relay moved it away from the ends.
     @ObservationIgnored private var original: Float?
     @ObservationIgnored private var pendingSteps = 0
@@ -440,20 +444,26 @@ final class TVVolumeRelay {
     /// One press of a volume button.
     private static let step: Float = 1 / 16
 
+    var isRunning: Bool { observation != nil }
+
     func start(_ target: Target) {
         self.target = target
         guard observation == nil else { return }
         let session = AVAudioSession.sharedInstance()
         // Ambient and mixable: other apps' audio keeps playing. The player
-        // sets its own category again when it starts.
-        try? session.setCategory(.ambient, options: [.mixWithOthers])
-        try? session.setActive(true)
+        // sets its own category again when it starts; the TV's Now Playing
+        // keeps its own (playback) session.
+        if !TVNowPlaying.shared.isActive {
+            try? session.setCategory(.ambient, options: [.mixWithOthers])
+            try? session.setActive(true)
+        }
         let current = session.outputVolume
+        lastValue = current
         // At either end one of the buttons would not change anything.
         baseline = min(max(current, 2 * Self.step), 1 - 2 * Self.step)
         if baseline != current {
             original = current
-            setVolume(baseline)
+            moveTo(baseline)
         }
         observation = observeOutputVolume()
     }
@@ -471,6 +481,8 @@ final class TVVolumeRelay {
         }
         if let original { setVolume(original) }
         original = nil
+        requested = nil
+        guard !TVNowPlaying.shared.isActive else { return }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         AudioSession.configure()
     }
@@ -487,12 +499,21 @@ final class TVVolumeRelay {
 
     private func volumeChanged(_ value: Float) {
         guard observation != nil else { return }
-        let delta = value - baseline
-        // Moving back to the baseline reports a change too.
+        // The relay's own move back to the baseline.
+        if let requested, abs(value - requested) < 0.02 {
+            lastValue = value
+            self.requested = nil
+            return
+        }
+        let delta = value - lastValue
         guard abs(delta) > Self.step / 4 else { return }
+        lastValue = value
         let steps = Int((delta / Self.step).rounded())
         pendingSteps += steps != 0 ? steps : (delta > 0 ? 1 : -1)
-        setVolume(baseline)
+        // Back to the baseline, so this device's volume does not change. In
+        // the background (lock screen) iOS may not apply it; presses still
+        // count from the last value seen.
+        moveTo(baseline)
         // Presses in quick succession go to the TV together.
         guard flush == nil else { return }
         flush = Task { [weak self] in
@@ -512,6 +533,15 @@ final class TVVolumeRelay {
                 path: "/api/devices/\(target.device)/commands",
                 body: RemoteCommand(type: "volume", steps: steps)
             )
+        }
+    }
+
+    private func moveTo(_ value: Float) {
+        requested = value
+        setVolume(value)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            if self?.requested == value { self?.requested = nil }
         }
     }
 

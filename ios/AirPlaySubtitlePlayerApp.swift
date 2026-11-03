@@ -71,9 +71,18 @@ struct RootView: View {
     /// The TV of the remote control: the volume buttons change its volume.
     @AppStorage(TVRemoteSheet.connectedKey) private var connectedTV = ""
 
-    private var volumeRelayTarget: TVVolumeRelay.Target? {
-        guard !connectedTV.isEmpty, profile.isBridgeConfigured, scenePhase == .active, !TVVolumeRelay.shared.localPlayback else { return nil }
+    /// The connected TV while nothing plays here: its episode shows on the
+    /// lock screen (`TVNowPlaying`).
+    private var connectedTarget: TVVolumeRelay.Target? {
+        guard !connectedTV.isEmpty, profile.isBridgeConfigured, !TVVolumeRelay.shared.localPlayback else { return nil }
         return TVVolumeRelay.Target(base: profile.bridgeURL, device: connectedTV)
+    }
+
+    /// The volume buttons go to the TV in the app, and on the lock screen
+    /// while the TV's episode is shown there.
+    private var volumeRelayTarget: TVVolumeRelay.Target? {
+        guard scenePhase == .active || TVNowPlaying.shared.isActive else { return nil }
+        return connectedTarget
     }
 
     var body: some View {
@@ -104,6 +113,9 @@ struct RootView: View {
             TVVolumeRelayHost()
                 .frame(width: 1, height: 1)
                 .accessibilityHidden(true)
+        }
+        .task(id: connectedTarget) {
+            TVNowPlaying.shared.follow(connectedTarget)
         }
         .task(id: volumeRelayTarget) {
             if let target = volumeRelayTarget {
