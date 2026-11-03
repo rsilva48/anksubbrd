@@ -101,7 +101,7 @@ struct RootView: View {
             Tab("Descargas", systemImage: "arrow.down.circle", value: AppTab.downloads) {
                 DownloadsScreen()
             }
-            Tab("Configuración", systemImage: "gearshape", value: AppTab.settings) {
+            Tab("Ajustes", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsScreen()
             }
             Tab(value: AppTab.search, role: .search) {
@@ -163,7 +163,7 @@ struct RootView: View {
                 promptedNotifications = true
             }
         } message: {
-            Text("La app puede avisarte cuando salga un episodio nuevo de las series que sigues en Continuar viendo. Puedes cambiarlo cuando quieras en Configuración.")
+            Text("La app puede avisarte cuando salga un episodio nuevo de las series que sigues en Continuar viendo. Puedes cambiarlo cuando quieras en Ajustes.")
         }
         .onOpenURL { url in
             if let identity = IdentityTransferRequest(url: url) {
@@ -216,9 +216,9 @@ private struct BridgeSetupRequiredView: View {
             ContentUnavailableView {
                 Label("Configura tu bridge", systemImage: "antenna.radiowaves.left.and.right")
             } description: {
-                Text("Escribe la dirección de tu bridge en Configuración y pruébala. Buscar, Recientes y Continuar se activan en cuanto responde.")
+                Text("Escribe la dirección de tu bridge en Ajustes y pruébala. Buscar, Recientes y Continuar se activan en cuanto responde.")
             } actions: {
-                Button("Ir a Configuración", systemImage: "gearshape", action: openSettings)
+                Button("Ir a Ajustes", systemImage: "gearshape", action: openSettings)
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
             }

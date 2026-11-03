@@ -91,7 +91,7 @@ internal fun PhoneSettings(app: PhoneState) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        TopAppBar(title = { Text("Configuración") })
+        TopAppBar(title = { Text("Ajustes") })
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
             SectionTitle("Bridge")
             Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

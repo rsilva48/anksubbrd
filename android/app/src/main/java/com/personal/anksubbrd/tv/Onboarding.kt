@@ -296,7 +296,7 @@ private fun TransferProfileDialog(state: AppState, profile: Profile, onDismiss: 
                     Column(Modifier.width(360.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         Text("Escanéalo con AniBridge Player", style = MaterialTheme.typography.titleLarge)
                         Text(
-                            "En el iPhone, con la cámara o en Configuración › Escanear código. El teléfono usará el perfil «${profile.name}».",
+                            "En el iPhone, con la cámara o en Ajustes › Escanear código. El teléfono usará el perfil «${profile.name}».",
                             color = Color.White.copy(alpha = 0.75f),
                         )
                         Text("El código se oculta en un minuto.", color = Color.White.copy(alpha = 0.55f))

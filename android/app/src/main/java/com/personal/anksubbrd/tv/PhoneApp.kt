@@ -171,7 +171,6 @@ internal enum class PhoneTab(val label: String, val icon: ImageVector) {
     Recents("Recientes", Icons.Filled.Star),
     Continue("Continuar", Icons.Filled.PlayArrow),
     Downloads("Descargas", PhoneIcons.Download),
-    // The screen is "Configuración"; the bar's label has to fit.
     Settings("Ajustes", Icons.Filled.Settings),
     Search("Buscar", Icons.Filled.Search),
 }
@@ -257,8 +256,8 @@ private fun PhoneRoot() {
                     )
                     session == null -> PhoneMessage(
                         "Configura tu bridge",
-                        "Escribe la dirección de tu bridge en Configuración y pruébala. Buscar, Recientes y Continuar se activan en cuanto responde.",
-                        action = "Ir a Configuración" to { tab = PhoneTab.Settings },
+                        "Escribe la dirección de tu bridge en Ajustes y pruébala. Buscar, Recientes y Continuar se activan en cuanto responde.",
+                        action = "Ir a Ajustes" to { tab = PhoneTab.Settings },
                     )
                     stack.isNotEmpty() -> PhoneSeries(session, stack.last(), onBack = { stack.removeAt(stack.lastIndex) })
                     tab == PhoneTab.Recents -> PhoneCatalog(session, searching = false, onOpen = open)

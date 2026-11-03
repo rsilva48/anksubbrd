@@ -183,7 +183,7 @@ enum BridgeClient {
         }
     }
 
-    private static func send<T: Decodable>(_ request: URLRequest, unauthorizedMessage: String = "El bridge requiere una identidad privada válida. Configúrala en Configuración.") async throws -> T {
+    private static func send<T: Decodable>(_ request: URLRequest, unauthorizedMessage: String = "El bridge requiere una identidad privada válida. Configúrala en Ajustes.") async throws -> T {
         let result: (Data, URLResponse)
         do {
             result = try await URLSession.shared.data(for: request)

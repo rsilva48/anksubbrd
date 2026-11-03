@@ -45,7 +45,7 @@ struct SettingsScreen: View {
                 deviceSection
                 aboutSection
             }
-            .navigationTitle("Configuración")
+            .navigationTitle("Ajustes")
             .modifier(AdaptableTabRootTitleStyle())
             .scrollDismissesKeyboard(.interactively)
         }
@@ -674,7 +674,7 @@ struct TVPairingSheet: View {
                 }
                 if !matchesBridge {
                     Section {
-                        ErrorNotice(message: "La TV usa el bridge \(request.bridge), que no es el configurado aquí. Configura y prueba ese mismo bridge en Configuración y vuelve a escanear el código.")
+                        ErrorNotice(message: "La TV usa el bridge \(request.bridge), que no es el configurado aquí. Configura y prueba ese mismo bridge en Ajustes y vuelve a escanear el código.")
                     }
                 } else if phase == .done {
                     Section {

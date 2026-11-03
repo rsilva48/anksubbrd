@@ -91,7 +91,7 @@ struct IdentityImportSheet: View {
                         } header: {
                             Text("Reemplaza la identidad actual")
                         } footer: {
-                            Text("Si no guardaste el token de la identidad actual, este dispositivo no podrá volver a abrir su historial. Puedes respaldarlo en Configuración › Identidad privada.")
+                            Text("Si no guardaste el token de la identidad actual, este dispositivo no podrá volver a abrir su historial. Puedes respaldarlo en Ajustes › Identidad privada.")
                         }
                     }
                     Section {

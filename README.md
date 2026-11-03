@@ -21,10 +21,10 @@ Las URLs y tokens temporales del proveedor no se registran en disco y desaparece
 ## Uso de la app
 
 1. Instala el IPA (ver [Releases](#versiones-y-releases)).
-2. En el primer uso, **Buscar**, **Recientes** y **Continuar** permanecen bloqueados y ofrecen un acceso directo a **Configuración**.
-3. En **Configuración → Bridge** elige `https://` (predeterminado) o `http://` y escribe sólo el dominio o la IP, con puerto si hace falta (`bridge.midominio.com` o `192.168.1.20:8787`). Si pegas una dirección con `http://` o `https://`, el prefijo se quita del campo y el selector adopta ese protocolo. **Probar y guardar** activa la dirección únicamente si `/health` responde.
+2. En el primer uso, **Buscar**, **Recientes** y **Continuar** permanecen bloqueados y ofrecen un acceso directo a **Ajustes**.
+3. En **Ajustes → Bridge** elige `https://` (predeterminado) o `http://` y escribe sólo el dominio o la IP, con puerto si hace falta (`bridge.midominio.com` o `192.168.1.20:8787`). Si pegas una dirección con `http://` o `https://`, el prefijo se quita del campo y el selector adopta ese protocolo. **Probar y guardar** activa la dirección únicamente si `/health` responde.
 4. Si el bridge requiere identidad, créala, restáurala desde el Llavero de iCloud o importa un token (ver [Identidades](#identidades)).
-5. Busca una serie (al abrir **Buscar** el campo se activa con el teclado) o entra en **Recientes**, que sigue los estrenos del tipo configurado (`Sub` o `Dub`; el selector de la barra permite cambiar a Sub, Dub o ambos). Cada póster muestra el episodio más reciente, el total si se conoce, los episodios en Dub y una marca **+18** en series R+ o Rx (**Configuración → Catálogo → Ocultar series +18** las quita de Recientes y Buscar). La búsqueda usa la página de filtros del catálogo, con todos los resultados paginados. Los **Filtros** (género, temporada, año, estado, tipo, origen y clasificación) admiten varias opciones por categoría; además hay orden, número de episodios y puntuación mínima. Las opciones (con los géneros del catálogo, ocultando los +18 si así está configurado) las publica el bridge en `GET /api/catalog/filters`. En iPhone el botón está sobre los resultados de la búsqueda. En Android TV, **Buscar** empieza por los filtros: se eligen, se escribe un título si se quiere y se pulsa **Buscar**; con sólo filtros también busca. El campo de título no abre el teclado hasta pulsar OK, así el control remoto puede moverse entre los botones. La ficha de la serie muestra la sinopsis, el estado de emisión y las temporadas relacionadas según el orden de visionado del catálogo. Elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Configuración).
+5. Busca una serie (al abrir **Buscar** el campo se activa con el teclado) o entra en **Recientes**, que sigue los estrenos del tipo configurado (`Sub` o `Dub`; el selector de la barra permite cambiar a Sub, Dub o ambos). Cada póster muestra el episodio más reciente, el total si se conoce, los episodios en Dub y una marca **+18** en series R+ o Rx (**Ajustes → Catálogo → Ocultar series +18** las quita de Recientes y Buscar). La búsqueda usa la página de filtros del catálogo, con todos los resultados paginados. Los **Filtros** (género, temporada, año, estado, tipo, origen y clasificación) admiten varias opciones por categoría; además hay orden, número de episodios y puntuación mínima. Las opciones (con los géneros del catálogo, ocultando los +18 si así está configurado) las publica el bridge en `GET /api/catalog/filters`. En iPhone el botón está sobre los resultados de la búsqueda. En Android TV, **Buscar** empieza por los filtros: se eligen, se escribe un título si se quiere y se pulsa **Buscar**; con sólo filtros también busca. El campo de título no abre el teclado hasta pulsar OK, así el control remoto puede moverse entre los botones. La ficha de la serie muestra la sinopsis, el estado de emisión y las temporadas relacionadas según el orden de visionado del catálogo. Elige episodio y servidor (`Sub` o `Dub`; el predeterminado está en Ajustes).
 
 ### Reproductor
 
@@ -66,13 +66,13 @@ Cada episodio de la ficha tiene su botón de descarga (también al mantenerlo pu
 - Al abrir **Descargas**, una descarga que terminó mientras la app estaba cerrada (y quedó marcada como interrumpida) se recupera si el paquete está completo. Si el archivo de una descarga no aparece o quedó incompleto, la app lo indica, con la ruta, en lugar de no hacer nada.
 - Sin conexión, cada pantalla lo indica en lugar de mostrar un error de red: el catálogo ofrece ir a **Descargas** y se recarga solo al volver la red, **Continuar viendo** avisa que el progreso se sincronizará después y un episodio sin descargar explica que necesita conexión. El aviso del permiso de **Red local** sólo aparece si hay red pero no se llega a un bridge con IP local.
 - El progreso visto sin conexión se guarda en el dispositivo (también si cierras la app) y se envía al bridge en cuanto vuelve la conexión, o al abrir la app con red.
-- Con **Configuración → Este dispositivo → Borrar descargas ya vistas** (activado por defecto), una descarga se elimina sólo cuando terminas de ver ese mismo episodio (al llegar al outro o a sus últimos minutos), en este u otro dispositivo con la misma identidad. Abrir otro episodio sin terminar el anterior no borra nada. La limpieza ocurre al cerrar el reproductor y al abrir la app o la pestaña.
+- Con **Ajustes → Este dispositivo → Borrar descargas ya vistas** (activado por defecto), una descarga se elimina sólo cuando terminas de ver ese mismo episodio (al llegar al outro o a sus últimos minutos), en este u otro dispositivo con la misma identidad. Abrir otro episodio sin terminar el anterior no borra nada. La limpieza ocurre al cerrar el reproductor y al abrir la app o la pestaña.
 - El bridge debe responder mientras se descarga: cada episodio se resuelve en línea y el bridge conserva la fuente durante dos horas. Una descarga fallida se reintenta deslizando a la derecha en **Descargas**.
 - El CDN limita las peticiones por IP. El bridge las envía a un ritmo fijo (`UPSTREAM_RATE`) y, si aun así recibe un 429, pausa todo el tráfico durante el `Retry-After` antes de reintentar. Un episodio tarda alrededor de un minuto en descargarse; varios a la vez se reparten ese ritmo.
 
 ### Avisos de nuevos episodios
 
-La primera vez que abres la app con un bridge configurado, te pregunta si quieres estos avisos; también se activan o desactivan en **Configuración → Este dispositivo → Avisar de nuevos episodios**. La app programa notificaciones locales para los episodios que estrenan en los próximos 8 días, según el horario estimado del catálogo. Sólo avisa de las series de **Continuar viendo**, cuando el episodio es posterior al que viste y del mismo tipo (Sub o Dub) que sigues. La notificación llega unos minutos después de la hora estimada y, al tocarla, abre la serie.
+La primera vez que abres la app con un bridge configurado, te pregunta si quieres estos avisos; también se activan o desactivan en **Ajustes → Este dispositivo → Avisar de nuevos episodios**. La app programa notificaciones locales para los episodios que estrenan en los próximos 8 días, según el horario estimado del catálogo. Sólo avisa de las series de **Continuar viendo**, cuando el episodio es posterior al que viste y del mismo tipo (Sub o Dub) que sigues. La notificación llega unos minutos después de la hora estimada y, al tocarla, abre la serie.
 
 - Los avisos se reprograman al abrir o volver a la app (y al sincronizar el historial), así que basta con abrirla de vez en cuando. No requieren servidor de push: el push remoto (APNs) exigiría una app firmada con ese permiso, algo que un IPA sin firmar instalado con LiveContainer no tiene.
 - El horario es una estimación y por ahora el catálogo sólo publica horarios de Sub.
@@ -80,7 +80,7 @@ La primera vez que abres la app con un bridge configurado, te pregunta si quiere
 
 ### Traducción de la sinopsis
 
-El botón **Traducir** de la sinopsis usa la traducción integrada de iOS (en el dispositivo) para pasarla del inglés al idioma del sistema; la primera vez iOS puede pedir descargar los idiomas. **Configuración → Este dispositivo → Traducir sinopsis automáticamente** la traduce al abrir cada serie.
+El botón **Traducir** de la sinopsis usa la traducción integrada de iOS (en el dispositivo) para pasarla del inglés al idioma del sistema; la primera vez iOS puede pedir descargar los idiomas. **Ajustes → Este dispositivo → Traducir sinopsis automáticamente** la traduce al abrir cada serie.
 
 ### Identidades
 
@@ -96,7 +96,7 @@ Al abrirse, la app consulta las releases de GitHub. Si hay una versión con IPA 
 - **Ver la release en GitHub**.
 - **Ahora no** u **Omitir esta versión**.
 
-También puedes buscar actualizaciones desde **Configuración → Acerca de**.
+También puedes buscar actualizaciones desde **Ajustes → Acerca de**.
 
 ### Fuente para LiveContainer
 
@@ -289,7 +289,7 @@ Para que el teléfono pueda **abrir** la app de la TV cuando está cerrada, Andr
 - **Vincular perfil** muestra un código QR que abre la página `/setup` del bridge en cualquier teléfono, sin instalar nada. Desde ahí se puede abrir la app («Abrir en la app», que vincula la TV con la identidad del teléfono), pegar un token existente o, la primera vez, crear la identidad con el token administrador del bridge. El token administrador sólo se comprueba, no se guarda; cada código admite cinco intentos y caduca a los 10 minutos.
 - **Crear perfil** crea un perfil nuevo con la identidad del perfil activo, sin token administrador (`POST /api/identities`, como mucho 10 perfiles por identidad y 5 por hora).
 - Manteniendo OK sobre un perfil: **Llevar al teléfono** muestra, tras un aviso, un QR con su identidad (`anksubbrd://identity?…`) que se oculta en un minuto; **Quitar** lo borra de la TV.
-- En el iPhone, ese QR se abre con la app Cámara o con **Configuración › Escanear código de la TV…**, que también lee los códigos de vinculación. Usar el perfil reemplaza la identidad actual (pide confirmar que guardaste su token) y, si el código es de otro bridge, lo prueba y se conecta a él.
+- En el iPhone, ese QR se abre con la app Cámara o con **Ajustes › Escanear código de la TV…**, que también lee los códigos de vinculación. Usar el perfil reemplaza la identidad actual (pide confirmar que guardaste su token) y, si el código es de otro bridge, lo prueba y se conecta a él.
 
 ### Android (teléfono)
 
