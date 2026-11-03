@@ -50,7 +50,7 @@ private const val MAX_APK_BYTES = 200L * 1024 * 1024
 private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
     .readTimeout(60, TimeUnit.SECONDS).followSslRedirects(false).build()
 
-private data class TVUpdate(val version: List<Int>, val tag: String, val url: String, val digest: String)
+internal data class TVUpdate(val version: List<Int>, val tag: String, val url: String, val digest: String)
 
 private fun versionOf(value: String): List<Int>? {
     val parts = Regex("^v?(\\d+)\\.(\\d+)\\.(\\d+)$").matchEntire(value)?.groupValues ?: return null
@@ -62,7 +62,7 @@ private fun newer(a: List<Int>, b: List<Int>): Boolean =
 
 // Android-only releases deliberately do not replace GitHub's iOS "latest".
 // Find the newest stable release containing an APK instead.
-private suspend fun findUpdate(installed: String): TVUpdate? = withContext(Dispatchers.IO) {
+internal suspend fun findUpdate(installed: String): TVUpdate? = withContext(Dispatchers.IO) {
     val current = versionOf(installed) ?: error("Versión instalada desconocida")
     val request = Request.Builder().url("https://api.github.com/repos/rsilva48/anksubbrd/releases?per_page=100")
         .header("Accept", "application/vnd.github+json").build()
@@ -92,7 +92,7 @@ private suspend fun findUpdate(installed: String): TVUpdate? = withContext(Dispa
     }
 }
 
-private suspend fun downloadUpdate(context: Context, update: TVUpdate): File = withContext(Dispatchers.IO) {
+internal suspend fun downloadUpdate(context: Context, update: TVUpdate): File = withContext(Dispatchers.IO) {
     val directory = File(context.cacheDir, "updates").apply { mkdirs() }
     val file = File(directory, APK_NAME)
     try {
@@ -128,7 +128,7 @@ private val installFailure = MutableStateFlow<String?>(null)
 
 // A PackageInstaller session goes straight to the system confirmation; an
 // ACTION_VIEW of the APK would also offer other apps that open APKs.
-private suspend fun installUpdate(context: Context, file: File) = withContext(Dispatchers.IO) {
+internal suspend fun installUpdate(context: Context, file: File) = withContext(Dispatchers.IO) {
     val installer = context.packageManager.packageInstaller
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         .apply { setAppPackageName(context.packageName) }

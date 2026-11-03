@@ -411,22 +411,22 @@ fun PlayerScreen(session: Session, initial: PlaybackRequest, onExit: () -> Unit)
 @AndroidXOptIn(UnstableApi::class)
 // Subtitle tracks are identified by their group and track index, stable
 // while the episode is loaded.
-private fun textTracks(player: Player) = player.currentTracks.groups.withIndex()
+internal fun textTracks(player: Player) = player.currentTracks.groups.withIndex()
     .filter { (_, group) -> group.type == C.TRACK_TYPE_TEXT }
     .flatMap { (groupIndex, group) -> (0 until group.length).filter(group::isTrackSupported).map { Triple("$groupIndex:$it", group, it) } }
 
-private fun subtitleOptions(player: Player): List<SubtitleOption> = textTracks(player).map { (id, group, index) ->
+internal fun subtitleOptions(player: Player): List<SubtitleOption> = textTracks(player).map { (id, group, index) ->
     val format = group.getTrackFormat(index)
     val language = format.language?.takeUnless { it == C.LANGUAGE_UNDETERMINED }
         ?.let { Locale.forLanguageTag(it).getDisplayLanguage(Locale.forLanguageTag("es")).replaceFirstChar(Char::titlecase) }
     SubtitleOption(id, format.label ?: language ?: "Pista ${index + 1}")
 }
 
-private fun selectedSubtitle(player: Player): String? =
+internal fun selectedSubtitle(player: Player): String? =
     textTracks(player).firstOrNull { (_, group, index) -> group.isTrackSelected(index) }?.first
 
 /** Shows a subtitle track ("off" hides them); returns the language to keep for the next episodes. */
-private fun selectSubtitles(player: Player, track: String?): String? {
+internal fun selectSubtitles(player: Player, track: String?): String? {
     val builder = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
     if (track == null || track == "off") {
         player.trackSelectionParameters = builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
@@ -443,7 +443,7 @@ private fun focusPlayPause(view: PlayerView) {
 }
 
 /** Watched once the outro starts or within the last stretch of the episode. */
-private fun reachedEnd(position: Double, duration: Double?, outro: SkipRange?): Boolean {
+internal fun reachedEnd(position: Double, duration: Double?, outro: SkipRange?): Boolean {
     if (outro != null && outro.start > 60 && position >= outro.start) return true
     if (duration == null || duration <= 0) return false
     return position >= duration - minOf(120.0, duration * 0.1)

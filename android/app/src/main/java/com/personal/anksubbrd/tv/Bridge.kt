@@ -102,6 +102,8 @@ data class Series(
     val score: Double? = null,
     val totalEpisodes: Int? = null,
     val imageUrl: String? = null,
+    /** Unix seconds of the next episode's estimated release. */
+    val nextEpisodeAt: Double? = null,
 ) {
     fun episodeAfter(number: Int, kind: String): Episode? = episodes.firstOrNull { it.number > number && it.isAvailable(kind) }
 
@@ -171,6 +173,8 @@ data class Preferences(
     val autoSkipIntro: Boolean = false,
     val autoSkipOutro: Boolean = false,
     val hideAdult: Boolean = false,
+    /** Seconds since 2001 (as iOS stores it); the newest copy wins on the bridge. */
+    val updatedAt: Double? = null,
 )
 
 @Serializable
@@ -178,6 +182,24 @@ data class PreferencesEnvelope(val preferences: Preferences? = null)
 
 @Serializable
 data class PairingStart(val pairingId: String, val code: String, val expiresAt: String)
+
+/** A TV of this identity, as the phone app lists it. */
+@Serializable
+data class RemoteTv(
+    val id: String,
+    val name: String,
+    val state: DeviceState? = null,
+    /** Milliseconds since the TV reported `state`. */
+    val stateAge: Double? = null,
+    /** Whether the TV can open the app by itself (null on older bridges). */
+    val canOpen: Boolean? = null,
+)
+
+@Serializable
+private data class RemoteTvs(val devices: List<RemoteTv> = emptyList())
+
+@Serializable
+private data class RegisterUser(val token: String, val label: String)
 
 @Serializable
 data class CreatedIdentity(val token: String, val label: String? = null)
@@ -317,6 +339,11 @@ class BridgeClient(val baseUrl: String, private val token: String) {
 
     suspend fun preferences(): Preferences = get<PreferencesEnvelope>("/api/preferences").preferences ?: Preferences()
 
+    /** Saves the identity's preferences; the reply is the copy the bridge kept (the newest). */
+    suspend fun savePreferences(preferences: Preferences): Preferences =
+        send<PreferencesEnvelope>("PUT", "/api/preferences", emptyList(), json.encodeToString(PreferencesEnvelope.serializer(), PreferencesEnvelope(preferences)))
+            .preferences ?: preferences
+
     suspend fun startPairing(): PairingStart = post("/api/pair/start", "{}")
 
     /** A new identity created by this one (a new profile; no administrator token). */
@@ -328,6 +355,13 @@ class BridgeClient(val baseUrl: String, private val token: String) {
     /** Status of up to 50 series (older bridges answer 404). */
     suspend fun seriesStatuses(watchUrls: List<String>): List<SeriesStatus> =
         post<SeriesStatusResponse>("/api/series/status", json.encodeToString(SeriesStatusRequest.serializer(), SeriesStatusRequest(watchUrls.take(50)))).statuses
+
+    /** The TVs of this identity (phone remote control). */
+    suspend fun tvs(): List<RemoteTv> = get<RemoteTvs>("/api/devices").devices
+
+    suspend fun sendCommand(deviceId: String, command: RemoteCommand) {
+        send<OkResponse>("POST", "/api/devices/$deviceId/commands", emptyList(), json.encodeToString(RemoteCommand.serializer(), command))
+    }
 
     suspend fun reportDevice(deviceId: String, name: String, state: DeviceState, canOpen: Boolean) {
         send<OkResponse>("PUT", "/api/devices/$deviceId", emptyList(), json.encodeToString(DeviceReport.serializer(), DeviceReport(name, state, canOpen)))
@@ -342,6 +376,14 @@ class BridgeClient(val baseUrl: String, private val token: String) {
 
     private suspend inline fun <reified T> post(path: String, body: String): T = send("POST", path, emptyList(), body)
 
+    /**
+     * Registers a new identity with the bridge's administrator token (the
+     * first identity of a phone). The administrator token is not kept.
+     */
+    suspend fun registerUser(adminToken: String, token: String, label: String) {
+        sendRaw("POST", "/api/admin/users", emptyList(), json.encodeToString(RegisterUser.serializer(), RegisterUser(token, label)), adminToken)
+    }
+
     private suspend inline fun <reified T> send(method: String, path: String, query: List<Pair<String, String>>, body: String?): T {
         val text = sendRaw(method, path, query, body)
         return try {
@@ -351,14 +393,17 @@ class BridgeClient(val baseUrl: String, private val token: String) {
         }
     }
 
-    private suspend fun sendRaw(method: String, path: String, query: List<Pair<String, String>>, body: String?): String = withContext(Dispatchers.IO) {
+    private suspend fun sendRaw(method: String, path: String, query: List<Pair<String, String>>, body: String?, adminToken: String? = null): String = withContext(Dispatchers.IO) {
         val url = ("$baseUrl$path").toHttpUrlOrNull()?.newBuilder()?.apply {
             query.forEach { (name, value) -> addQueryParameter(name, value) }
         }?.build() ?: throw BridgeException("La dirección del bridge no es válida.")
         val request = Request.Builder()
             .url(url)
             .method(method, body?.toRequestBody("application/json".toMediaType()))
-            .apply { if (token.isNotEmpty()) header("X-Bridge-Token", token) }
+            .apply {
+                if (adminToken != null) header("X-Bridge-Admin-Token", adminToken)
+                else if (token.isNotEmpty()) header("X-Bridge-Token", token)
+            }
             .build()
         val response = try {
             http.newCall(request).execute()
@@ -372,7 +417,9 @@ class BridgeClient(val baseUrl: String, private val token: String) {
         response.use {
             val text = it.body.string()
             if (!it.isSuccessful) {
-                if (it.code == 401) throw BridgeException("El bridge requiere una identidad válida. Vuelve a vincular este perfil.", 401)
+                if (it.code == 401) {
+                    throw BridgeException(if (adminToken != null) "El token administrador no es válido para este bridge." else "El bridge requiere una identidad válida. Vuelve a vincular este perfil.", 401)
+                }
                 val message = runCatching { json.decodeFromString(ErrorResponse.serializer(), text).error }.getOrNull()
                 throw BridgeException(message ?: "El bridge respondió HTTP ${it.code}.", it.code)
             }

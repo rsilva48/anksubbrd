@@ -553,7 +553,7 @@ private fun EdgeHint(start: Boolean, modifier: Modifier) {
  * Where a series stands for the viewer (as on the phone), from its history
  * entry and the bridge's episode counts for the Sub/Dub kind they watch.
  */
-private sealed interface ContinueState {
+internal sealed interface ContinueState {
     data object InProgress : ContinueState
     /** The finished episode has successors of the same kind. */
     data class NewEpisodes(val count: Int) : ContinueState
@@ -583,7 +583,7 @@ private sealed interface ContinueState {
     }
 }
 
-private fun continueState(session: Session, entry: HistoryEntry): ContinueState {
+internal fun continueState(session: Session, entry: HistoryEntry): ContinueState {
     if (!entry.isCompleted) return ContinueState.InProgress
     val kind = entry.serverKind ?: session.preferences.defaultTrackType
     val status = session.statuses[catalogPath(entry.watchUrl)]
@@ -597,7 +597,7 @@ private fun continueState(session: Session, entry: HistoryEntry): ContinueState 
 }
 
 /** "jue 5 nov, 11:28" in the TV's time zone, for a release still in the future. */
-private fun airingLabel(unixSeconds: Double?): String? {
+internal fun airingLabel(unixSeconds: Double?): String? {
     val millis = unixSeconds?.takeIf { it > 0 }?.let { (it * 1000).toLong() } ?: return null
     if (millis <= System.currentTimeMillis()) return null
     return java.text.SimpleDateFormat("EEE d MMM, HH:mm", java.util.Locale.forLanguageTag("es")).format(java.util.Date(millis)).replace(".", "")

@@ -2,45 +2,65 @@
 
 package com.personal.anksubbrd.tv
 
+import android.app.Activity
 import android.content.Context
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
-import coil3.compose.AsyncImage
 import java.security.KeyStore
 import java.security.MessageDigest
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.CoroutineStart
 
-/** The phone uses its own bridge identity; the token never goes into TV profile preferences. */
-private class PhoneIdentity(context: Context) {
+/** The phone uses its own bridge identity; the token is encrypted with Android Keystore. */
+internal class PhoneIdentity(context: Context) {
     private val prefs = context.getSharedPreferences("phone_identity", Context.MODE_PRIVATE)
     private val alias = "anibridge.phone.identity.v1"
     private fun key(): SecretKey {
@@ -51,26 +71,116 @@ private class PhoneIdentity(context: Context) {
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
         }.generateKey()
     }
-    fun load(): Pair<String, String>? = runCatching {
-        val url = prefs.getString("bridge", null) ?: return null
+
+    /** The tested bridge address, even without a token yet. */
+    fun bridge(): String? = prefs.getString("bridge", null)
+
+    fun token(): String? = runCatching {
         val bytes = Base64.decode(prefs.getString("token", null) ?: return null, Base64.NO_WRAP)
         require(bytes.size > 12)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
-        url to cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
+        cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
     }.getOrNull()
-    fun save(url: String, token: String) {
+
+    fun saveBridge(url: String) {
+        // Identities belong to one bridge.
+        if (url != bridge()) prefs.edit().remove("token").apply()
+        prefs.edit().putString("bridge", url).apply()
+    }
+
+    fun saveToken(token: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encoded = Base64.encodeToString(cipher.iv + cipher.doFinal(token.toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
-        prefs.edit().putString("bridge", url).putString("token", encoded).apply()
+        prefs.edit().putString("token", encoded).apply()
     }
+}
+
+/** The connected TV of the remote control (one, until "Desconectar"). */
+internal data class ConnectedTv(val id: String, val name: String)
+
+/** An episode to start on the TV from the remote sheet, sent once. */
+internal data class TvPlayRequest(val command: RemoteCommand, val title: String, val autoplay: Boolean, val playHere: (() -> Unit)? = null)
+
+/** What the phone screens share: identity, the playing episode, the TV. */
+internal class PhoneState(context: Context) {
+    val identity = PhoneIdentity(context)
+    private val appContext = context.applicationContext
+    private val remotePrefs = context.getSharedPreferences("phone_remote", Context.MODE_PRIVATE)
+
+    var bridge by mutableStateOf(identity.bridge())
+        private set
+    var token by mutableStateOf(identity.token())
+        private set
+    var session by mutableStateOf(makeSession())
+        private set
+
+    /** The episode open in the player (full screen). */
+    var playing by mutableStateOf<PlaybackRequest?>(null)
+    /** The TV remote sheet, optionally with an episode to start there. */
+    var remoteOpen by mutableStateOf(false)
+    var tvPlay by mutableStateOf<TvPlayRequest?>(null)
+
+    var connectedTv by mutableStateOf(
+        remotePrefs.getString("tv", null)?.let { ConnectedTv(it, remotePrefs.getString("tvName", null) ?: "TV") },
+    )
+        private set
+
+    private fun makeSession(): Session? {
+        val url = bridge ?: return null
+        val token = token.orEmpty()
+        // History and preferences are kept per bridge and identity.
+        val bytes = MessageDigest.getInstance("SHA-256").digest("$url\n$token".toByteArray())
+        val scope = bytes.joinToString("") { "%02x".format(it) }.take(24)
+        return Session(Profile(scope, "Teléfono", token), BridgeClient(url, token), appContext)
+    }
+
+    fun useBridge(url: String) {
+        identity.saveBridge(url)
+        bridge = url
+        token = identity.token()
+        session = makeSession()
+    }
+
+    fun useToken(value: String) {
+        identity.saveToken(value)
+        token = value
+        session = makeSession()
+    }
+
+    fun connect(tv: ConnectedTv?) {
+        connectedTv = tv
+        remotePrefs.edit().apply {
+            if (tv == null) remove("tv").remove("tvName") else putString("tv", tv.id).putString("tvName", tv.name)
+        }.apply()
+    }
+
+    /** Sends an episode to the connected TV and shows the remote; false without a TV. */
+    fun playOnTv(command: RemoteCommand, title: String, playHere: (() -> Unit)?): Boolean {
+        if (connectedTv == null) return false
+        tvPlay = TvPlayRequest(command, title, autoplay = true, playHere = playHere)
+        remoteOpen = true
+        return true
+    }
+}
+
+internal val LocalPhone = staticCompositionLocalOf<PhoneState> { error("No PhoneState") }
+
+internal enum class PhoneTab(val label: String, val icon: ImageVector) {
+    Recents("Recientes", Icons.Filled.Star),
+    Continue("Continuar", Icons.Filled.PlayArrow),
+    Downloads("Descargas", PhoneIcons.Download),
+    // The screen is "Configuración"; the bar's label has to fit.
+    Settings("Ajustes", Icons.Filled.Settings),
+    Search("Buscar", Icons.Filled.Search),
 }
 
 @Composable
 fun PhoneApp() {
     val context = LocalContext.current
     val dark = isSystemInDarkTheme()
+    // Material You: the wallpaper's colors on Android 12+.
     val colors = if (Build.VERSION.SDK_INT >= 31) {
         if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     } else if (dark) darkColorScheme(primary = Color(0xFFC4BEFF)) else lightColorScheme(primary = Color(0xFF5146C7))
@@ -82,206 +192,104 @@ fun PhoneApp() {
 @Composable
 private fun PhoneRoot() {
     val context = LocalContext.current
-    val identity = remember { PhoneIdentity(context.applicationContext) }
-    var credentials by remember { mutableStateOf(identity.load()) }
-    var configuring by remember { mutableStateOf(credentials == null) }
-    var confirmIdentityChange by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    val session = remember(credentials) {
-        credentials?.let { (url, token) ->
-            val bytes = MessageDigest.getInstance("SHA-256").digest("$url\n$token".toByteArray())
-            val scopeId = bytes.joinToString("") { "%02x".format(it) }
-            Session(Profile(scopeId, "Teléfono", token), BridgeClient(url, token), context)
-        }
-    }
-    var tab by remember { mutableIntStateOf(0) }
-    var anime by remember { mutableStateOf<Anime?>(null) }
-    var playback by remember { mutableStateOf<PlaybackRequest?>(null) }
+    val app = remember { PhoneState(context.applicationContext) }
+    val session = app.session
+    var tab by remember { mutableStateOf(if (app.bridge == null) PhoneTab.Settings else PhoneTab.Recents) }
+    // One stack of series per tab, like the tabs on iOS.
+    val stacks = remember { PhoneTab.entries.associateWith { mutableStateListOf<Anime>() } }
     LaunchedEffect(session) { session?.refresh() }
 
-    when {
-        configuring -> PhoneSetup(credentials?.first.orEmpty(), onSave = { url, token ->
-            identity.save(url, token)
-            credentials = url to token
-            configuring = false
-        }, onCancel = if (credentials != null) ({ configuring = false }) else null)
-        playback != null && session != null -> PhonePlayer(session, playback!!) { playback = null }
-        anime != null && session != null -> PhoneDetails(session, anime!!, onBack = { anime = null }, onPlay = { playback = it })
-        session != null -> Scaffold(
-            topBar = { TopAppBar(title = { Text("AniBridge Player") }) },
+    // With a TV connected and nothing playing here, the volume buttons
+    // change the TV's volume.
+    val activity = context as? MainActivity
+    val scope = rememberCoroutineScope()
+    DisposableEffect(activity, app.connectedTv, app.playing, session) {
+        val tv = app.connectedTv
+        val handler: (KeyEvent) -> Boolean = handler@{ event ->
+            val steps = when (event.keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> 1
+                KeyEvent.KEYCODE_VOLUME_DOWN -> -1
+                else -> return@handler false
+            }
+            if (tv == null || app.playing != null || session == null) return@handler false
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                scope.launch { runCatching { session.client.sendCommand(tv.id, RemoteCommand(type = "volume", steps = steps)) } }
+            }
+            true
+        }
+        activity?.phoneKeyHandler = handler
+        onDispose { if (activity?.phoneKeyHandler === handler) activity.phoneKeyHandler = null }
+    }
+
+    CompositionLocalProvider(LocalPhone provides app) {
+        val request = app.playing
+        if (request != null && session != null) {
+            PhonePlayer(session, request, onExit = { app.playing = null })
+            return@CompositionLocalProvider
+        }
+        Scaffold(
             bottomBar = {
                 NavigationBar {
-                    listOf("Continuar", "Recientes", "Buscar", "Ajustes").forEachIndexed { index, label ->
-                        NavigationBarItem(selected = tab == index, onClick = { tab = index },
-                            icon = { Text(listOf("▶", "◷", "⌕", "⚙")[index]) }, label = { Text(label) })
+                    PhoneTab.entries.forEach { item ->
+                        NavigationBarItem(
+                            selected = tab == item,
+                            onClick = {
+                                // Tapping the current tab goes back to its root.
+                                if (tab == item) stacks.getValue(item).clear()
+                                tab = item
+                            },
+                            icon = { Icon(item.icon, contentDescription = null) },
+                            label = { Text(item.label, maxLines = 1) },
+                        )
                     }
                 }
             },
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
-                when (tab) {
-                    0 -> PhoneHistory(session, onOpen = { anime = it }, onRefresh = { scope.launch { session.refresh() } })
-                    1 -> PhoneCatalog(session, searching = false, onOpen = { anime = it })
-                    2 -> PhoneCatalog(session, searching = true, onOpen = { anime = it })
-                    else -> Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text("Bridge", style = MaterialTheme.typography.titleLarge)
-                        Text(credentials?.first.orEmpty())
-                        Text("El historial y las preferencias se sincronizan con la identidad configurada en el bridge.")
-                        OutlinedButton(onClick = { confirmIdentityChange = true }) { Text("Cambiar conexión o identidad") }
-                    }
+                val stack = stacks.getValue(tab)
+                BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+                val open: (Anime) -> Unit = { stack.add(it) }
+                when {
+                    tab == PhoneTab.Settings -> PhoneSettings(app)
+                    tab == PhoneTab.Downloads -> PhoneMessage(
+                        "Descargas",
+                        "Las descargas para ver sin conexión llegan en la próxima versión de la app de Android.",
+                    )
+                    session == null -> PhoneMessage(
+                        "Configura tu bridge",
+                        "Escribe la dirección de tu bridge en Configuración y pruébala. Buscar, Recientes y Continuar se activan en cuanto responde.",
+                        action = "Ir a Configuración" to { tab = PhoneTab.Settings },
+                    )
+                    stack.isNotEmpty() -> PhoneSeries(session, stack.last(), onBack = { stack.removeAt(stack.lastIndex) })
+                    tab == PhoneTab.Recents -> PhoneCatalog(session, searching = false, onOpen = open)
+                    tab == PhoneTab.Search -> PhoneCatalog(session, searching = true, onOpen = open)
+                    else -> PhoneContinue(session, onOpen = open)
                 }
             }
         }
-    }
-    if (confirmIdentityChange) AlertDialog(
-        onDismissRequest = { confirmIdentityChange = false },
-        title = { Text("¿Cambiar identidad?") },
-        text = { Text("Guarda tu token actual antes de continuar. Si lo reemplazas y no tienes una copia, podrías perder acceso a tu historial. La nueva conexión solo se guardará tras probarla.") },
-        confirmButton = { TextButton(onClick = { confirmIdentityChange = false; configuring = true }) { Text("Continuar") } },
-        dismissButton = { TextButton(onClick = { confirmIdentityChange = false }) { Text("Cancelar") } },
-    )
-}
-
-@Composable
-private fun PhoneSetup(initialUrl: String, onSave: (String, String) -> Unit, onCancel: (() -> Unit)?) {
-    var url by remember { mutableStateOf(initialUrl) }
-    var token by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Conecta tu bridge", style = MaterialTheme.typography.headlineMedium)
-        Text("Usa la dirección y el token de tu identidad. El token se cifra con Android Keystore en este dispositivo.")
-        OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("Dirección del bridge") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = token, onValueChange = { token = it }, label = { Text("Token de identidad") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(enabled = !busy, onClick = {
-            scope.launch {
-                busy = true
-                try {
-                    val raw = url.trim()
-                    val scheme = if (raw.startsWith("http://")) "http" else "https"
-                    val base = BridgeClient.canonicalUrl(scheme, raw) ?: throw BridgeException("La dirección no es válida.")
-                    val client = BridgeClient(base, token.trim())
-                    if (!client.health().ok) throw BridgeException("El bridge no respondió correctamente.")
-                    client.history() // Validates the identity before replacing the previous one.
-                    onSave(base, token.trim())
-                } catch (e: Exception) { error = e.message ?: "No se pudo conectar." }
-                finally { busy = false }
-            }
-        }) { Text(if (busy) "Conectando…" else "Probar y guardar") }
-        onCancel?.let { OutlinedButton(onClick = it) { Text("Cancelar") } }
+        if (app.remoteOpen && session != null) PhoneRemoteSheet(app, session)
     }
 }
 
 @Composable
-private fun PhoneHistory(session: Session, onOpen: (Anime) -> Unit, onRefresh: () -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Continuar viendo", style = MaterialTheme.typography.headlineSmall)
-            TextButton(onClick = onRefresh) { Text("Actualizar") }
-        } }
-        if (session.history.isEmpty()) item { Text(session.historyError ?: "Tu historial aparecerá aquí.") }
-        items(session.history, key = { it.watchUrl }) { entry ->
-            PhoneAnimeRow(entry.asAnime(), "Episodio ${entry.episode} · ${formatTime(entry.positionSeconds)}", session.japanese) { onOpen(entry.asAnime()) }
-        }
+internal fun PhoneMessage(title: String, text: String, action: Pair<String, () -> Unit>? = null) {
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        action?.let { (label, run) -> Button(onClick = run) { Text(label) } }
     }
 }
 
-@Composable
-private fun PhoneAnimeRow(anime: Anime, subtitle: String, japanese: Boolean, onClick: () -> Unit) {
-    ListItem(modifier = Modifier.clickable(onClick = onClick), headlineContent = { Text(anime.displayTitle(japanese), maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        supportingContent = { if (subtitle.isNotBlank()) Text(subtitle) },
-        leadingContent = { AsyncImage(model = anime.imageUrl, contentDescription = null, modifier = Modifier.size(width = 58.dp, height = 82.dp)) })
-}
-
-@Composable
-private fun PhoneCatalog(session: Session, searching: Boolean, onOpen: (Anime) -> Unit) {
-    var text by remember { mutableStateOf("") }
-    var query by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<Anime>>(emptyList()) }
-    var page by remember { mutableIntStateOf(0) }
-    var more by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    suspend fun load(n: Int) {
-        if (searching && query.isBlank()) return
-        busy = true
-        try {
-            val response = session.client.latest(n, language = if (searching) null else session.preferences.defaultTrackType, keyword = if (searching) query else null)
-            results = if (n == 1) response.results else (results + response.results).distinctBy { it.watchUrl }
-            page = n; more = response.hasNext; error = null
-        } catch (e: BridgeException) { error = e.message }
-        finally { busy = false }
+/** The activity of a composable, for orientation and system bars. */
+internal fun Context.findActivity(): Activity? {
+    var current = this
+    while (current is android.content.ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
     }
-    LaunchedEffect(searching, query) { results = emptyList(); load(1) }
-    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            if (searching) Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(text, { text = it }, label = { Text("Buscar anime") }, singleLine = true, modifier = Modifier.weight(1f))
-                TextButton(onClick = { query = text.trim() }) { Text("Buscar") }
-            } else Text("Episodios recientes", style = MaterialTheme.typography.headlineSmall)
-        }
-        error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }
-        items(results.filter { !(session.preferences.hideAdult && it.isAdult) }, key = { it.watchUrl }) { anime ->
-            PhoneAnimeRow(anime, anime.episode?.let { "Episodio $it" }.orEmpty(), session.japanese) { onOpen(anime) }
-        }
-        if (more || busy) item { TextButton(enabled = !busy, onClick = { scope.launch { load(page + 1) } }) { Text(if (busy) "Cargando…" else "Cargar más") } }
-    }
-}
-
-@Composable
-private fun PhoneDetails(session: Session, anime: Anime, onBack: () -> Unit, onPlay: (PlaybackRequest) -> Unit) {
-    var series by remember(anime) { mutableStateOf<Series?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-    BackHandler(onBack = onBack)
-    LaunchedEffect(anime.watchUrl) { try { series = session.client.series(anime.watchUrl) } catch (e: BridgeException) { error = e.message } }
-    Scaffold(topBar = { TopAppBar(title = { Text(anime.displayTitle(session.japanese), maxLines = 1) }, navigationIcon = { TextButton(onClick = onBack) { Text("‹") } }) }) { padding ->
-        LazyColumn(Modifier.padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { AsyncImage(model = anime.imageUrl, contentDescription = null, modifier = Modifier.height(220.dp).fillMaxWidth()) }
-            series?.synopsis?.let { synopsis -> item { Text(synopsis, maxLines = 5, overflow = TextOverflow.Ellipsis) } }
-            item { Text(if (busy) "Preparando episodio…" else error ?: if (series == null) "Cargando…" else "Episodios", style = MaterialTheme.typography.titleMedium) }
-            series?.let { loaded -> items(loaded.episodes, key = { it.number }) { episode ->
-                ListItem(modifier = Modifier.clickable(enabled = !busy) {
-                    scope.launch {
-                        busy = true
-                        try {
-                            val entry = session.entry(anime.watchUrl)
-                            onPlay(session.resolve(anime, loaded, episode, entry?.serverKind ?: session.preferences.defaultTrackType, entry?.serverName))
-                        } catch (e: BridgeException) { error = e.message }
-                        finally { busy = false }
-                    }
-                }, headlineContent = { Text("Episodio ${episode.number}") }, supportingContent = { episode.subtitle?.let { Text(it) } })
-            } }
-        }
-    }
-}
-
-@Composable
-private fun PhonePlayer(session: Session, request: PlaybackRequest, onExit: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val player = remember { ExoPlayer.Builder(context).build() }
-    fun save() {
-        val seconds = player.currentPosition / 1000.0
-        if (seconds <= 0) return
-        val duration = player.duration.takeIf { it > 0 && it != C.TIME_UNSET }?.div(1000.0)
-        val entry = HistoryEntry(seriesTitle = request.series.title, watchUrl = request.anime.watchUrl, imageUrl = request.anime.imageUrl,
-            episode = request.episode.number, episodeTitle = request.episode.title, serverName = request.playback.serverName,
-            positionSeconds = seconds, updatedAt = HistoryEntry.now(), titleJp = request.series.titleJp, serverKind = request.kind,
-            durationSeconds = duration, completed = duration != null && seconds >= duration - minOf(120.0, duration * 0.1))
-        // Persist locally before disposal cancels the screen's coroutine scope.
-        scope.launch(start = CoroutineStart.UNDISPATCHED) { session.record(entry) }
-    }
-    LaunchedEffect(request) {
-        player.setMediaItem(MediaItem.fromUri(request.playback.playbackUrl), (session.position(request.anime.watchUrl, request.episode.number) * 1000).toLong())
-        player.prepare(); player.playWhenReady = true
-        while (true) { delay(10_000); if (player.isPlaying) save() }
-    }
-    DisposableEffect(player) { onDispose { save(); player.release() } }
-    BackHandler { onExit() }
-    AndroidView(factory = { PlayerView(it).apply { this.player = player; setShowSubtitleButton(true) } }, modifier = Modifier.fillMaxSize())
+    return null
 }

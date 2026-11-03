@@ -88,7 +88,7 @@ data class CatalogFilterOptions(
     val sorts: List<FilterOption> = emptyList(),
 )
 
-private object BuiltInFilters {
+internal object BuiltInFilters {
     val seasons = listOf("winter" to "Invierno", "spring" to "Primavera", "summer" to "Verano", "fall" to "Otoño").map { FilterOption(it.first, it.second) }
     val statuses = listOf("currently-airing" to "En emisión", "finished-airing" to "Finalizado", "not-yet-aired" to "Próximamente").map { FilterOption(it.first, it.second) }
     val ratings = listOf("G", "PG", "PG-13", "R", "R+", "Rx").map { FilterOption(it, it) }

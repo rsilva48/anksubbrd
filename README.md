@@ -291,6 +291,19 @@ Para que el teléfono pueda **abrir** la app de la TV cuando está cerrada, Andr
 - Manteniendo OK sobre un perfil: **Llevar al teléfono** muestra, tras un aviso, un QR con su identidad (`anksubbrd://identity?…`) que se oculta en un minuto; **Quitar** lo borra de la TV.
 - En el iPhone, ese QR se abre con la app Cámara o con **Configuración › Escanear código de la TV…**, que también lee los códigos de vinculación. Usar el perfil reemplaza la identidad actual (pide confirmar que guardaste su token) y, si el código es de otro bridge, lo prueba y se conecta a él.
 
+### Android (teléfono)
+
+El mismo APK (`AniBridgePlayer-TV.apk`) instalado en un teléfono abre la app de teléfono, con Material You (los colores del fondo de pantalla en Android 12+). Tiene las mismas pestañas que iOS: Recientes, Continuar, Descargas, Ajustes y Buscar, cada una con su propia navegación.
+
+- **Catálogo**: cuadrícula de pósters con el episodio más reciente, Dub y +18; Sub/Dub/ambos en Recientes; búsquedas recientes; los mismos filtros (género, temporada, año, estado, tipo, origen, clasificación, orden, episodios y puntuación).
+- **Ficha**: el mismo botón principal que iOS (continuar, siguiente, temporada siguiente, volver a ver), temporadas en un menú, episodios con progreso y menú (Ver en TV, Ver en este teléfono, Elegir servidor) y el selector de servidores Sub/Dub.
+- **Continuar**: las mismas secciones (Nuevos episodios, En curso, Al día, Completados); manteniendo pulsada una serie se quita (también en los demás dispositivos).
+- **Reproductor**: horizontal a pantalla completa con los controles de Media3 (subtítulos, audio y velocidad en sus ajustes), episodio anterior/siguiente del mismo tipo, saltar intro/outro (y el salto automático), siguiente episodio automático y el progreso sincronizado. Un subtítulo elegido en un episodio Sub queda como preferencia de la identidad, como en iOS.
+- **TV**: la misma TV conectada y el mismo control remoto que iOS; con una TV conectada, reproducir envía el episodio a la TV, y las teclas de volumen cambian el volumen de la TV mientras no se reproduce nada en el teléfono.
+- **Ajustes**: bridge, identidad privada (crear con el token administrador, importar, respaldar, cambiar; el token se guarda cifrado con Android Keystore), preferencias sincronizadas y actualizaciones desde GitHub.
+
+Pendiente para la siguiente versión del teléfono: descargas sin conexión, avisos de nuevos episodios, traducción de la sinopsis, escanear el código QR de un perfil de la TV, imagen dentro de imagen y los controles en la pantalla de bloqueo.
+
 ## Versiones y releases
 
 ### Android TV: APK y actualizaciones

@@ -29,9 +29,11 @@ import androidx.tv.material3.darkColorScheme
 
 class MainActivity : ComponentActivity() {
     var playerKeyHandler: ((KeyEvent) -> Boolean)? = null
+    /** Phone: the volume buttons go to the connected TV while nothing plays here. */
+    var phoneKeyHandler: ((KeyEvent) -> Boolean)? = null
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        if (playerKeyHandler?.invoke(event) == true) true else super.dispatchKeyEvent(event)
+        if (playerKeyHandler?.invoke(event) == true || phoneKeyHandler?.invoke(event) == true) true else super.dispatchKeyEvent(event)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

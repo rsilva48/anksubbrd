@@ -79,6 +79,13 @@ class Session(val profile: Profile, val client: BridgeClient, context: Context) 
         }
     }
 
+    /** Changes the identity's preferences here and on the bridge (and so on its other devices). */
+    suspend fun updatePreferences(change: (Preferences) -> Preferences) {
+        val updated = change(preferences).copy(updatedAt = HistoryEntry.now())
+        preferences = updated
+        runCatching { client.savePreferences(updated) }.onSuccess { preferences = it }
+    }
+
     /** Removes a series from Continue, here and (as a deletion) on the bridge and the phone. */
     suspend fun remove(entry: HistoryEntry) {
         history = history.filterNot { catalogPath(it.watchUrl) == catalogPath(entry.watchUrl) }
