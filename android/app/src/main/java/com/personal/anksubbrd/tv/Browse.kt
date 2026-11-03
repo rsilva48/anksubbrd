@@ -39,7 +39,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -184,19 +183,9 @@ private fun ContinueTab(session: Session, onOpen: (Anime) -> Unit) {
         }
     }
     menuFor?.let { entry ->
-        // The menu opens while OK is still held: its repeats and release
-        // must not press the focused button. Keys count from a new press.
-        var armed by remember(entry) { mutableStateOf(false) }
         Dialog(onDismissRequest = { menuFor = null }) {
             Surface(shape = RoundedCornerShape(24.dp)) {
-                Column(
-                    Modifier.padding(32.dp).onPreviewKeyEvent { event ->
-                        val key = event.nativeKeyEvent
-                        if (!armed && key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0) armed = true
-                        !armed
-                    },
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
+                Column(Modifier.padding(32.dp).ignoringHeldKey(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Text(title(entry), style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(
                         "Quitarla de Continuar también la quita en el teléfono y en las demás TVs de este perfil.",

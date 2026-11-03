@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -122,27 +123,74 @@ fun SetupScreen(state: AppState, onDone: () -> Unit) {
     }
 }
 
-/** "Who is watching": one tile per paired profile, plus pairing a new one. */
+/**
+ * For a dialog opened by holding OK: the key's repeats and release would
+ * press its focused button, so keys count from a new press.
+ */
+@Composable
+fun Modifier.ignoringHeldKey(): Modifier {
+    var armed by remember { mutableStateOf(false) }
+    return onPreviewKeyEvent { event ->
+        val key = event.nativeKeyEvent
+        if (!armed && key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0) armed = true
+        !armed
+    }
+}
+
+/**
+ * "Who is watching": one tile per paired profile, pairing one from a phone,
+ * and creating a new one with an existing profile (no administrator token).
+ */
 @Composable
 fun ProfilesScreen(state: AppState, onSelect: (Profile) -> Unit, onAdd: () -> Unit, onChangeBridge: () -> Unit) {
+    var menuFor by remember { mutableStateOf<Profile?>(null) }
     var removing by remember { mutableStateOf<Profile?>(null) }
+    var transferring by remember { mutableStateOf<Profile?>(null) }
+    var creating by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 96.dp, vertical = 64.dp), verticalArrangement = Arrangement.spacedBy(32.dp)) {
         Text("¿Quién está viendo?", style = MaterialTheme.typography.displaySmall)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
             items(state.profiles, key = { it.id }) { profile ->
-                ProfileTile(name = profile.name, onClick = { onSelect(profile) }, onLongClick = { removing = profile })
+                ProfileTile(name = profile.name, onClick = { onSelect(profile) }, onLongClick = { menuFor = profile })
+            }
+            if (state.profiles.isNotEmpty()) item {
+                ProfileTile(name = "Crear perfil", symbol = "+", onClick = { creating = true })
             }
             item {
-                ProfileTile(name = "Agregar perfil", symbol = "+", onClick = onAdd)
+                ProfileTile(name = "Vincular perfil", symbol = "⌁", onClick = onAdd)
             }
         }
         Text(
-            "Mantén pulsado un perfil para quitarlo. Bridge: ${state.bridgeUrl.orEmpty()}",
+            "Mantén pulsado un perfil para llevarlo al teléfono o quitarlo. Bridge: ${state.bridgeUrl.orEmpty()}",
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White.copy(alpha = 0.6f),
         )
         OutlinedButton(onClick = onChangeBridge) { Text("Cambiar bridge") }
+    }
+
+    menuFor?.let { profile ->
+        Dialog(onDismissRequest = { menuFor = null }) {
+            Surface(shape = RoundedCornerShape(24.dp)) {
+                Column(Modifier.padding(32.dp).ignoringHeldKey(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(profile.name, style = MaterialTheme.typography.titleLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { menuFor = null; transferring = profile }) { Text("Llevar al teléfono") }
+                        OutlinedButton(onClick = { menuFor = null; removing = profile }) { Text("Quitar") }
+                        OutlinedButton(onClick = { menuFor = null }) { Text("Cancelar") }
+                    }
+                }
+            }
+        }
+    }
+
+    if (creating) CreateProfileDialog(state, onDismiss = { creating = false }) { created ->
+        creating = false
+        transferring = created
+    }
+
+    transferring?.let { profile ->
+        TransferProfileDialog(state, profile, onDismiss = { transferring = null })
     }
 
     removing?.let { profile ->
@@ -154,6 +202,100 @@ fun ProfilesScreen(state: AppState, onSelect: (Profile) -> Unit, onAdd: () -> Un
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(onClick = { state.removeProfile(profile); removing = null }) { Text("Quitar") }
                         OutlinedButton(onClick = { removing = null }) { Text("Cancelar") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Names a new profile and creates its identity with an existing profile's. */
+@Composable
+private fun CreateProfileDialog(state: AppState, onDismiss: () -> Unit, onCreated: (Profile) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var name by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    fun create() {
+        val label = name.trim()
+        val creator = state.activeProfile ?: state.profiles.firstOrNull() ?: return
+        if (label.isEmpty() || busy) return
+        busy = true
+        message = null
+        scope.launch {
+            try {
+                val identity = state.client(creator).createIdentity(label)
+                onCreated(state.addProfile(identity.label ?: label, identity.token))
+            } catch (error: BridgeException) {
+                message = if (error.status == 404) "Este bridge todavía no permite crear perfiles. Actualízalo a la última versión." else error.message
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
+        Surface(shape = RoundedCornerShape(24.dp)) {
+            Column(Modifier.padding(32.dp).width(560.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("Crear perfil", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Un perfil nuevo tiene su propio Continuar viendo y sus preferencias. Después puedes llevarlo al teléfono de esa persona con un código QR.",
+                    color = Color.White.copy(alpha = 0.7f),
+                )
+                TvTextField(value = name, onValueChange = { name = it.take(40) }, placeholder = "Nombre del perfil", imeAction = ImeAction.Done, onSubmit = ::create)
+                message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = ::create, enabled = !busy && name.isNotBlank()) { Text(if (busy) "Creando…" else "Crear") }
+                    OutlinedButton(onClick = onDismiss, enabled = !busy) { Text("Cancelar") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Shows a profile's identity as a QR for the phone app (anksubbrd://identity).
+ * Whoever scans it gets that history, so it warns first and hides itself.
+ */
+@Composable
+private fun TransferProfileDialog(state: AppState, profile: Profile, onDismiss: () -> Unit) {
+    var showing by remember { mutableStateOf(false) }
+    val link = remember(profile) {
+        "anksubbrd://identity?bridge=${URLEncoder.encode(state.bridgeUrl.orEmpty(), "UTF-8")}" +
+            "&token=${URLEncoder.encode(profile.token, "UTF-8")}&label=${URLEncoder.encode(profile.name, "UTF-8")}"
+    }
+    if (showing) LaunchedEffect(Unit) {
+        delay(60_000)
+        onDismiss()
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp)) {
+            if (!showing) {
+                Column(Modifier.padding(32.dp).width(560.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("Llevar «${profile.name}» al teléfono", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "El código contiene la identidad de este perfil: quien lo escanee tendrá acceso a su historial y sus preferencias. Muéstralo sólo al teléfono de esa persona.",
+                        color = Color.White.copy(alpha = 0.8f),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { showing = true }) { Text("Mostrar código") }
+                        OutlinedButton(onClick = onDismiss) { Text("Cancelar") }
+                    }
+                }
+            } else {
+                Row(Modifier.padding(32.dp), horizontalArrangement = Arrangement.spacedBy(32.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(300.dp).background(Color.White, RoundedCornerShape(16.dp)).padding(16.dp)) {
+                        Image(remember(link) { qrBitmap(link) }.asImageBitmap(), contentDescription = "Código QR del perfil", modifier = Modifier.fillMaxSize())
+                    }
+                    Column(Modifier.width(360.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text("Escanéalo con AniBridge Player", style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "En el iPhone, con la cámara o en Configuración › Escanear código. El teléfono usará el perfil «${profile.name}».",
+                            color = Color.White.copy(alpha = 0.75f),
+                        )
+                        Text("El código se oculta en un minuto.", color = Color.White.copy(alpha = 0.55f))
+                        Button(onClick = onDismiss) { Text("Listo") }
                     }
                 }
             }
@@ -174,9 +316,9 @@ private fun ProfileTile(name: String, onClick: () -> Unit, symbol: String? = nul
 }
 
 /**
- * Pairing: shows a QR with this bridge and a one-time code. The phone app
- * (camera → anksubbrd://pair…) approves it with its identity, and this
- * screen receives that identity's token.
+ * Pairing: shows a QR to the bridge's setup page with a one-time code. The
+ * phone approves it (with the app, a pasted token, or the first time the
+ * administrator token), and this screen receives the identity's token.
  */
 @Composable
 fun PairingScreen(state: AppState, onPaired: () -> Unit, onChangeBridge: () -> Unit) {
@@ -190,7 +332,10 @@ fun PairingScreen(state: AppState, onPaired: () -> Unit, onChangeBridge: () -> U
         while (true) {
             try {
                 val pairing = client.startPairing()
-                qr = qrBitmap("anksubbrd://pair?bridge=${URLEncoder.encode(bridge, "UTF-8")}&code=${URLEncoder.encode(pairing.code, "UTF-8")}")
+                // The bridge's setup page: any phone camera opens it; from there
+                // the app approves it, or a token is pasted (or created once
+                // with the administrator token).
+                qr = qrBitmap("$bridge/setup?code=${URLEncoder.encode(pairing.code, "UTF-8")}")
                 message = null
                 while (true) {
                     delay(2000)
@@ -217,12 +362,12 @@ fun PairingScreen(state: AppState, onPaired: () -> Unit, onChangeBridge: () -> U
         }
         Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.width(560.dp)) {
             Text("Vincula un perfil", style = MaterialTheme.typography.displaySmall)
-            Text("1. Abre la cámara del iPhone y apunta al código.", style = MaterialTheme.typography.titleMedium)
-            Text("2. Toca el aviso para abrir la app y elige el nombre del perfil.", style = MaterialTheme.typography.titleMedium)
-            Text("3. Pulsa «Vincular TV». Esta pantalla continúa sola.", style = MaterialTheme.typography.titleMedium)
+            Text("1. Escanea el código con la cámara de cualquier teléfono.", style = MaterialTheme.typography.titleMedium)
+            Text("2. En la página que se abre, elige «Abrir en la app» o pega un token. La primera vez puedes crear la identidad con el token administrador del bridge.", style = MaterialTheme.typography.titleMedium)
+            Text("3. Esta pantalla continúa sola.", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
             Text(
-                "El perfil usará la identidad del teléfono: el mismo Continuar viendo y las mismas preferencias. El código cambia cada 10 minutos.",
+                "El perfil usa esa identidad: el mismo Continuar viendo y las mismas preferencias. El código cambia cada 10 minutos.",
                 color = Color.White.copy(alpha = 0.65f),
             )
             Text("Bridge: $bridge", color = Color.White.copy(alpha = 0.5f))

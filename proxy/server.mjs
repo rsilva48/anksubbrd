@@ -126,7 +126,8 @@ async function loadPersistedUsers() {
         const userId = normalizedUserId(user?.userId);
         const salt = cleanText(user?.salt); const hash = cleanText(user?.tokenHash);
         if (!/^[a-f0-9]{32}$/i.test(salt) || !/^[a-f0-9]{64}$/i.test(hash)) return [];
-        return [{ userId, salt, tokenHash: hash, label: historyText(user?.label, 'Private user', 80), createdAt: cleanText(user?.createdAt) }];
+        const parent = cleanText(user?.parent) || undefined;
+        return [{ userId, salt, tokenHash: hash, label: historyText(user?.label, 'Private user', 80), createdAt: cleanText(user?.createdAt), parent }];
       } catch { return []; }
     });
   } catch (error) {
@@ -135,7 +136,7 @@ async function loadPersistedUsers() {
   return persistedUsers;
 }
 function validUserToken(value) { return /^[a-f0-9]{64}$/i.test(value); }
-async function registerUser(token, label) {
+async function registerUser(token, label, parent = undefined) {
   if (!validUserToken(token)) throw new Error('User token must be a 64-character hexadecimal value');
   await loadPersistedUsers();
   const { run, queue } = enqueue(userMutation, async () => {
@@ -144,7 +145,7 @@ async function registerUser(token, label) {
     const existing = users.find((user) => sameSecret(user.tokenHash, tokenHash(token, user.salt)));
     if (existing) return existing;
     if (users.length >= 1000) throw new Error('User limit reached');
-    const user = { userId: randomUUID(), salt: randomBytes(16).toString('hex'), tokenHash: '', label: historyText(label, 'Private user', 80), createdAt: new Date().toISOString() };
+    const user = { userId: randomUUID(), salt: randomBytes(16).toString('hex'), tokenHash: '', label: historyText(label, 'Private user', 80), createdAt: new Date().toISOString(), parent };
     user.tokenHash = tokenHash(token, user.salt);
     users.push(user);
     await writeJsonAtomically(userStorePath, { version: 1, users });
@@ -153,13 +154,35 @@ async function registerUser(token, label) {
   userMutation = queue;
   return run;
 }
-async function authenticatedUser(request, requestUrl) {
-  const token = requestedAccessToken(request, requestUrl);
+async function userForToken(token) {
   const configuredUser = bridgeUsers.find((user) => sameSecret(token, user.token));
   if (configuredUser) return configuredUser;
   const users = await loadPersistedUsers();
   const storedUser = users.find((user) => sameSecret(user.tokenHash, tokenHash(token, user.salt)));
-  if (storedUser) return { userId: storedUser.userId, token };
+  return storedUser ? { userId: storedUser.userId, token } : null;
+}
+
+// An identity creates more profiles (a TV adding a person) without the
+// administrator token. Each creator is limited so a leaked token cannot fill
+// the user store; a bridge without identities (open mode) has none to create.
+const identityCreations = new Map();
+async function createIdentity(user, label) {
+  if (!user?.token) throw new HttpError(409, 'This bridge does not use identities');
+  const users = await loadPersistedUsers();
+  if (users.filter((candidate) => candidate.parent === user.userId).length >= 10) throw new HttpError(429, 'This identity already created 10 profiles');
+  const now = Date.now();
+  const recent = (identityCreations.get(user.userId) ?? []).filter((at) => now - at < 60 * 60 * 1000);
+  if (recent.length >= 5) throw new HttpError(429, 'Too many profiles created in the last hour; try again later');
+  const token = randomBytes(32).toString('hex');
+  const registered = await registerUser(token, label, user.userId);
+  identityCreations.set(user.userId, [...recent, now]);
+  return { token, userId: registered.userId, label: registered.label };
+}
+
+async function authenticatedUser(request, requestUrl) {
+  const user = await userForToken(requestedAccessToken(request, requestUrl));
+  if (user) return user;
+  const users = await loadPersistedUsers();
   return !bridgeUsers.length && !users.length && !bridgeAdminToken ? { userId: 'local', token: '' } : null;
 }
 function forwardedValue(request, name) { return cleanText(request.headers[name]).split(',')[0].trim(); }
@@ -531,6 +554,65 @@ function pairingStatus(pairingId) {
   pairings.delete(id);
   return { status: 'approved', token: pairing.approved.token, label: pairing.approved.label };
 }
+function pendingPairing(code) {
+  const value = cleanText(code);
+  return [...pairings.values()].find((candidate) => candidate.expiresAt > Date.now() && !candidate.approved && sameSecret(candidate.code, value)) ?? null;
+}
+
+// First setup of a TV from any phone browser (no app needed): the TV's QR
+// opens /setup?code=…, where the person pastes an existing token or, the
+// first time, the administrator token to create an identity. The
+// administrator token is only checked, never stored; each code allows a few
+// attempts.
+async function completeSetup(fields) {
+  const pairing = pendingPairing(fields.code);
+  if (!pairing) throw new HttpError(404, 'El código caducó o ya se usó. Abre de nuevo el código QR en la TV.');
+  pairing.attempts = (pairing.attempts ?? 0) + 1;
+  if (pairing.attempts > 5) {
+    pairing.expiresAt = 0;
+    throw new HttpError(429, 'Demasiados intentos con este código. Abre un código nuevo en la TV.');
+  }
+  const label = historyText(fields.label, 'Perfil', 40);
+  let token;
+  if (fields.mode === 'create') {
+    if (!bridgeAdminToken) throw new HttpError(409, 'Este bridge no tiene token administrador configurado.');
+    if (!sameSecret(cleanText(fields.adminToken), bridgeAdminToken)) throw new HttpError(401, 'El token administrador no es válido.');
+    token = randomBytes(32).toString('hex');
+    await registerUser(token, label);
+  } else {
+    token = cleanText(fields.token).toLowerCase();
+    if (!validUserToken(token) || !(await userForToken(token))) throw new HttpError(401, 'Ese token no corresponde a ninguna identidad de este bridge.');
+  }
+  approvePairing(fields.code, label, { token });
+  return { label };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+}
+function setupPage(response, status, title, content) {
+  response.writeHead(status, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  });
+  response.end(`<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px;background:#0b0b12;color:#eee}main{max-width:520px;margin:auto}h1{font-size:1.5rem}section{background:#1a1a26;border-radius:16px;padding:16px;margin:16px 0}label{display:block;margin:10px 0 4px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #444;background:#0b0b12;color:#eee;font:inherit}button,a.button{display:block;width:100%;box-sizing:border-box;margin-top:14px;padding:12px;border:0;border-radius:10px;background:#6366f1;color:#fff;font:inherit;text-align:center;text-decoration:none}p.note{color:#aaa;font-size:.9rem}p.error{color:#fca5a5}</style>
+</head><body><main><h1>${escapeHtml(title)}</h1>${content}</main></body></html>`);
+}
+function setupForm(request, code, error = '') {
+  const app = `anksubbrd://pair?bridge=${encodeURIComponent(requestOrigin(request))}&code=${encodeURIComponent(code)}`;
+  const hidden = `<input type="hidden" name="code" value="${escapeHtml(code)}">`;
+  const nameField = '<label for="label-MODE">Nombre del perfil en la TV</label><input id="label-MODE" name="label" maxlength="40" placeholder="Por ejemplo, tu nombre" autocomplete="off">';
+  return `${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
+<section><strong>¿Tienes AniBridge Player en este teléfono?</strong><p class="note">La TV usará la identidad de la app: el mismo historial y las mismas preferencias.</p><a class="button" href="${escapeHtml(app)}">Abrir en la app</a></section>
+<section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="existing"><strong>Usar una identidad existente</strong>${nameField.replaceAll('MODE', 'existing')}<label for="token">Token de 64 caracteres</label><input id="token" name="token" autocomplete="off" autocapitalize="off" spellcheck="false" required minlength="64" maxlength="64"><button type="submit">Vincular la TV</button></form></section>
+${bridgeAdminToken ? `<section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="create"><strong>Crear una identidad nueva</strong><p class="note">La primera vez, con el token administrador del bridge. Sólo se usa para crear la identidad: no se guarda. Después, la TV puede crear más perfiles sin él.</p>${nameField.replaceAll('MODE', 'create')}<label for="admin">Token administrador</label><input id="admin" name="adminToken" type="password" autocomplete="off" required><button type="submit">Crear y vincular la TV</button></form></section>` : ''}
+<p class="note">El código caduca en 10 minutos.</p>`;
+}
+
 function approvePairing(code, label, user) {
   const value = cleanText(code);
   const pairing = [...pairings.values()].find((candidate) => candidate.expiresAt > Date.now() && sameSecret(candidate.code, value));
@@ -1279,6 +1361,23 @@ const server = http.createServer(async (request, response) => {
         return json(response, /already registered/.test(error.message) ? 409 : 400, { error: error.message });
       }
     }
+    // First setup page for a TV, from any phone browser.
+    if (requestUrl.pathname === '/setup' && (request.method === 'GET' || request.method === 'POST')) {
+      if (request.method === 'GET') {
+        const code = cleanText(requestUrl.searchParams.get('code'));
+        if (!pendingPairing(code)) return setupPage(response, 404, 'Código caducado', '<p>El código caducó o ya se usó. Abre de nuevo el código QR en la TV.</p>');
+        return setupPage(response, 200, 'Vincular la TV', setupForm(request, code));
+      }
+      const fields = Object.fromEntries(new URLSearchParams(await readBody(request)));
+      try {
+        const { label } = await completeSetup(fields);
+        return setupPage(response, 200, 'Listo', `<p>La TV ya tiene el perfil «${escapeHtml(label)}». Puedes cerrar esta página.</p><p class="note">Para guardar este perfil en otro dispositivo, usa «Llevar al teléfono» en los perfiles de la TV.</p>`);
+      } catch (error) {
+        const status = error instanceof HttpError ? error.status : 500;
+        if (status === 404 || status === 429) return setupPage(response, status, 'No se pudo vincular', `<p class="error">${escapeHtml(error.message)}</p>`);
+        return setupPage(response, status, 'Vincular la TV', setupForm(request, cleanText(fields.code), error.message));
+      }
+    }
     // Pairing start and status are open: the TV has no identity yet.
     if (request.method === 'POST' && requestUrl.pathname === '/api/pair/start') return json(response, 201, startPairing());
     if (request.method === 'GET' && requestUrl.pathname === '/api/pair/status') return json(response, 200, pairingStatus(requestUrl.searchParams.get('pairingId')));
@@ -1299,6 +1398,7 @@ const server = http.createServer(async (request, response) => {
       const reply = await waitForCommands(user, deviceRoute[1], response, undefined, after);
       return reply ? json(response, 200, reply) : undefined;
     }
+    if (request.method === 'POST' && requestUrl.pathname === '/api/identities') return json(response, 201, await createIdentity(user, JSON.parse(await readBody(request)).label));
     if (request.method === 'POST' && requestUrl.pathname === '/api/pair/approve') { const body = JSON.parse(await readBody(request)); return json(response, 200, approvePairing(body.code, body.label, user)); }
     if (request.method === 'GET' && requestUrl.pathname === '/api/schedule') return json(response, 200, { entries: await provider.schedule() });
     if (request.method === 'GET' && requestUrl.pathname === '/api/history') {
@@ -1336,4 +1436,4 @@ const server = http.createServer(async (request, response) => {
 // Tests import the pure helpers without opening a port.
 if (!process.env.BRIDGE_NO_LISTEN) server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));
 
-export { approvePairing, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
+export { approvePairing, completeSetup, createIdentity, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };

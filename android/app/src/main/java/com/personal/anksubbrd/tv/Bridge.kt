@@ -180,6 +180,12 @@ data class PreferencesEnvelope(val preferences: Preferences? = null)
 data class PairingStart(val pairingId: String, val code: String, val expiresAt: String)
 
 @Serializable
+data class CreatedIdentity(val token: String, val label: String? = null)
+
+@Serializable
+private data class IdentityRequest(val label: String)
+
+@Serializable
 data class PairingStatus(val status: String, val token: String? = null, val label: String? = null)
 
 /** A command sent from a phone app (remote control). */
@@ -307,6 +313,10 @@ class BridgeClient(val baseUrl: String, private val token: String) {
     suspend fun preferences(): Preferences = get<PreferencesEnvelope>("/api/preferences").preferences ?: Preferences()
 
     suspend fun startPairing(): PairingStart = post("/api/pair/start", "{}")
+
+    /** A new identity created by this one (a new profile; no administrator token). */
+    suspend fun createIdentity(label: String): CreatedIdentity =
+        post("/api/identities", json.encodeToString(IdentityRequest.serializer(), IdentityRequest(label)))
 
     suspend fun pairingStatus(pairingId: String): PairingStatus = get("/api/pair/status", listOf("pairingId" to pairingId))
 

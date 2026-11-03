@@ -3,7 +3,10 @@ import { test } from 'node:test';
 
 process.env.BRIDGE_NO_LISTEN = '1';
 process.env.PROVIDER_ORIGIN = 'https://catalog.example';
-const { approvePairing, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
+// Identities created by the tests go to a throwaway store.
+process.env.BRIDGE_USER_STORE_PATH = (await import('node:path')).join((await import('node:os')).tmpdir(), `anksubbrd-users-${process.pid}-${Date.now()}.json`);
+process.env.BRIDGE_ADMIN_TOKEN = 'admin-secret';
+const { approvePairing, completeSetup, createIdentity, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
 
 // One 188-byte MPEG-TS packet starting a PES with only a PTS.
 function pesPacket(streamId, pts) {
@@ -292,4 +295,35 @@ test('Remote control: a TV reports itself and receives commands from the same id
   sendCommand(tv, deviceId, { type: 'play', watchUrl: '/watch/delta-4', episode: 5, kind: 'dub' });
   const next = await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 50);
   assert.deepEqual(next.commands.map(({ type, watchUrl, episode, kind }) => [type, watchUrl, episode, kind]), [['play', 'https://catalog.example/watch/delta-4', 5, 'dub']]);
+});
+
+test('A profile creates profiles, and a TV is set up from the browser page', async () => {
+  const parent = { userId: 'parent-user', token: 'a'.repeat(64) };
+  const created = await createIdentity(parent, 'Sala');
+  assert.match(created.token, /^[a-f0-9]{64}$/);
+  await assert.rejects(createIdentity({ userId: 'local', token: '' }, 'Sala'), (error) => error.status === 409);
+
+  // First setup with the administrator token creates the TV's identity.
+  const first = startPairing();
+  await assert.rejects(completeSetup({ code: first.code, mode: 'create', adminToken: 'wrong', label: 'Ana' }), (error) => error.status === 401);
+  await completeSetup({ code: first.code, mode: 'create', adminToken: 'admin-secret', label: 'Ana' });
+  const approved = pairingStatus(first.pairingId);
+  assert.equal(approved.label, 'Ana');
+  assert.match(approved.token, /^[a-f0-9]{64}$/);
+
+  // An existing identity's token links the TV to that identity.
+  const second = startPairing();
+  await assert.rejects(completeSetup({ code: second.code, mode: 'existing', token: 'b'.repeat(64) }), (error) => error.status === 401);
+  await completeSetup({ code: second.code, mode: 'existing', token: created.token, label: 'Sala' });
+  assert.equal(pairingStatus(second.pairingId).token, created.token);
+
+  // A code allows a few attempts.
+  const third = startPairing();
+  for (let attempt = 0; attempt < 5; attempt += 1) await assert.rejects(completeSetup({ code: third.code, mode: 'existing', token: 'c'.repeat(64) }), (error) => error.status === 401);
+  await assert.rejects(completeSetup({ code: third.code, mode: 'existing', token: created.token }), (error) => error.status === 429);
+  await assert.rejects(completeSetup({ code: third.code, mode: 'existing', token: created.token }), (error) => error.status === 404);
+
+  // Each identity creates at most five profiles an hour.
+  for (let count = 1; count < 5; count += 1) await createIdentity(parent, `Perfil ${count}`);
+  await assert.rejects(createIdentity(parent, 'Uno más'), (error) => error.status === 429);
 });
