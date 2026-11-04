@@ -96,7 +96,7 @@ final class CastCenter {
 
     private func attach() {
         sessionManager.add(listener)
-        _ = NotificationCenter.default.addObserver(forName: NSNotification.Name(rawValue: kGCKCastStateDidChangeNotification), object: GCKCastContext.sharedInstance(), queue: .main) { _ in
+        _ = NotificationCenter.default.addObserver(forName: kGCKCastStateDidChangeNotification, object: GCKCastContext.sharedInstance(), queue: .main) { _ in
             MainActor.assumeIsolated { CastCenter.shared.castStateChanged() }
         }
         castStateChanged()
