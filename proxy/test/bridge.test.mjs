@@ -6,7 +6,7 @@ process.env.PROVIDER_ORIGIN = 'https://catalog.example';
 // Identities created by the tests go to a throwaway store.
 process.env.BRIDGE_USER_STORE_PATH = (await import('node:path')).join((await import('node:os')).tmpdir(), `anksubbrd-users-${process.pid}-${Date.now()}.json`);
 process.env.BRIDGE_ADMIN_TOKEN = 'admin-secret';
-const { approvePairing, completeSetup, createIdentity, liveContainerLinks, setupForm, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
+const { approvePairing, completeSetup, createIdentity, liveContainerLinks, sameNetwork, setupForm, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
 
 // One 188-byte MPEG-TS packet starting a PES with only a PTS.
 function pesPacket(streamId, pts) {
@@ -264,6 +264,8 @@ test('Remote control: a TV reports itself and receives commands from the same id
   const other = { userId: 'someone-else', token: 'o' };
   const deviceId = 'tv-0123456789';
   reportDevice(tv, deviceId, { name: 'Sala', canOpen: true, state: { status: 'playing', seriesTitle: 'Delta', episode: 3, position: 61.5, duration: 1440, kind: 'sub' } });
+  // A real TV also keeps a command poll going.
+  await waitForCommands(tv, deviceId, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), 1);
   assert.deepEqual(listDevices(tv).devices.map(({ id, name, state, canOpen }) => [id, name, state.status, state.episode, canOpen]), [[deviceId, 'Sala', 'playing', 3, true]]);
   assert.ok(listDevices(tv).devices[0].stateAge >= 0);
   assert.equal(listDevices(other).devices.length, 0);
@@ -438,4 +440,56 @@ test('Cast routes answer the receiver with CORS, without the identity token', as
   assert.equal(unknown.status, 404);
   assert.equal(unknown.headers.get('access-control-allow-origin'), '*');
   sources.delete('cast-source-2');
+});
+
+test('A TV is listed only while a phone of its identity can really control it', async () => {
+  const { EventEmitter } = await import('node:events');
+  const poll = (user, id, waitMs = 1) => waitForCommands(user, id, Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false }), waitMs);
+  const owner = { userId: 'availability-user', token: 'a' };
+  const stranger = { userId: 'availability-other', token: 'b' };
+  const listed = (user, ...rest) => listDevices(user, ...rest).devices.map(({ id }) => id);
+
+  // Reporting state is not enough: without a command poll, commands would not arrive.
+  reportDevice(owner, 'tv-reports-only', { name: 'Reports', state: { status: 'idle' } });
+  assert.deepEqual(listed(owner), []);
+  assert.throws(() => sendCommand(owner, 'tv-reports-only', { type: 'pause' }), (error) => error.status === 404);
+
+  // Reporting and polling: listed for its identity only.
+  reportDevice(owner, 'tv-living-room', { name: 'Sala', state: { status: 'idle' }, awake: true }, '203.0.113.7');
+  await poll(owner, 'tv-living-room');
+  assert.deepEqual(listed(owner), ['tv-living-room']);
+  assert.deepEqual(listed(stranger), []);
+  assert.throws(() => sendCommand(stranger, 'tv-living-room', { type: 'pause' }), (error) => error.status === 404);
+
+  // While a poll is open the channel is alive however long it lasts.
+  const open = poll(owner, 'tv-living-room', 200);
+  assert.deepEqual(listed(owner, null, Date.now() + 40_000), ['tv-living-room']);
+  await open;
+  // 35 s after the last poll ended (the TV app was killed), it is gone.
+  assert.deepEqual(listed(owner, null, Date.now() + 36_000), []);
+
+  // In standby it keeps running but is not listed, and commands are refused.
+  reportDevice(owner, 'tv-living-room', { name: 'Sala', state: { status: 'idle' }, awake: false }, '203.0.113.7');
+  assert.deepEqual(listed(owner), []);
+  assert.throws(() => sendCommand(owner, 'tv-living-room', { type: 'play', watchUrl: '/watch/x', episode: 1 }), (error) => error.status === 409);
+
+  // Awake again; the phone learns whether it shares the TV's network.
+  reportDevice(owner, 'tv-living-room', { name: 'Sala', state: { status: 'idle' }, awake: true }, '203.0.113.7');
+  assert.equal(listDevices(owner, '203.0.113.7').devices[0].sameNetwork, true);
+  assert.equal(listDevices(owner, '198.51.100.20').devices[0].sameNetwork, false);
+  assert.equal(listDevices(owner, null).devices[0].sameNetwork, null);
+  // Another network is still controllable: commands go through the bridge.
+  assert.equal(sendCommand(owner, 'tv-living-room', { type: 'pause' }).ok, true);
+});
+
+test('Same network: one public IPv4, one private /24 or one IPv6 /64', () => {
+  assert.equal(sameNetwork('203.0.113.7', '203.0.113.7'), true);
+  assert.equal(sameNetwork('203.0.113.7', '203.0.113.8'), false);
+  assert.equal(sameNetwork('192.168.50.3', '192.168.50.20'), true);
+  assert.equal(sameNetwork('192.168.50.3', '192.168.1.20'), false);
+  assert.equal(sameNetwork('10.0.0.5', '10.0.0.9'), true);
+  assert.equal(sameNetwork('2001:db8:1:2::10', '2001:db8:1:2:abcd::1'), true);
+  assert.equal(sameNetwork('2001:db8:1:2::10', '2001:db8:1:3::10'), false);
+  assert.equal(sameNetwork('203.0.113.7', '2001:db8::1'), null);
+  assert.equal(sameNetwork(null, '203.0.113.7'), null);
 });

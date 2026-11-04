@@ -690,10 +690,25 @@ function approvePairing(code, label, user) {
 
 // Remote control. TV apps register as devices of their identity, report what
 // they are playing and wait for commands with a long poll; apps of the same
-// identity list those TVs and send them commands. Kept in memory: a TV that
-// stops reporting for 45 seconds is offline.
+// identity list those TVs and send them commands. Kept in memory.
+//
+// A TV is listed (and accepts commands) only while a phone can really
+// control it:
+// - same identity: devices are keyed by the identity's user id;
+// - it reported in the last 45 s;
+// - its command channel is alive: a long poll is open now, or one ended less
+//   than 35 s ago (polls last 25 s). State reports alone do not prove that
+//   commands arrive (a poll can die behind a proxy while reports go on);
+// - it is awake: TVs report whether their screen is on, and a TV in standby
+//   keeps its service running but nobody would see what a phone sends. TV
+//   apps that do not report it count as awake.
+// Being on the same network is not required: commands travel through the
+// bridge, so a TV at home is controllable from anywhere the bridge is. The
+// list says, per TV, whether the phone and the TV reached the bridge from the
+// same network (`sameNetwork`), or null when the addresses cannot tell.
 const devices = new Map();
 const deviceTimeout = 45 * 1000;
+const commandChannelTimeout = 35 * 1000;
 const commandTypes = ['play', 'pause', 'resume', 'toggle', 'seek', 'skip', 'next', 'previous', 'stop', 'volume', 'subtitles'];
 const subtitleTrackId = /^(?:off|\d{1,3}:\d{1,3})$/;
 function deviceFor(user, deviceId, create = true) {
@@ -702,7 +717,7 @@ function deviceFor(user, deviceId, create = true) {
   const key = `${user.userId}:${id}`;
   let device = devices.get(key);
   if (!device && create) {
-    device = { id, userId: user.userId, name: 'TV', state: null, stateAt: 0, canOpen: false, lastSeen: 0, queue: [], seq: 0, waiters: new Set() };
+    device = { id, userId: user.userId, name: 'TV', state: null, stateAt: 0, canOpen: false, awake: null, address: null, lastSeen: 0, lastPoll: 0, queue: [], seq: 0, waiters: new Set() };
     devices.set(key, device);
   }
   return device;
@@ -727,30 +742,69 @@ function deviceState(value) {
     subtitle: subtitleTrackId.test(String(value.subtitle)) ? value.subtitle : null,
   };
 }
-function reportDevice(user, deviceId, body) {
+function reportDevice(user, deviceId, body, address = null) {
   const device = deviceFor(user, deviceId);
   device.name = historyText(body?.name, device.name, 60);
   device.state = deviceState(body?.state);
   // Whether the TV app can open itself for "play" while it is closed.
   device.canOpen = body?.canOpen === true;
+  // Screen on (true) or in standby (false); null when the TV app is older.
+  device.awake = typeof body?.awake === 'boolean' ? body.awake : null;
+  device.address = address;
   device.stateAt = device.lastSeen = Date.now();
   return { ok: true };
 }
-function listDevices(user) {
-  const cutoff = Date.now() - deviceTimeout;
-  const now = Date.now();
-  const online = [...devices.values()].filter((device) => device.userId === user.userId && device.lastSeen > cutoff);
+function deviceAvailability(device, now = Date.now()) {
+  if (device.lastSeen <= now - deviceTimeout) return 'offline';
+  if (!device.waiters.size && device.lastPoll <= now - commandChannelTimeout) return 'offline';
+  if (device.awake === false) return 'asleep';
+  return 'available';
+}
+// The address a request came from: the first X-Forwarded-For hop behind the
+// reverse proxy, else the socket. IPv4-mapped IPv6 is reduced to IPv4.
+function clientAddress(request) {
+  const value = forwardedValue(request, 'x-forwarded-for') || cleanText(request?.socket?.remoteAddress);
+  return value ? value.replace(/^::ffff:/i, '').toLowerCase() : null;
+}
+function expandedIpv6(value) {
+  const [head, tail = ''] = value.split('%')[0].split('::');
+  const left = head ? head.split(':') : [];
+  const right = value.includes('::') && tail ? tail.split(':') : [];
+  const groups = value.includes('::') ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right] : left;
+  return groups.map((group) => group.padStart(4, '0'));
+}
+// Whether two clients reached the bridge from the same network: the same
+// public IPv4 (one NAT), the same private /24 (a bridge inside the home
+// network) or the same IPv6 /64. Null when they cannot be compared (unknown,
+// or one IPv4 and one IPv6). A VPN on either side shows as another network.
+function sameNetwork(left, right) {
+  if (!left || !right) return null;
+  const ipv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+  if (ipv4.test(left) && ipv4.test(right)) {
+    if (left === right) return true;
+    const isPrivate = (address) => /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(address);
+    const prefix = (address) => address.split('.').slice(0, 3).join('.');
+    return isPrivate(left) && isPrivate(right) && prefix(left) === prefix(right);
+  }
+  if (left.includes(':') && right.includes(':')) return expandedIpv6(left).slice(0, 4).join(':') === expandedIpv6(right).slice(0, 4).join(':');
+  return null;
+}
+function listDevices(user, address = null, now = Date.now()) {
+  const available = [...devices.values()].filter((device) => device.userId === user.userId && deviceAvailability(device, now) === 'available');
   // stateAge (ms) lets the phone advance the position between reports
   // without depending on its clock matching the bridge's.
   return {
-    devices: online.map(({ id, name, state, stateAt, canOpen, lastSeen }) => ({
+    devices: available.map(({ id, name, state, stateAt, canOpen, lastSeen, address: tvAddress }) => ({
       id, name, state, stateAge: now - stateAt, canOpen, lastSeen: new Date(lastSeen).toISOString(),
+      sameNetwork: sameNetwork(address, tvAddress),
     })),
   };
 }
 function sendCommand(user, deviceId, body) {
   const device = deviceFor(user, deviceId, false);
-  if (!device || device.lastSeen < Date.now() - deviceTimeout) throw new HttpError(404, 'The TV is not connected');
+  const availability = device ? deviceAvailability(device) : 'offline';
+  if (availability === 'offline') throw new HttpError(404, 'The TV is not connected');
+  if (availability === 'asleep') throw new HttpError(409, 'The TV is in standby');
   const type = cleanText(body?.type);
   if (!commandTypes.includes(type)) throw new HttpError(400, 'Invalid command');
   // `seq` orders the commands of a TV; it acknowledges them with `after`.
@@ -792,7 +846,7 @@ function sendCommand(user, deviceId, body) {
 const commandLifetime = 2 * 60 * 1000;
 async function waitForCommands(user, deviceId, response, waitMs = 25 * 1000, after = null) {
   const device = deviceFor(user, deviceId);
-  device.lastSeen = Date.now();
+  device.lastSeen = device.lastPoll = Date.now();
   const acknowledged = Number.isSafeInteger(after) && after >= 0 ? after : null;
   const pending = () => {
     const now = Date.now();
@@ -813,7 +867,7 @@ async function waitForCommands(user, deviceId, response, waitMs = 25 * 1000, aft
     });
   }
   if (response.destroyed || response.writableEnded) return null;
-  device.lastSeen = Date.now();
+  device.lastSeen = device.lastPoll = Date.now();
   if (acknowledged === null) return { commands: device.queue.splice(0) };
   return { commands: pending().map(({ at, ...command }) => command) };
 }
@@ -1583,9 +1637,9 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === 'GET' && requestUrl.pathname === '/api/latest') return json(response, 200, await provider.latest(requestUrl.searchParams));
     if (request.method === 'GET' && requestUrl.pathname === '/api/catalog/filters') return json(response, 200, provider.filters ?? {});
-    if (request.method === 'GET' && requestUrl.pathname === '/api/devices') return json(response, 200, listDevices(user));
+    if (request.method === 'GET' && requestUrl.pathname === '/api/devices') return json(response, 200, listDevices(user, clientAddress(request)));
     const deviceRoute = requestUrl.pathname.match(/^\/api\/devices\/([\w-]+)(\/commands)?$/);
-    if (deviceRoute && request.method === 'PUT' && !deviceRoute[2]) return json(response, 200, reportDevice(user, deviceRoute[1], JSON.parse(await readBody(request))));
+    if (deviceRoute && request.method === 'PUT' && !deviceRoute[2]) return json(response, 200, reportDevice(user, deviceRoute[1], JSON.parse(await readBody(request)), clientAddress(request)));
     if (deviceRoute && request.method === 'POST' && deviceRoute[2]) return json(response, 201, sendCommand(user, deviceRoute[1], JSON.parse(await readBody(request))));
     if (deviceRoute && request.method === 'GET' && deviceRoute[2]) {
       const after = requestUrl.searchParams.has('after') ? Number(requestUrl.searchParams.get('after')) : null;
@@ -1633,4 +1687,4 @@ const server = http.createServer(async (request, response) => {
 // Tests import the pure helpers without opening a port.
 if (!process.env.BRIDGE_NO_LISTEN) server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));
 
-export { approvePairing, castSource, server, completeSetup, liveContainerLinks, revokeCast, rewriteUriLines, setupForm, shareForCast, sources, createIdentity, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
+export { approvePairing, castSource, sameNetwork, server, completeSetup, liveContainerLinks, revokeCast, rewriteUriLines, setupForm, shareForCast, sources, createIdentity, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };

@@ -238,6 +238,20 @@ struct AdaptableTabRootTitleStyle: ViewModifier {
     }
 }
 
+/// Opens a series from a list: pushes it on one column, shows it beside the
+/// list on two.
+struct OpenSeriesAction {
+    let action: (Anime) -> Void
+
+    func callAsFunction(_ anime: Anime) { action(anime) }
+}
+
+extension EnvironmentValues {
+    @Entry var openSeries = OpenSeriesAction { _ in }
+    /// The series shown beside the list, to mark its row.
+    @Entry var openedSeriesURL: String? = nil
+}
+
 /// Circular Liquid Glass icon used by the player controls and menus.
 struct GlassIcon: View {
     let systemName: String
@@ -254,36 +268,78 @@ struct GlassIcon: View {
     }
 }
 
-/// Recientes, Buscar and Continuar: a stack on compact width; on regular
-/// width (an unfolded iPhone Duo, iPad, large iPhones in landscape) the list
-/// stays on the left and the series opens beside it. Links in the list show
-/// their destination in the detail column, so the screens do not change.
+/// Recientes, Buscar and Continuar: one column, or the list with the series
+/// beside it where both size classes are regular (iPad, the unfolded iPhone
+/// Duo). An iPhone in landscape (compact height) keeps one column.
 ///
-/// A split view created when its tab is first selected is laid out once below
-/// the floating tab bar and then moved up under it, which left a strip of the
-/// window background above the list (black in dark mode). The columns and
-/// what lies behind them share one background, so that first layout already
-/// looks like the final one.
+/// The two columns are two NavigationStacks side by side rather than a
+/// NavigationSplitView: inside a tab with the floating tab bar, a split view
+/// created when its tab is first selected was laid out below the tab bar and
+/// then moved up (the column title and buttons jumped). Navigation stacks take
+/// the tab's safe area from their first layout, like every other tab.
+///
+/// The open series is this view's state, so it survives switching between one
+/// and two columns (folding, rotating, resizing). Each series gets its own
+/// identity, so choosing another one always replaces the screen beside the
+/// list. The player is presented above the tabs (`PlayerHost`), so changing
+/// the layout never closes it.
 struct AdaptiveSeriesNavigation<Content: View>: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ViewBuilder let content: () -> Content
+    @State private var path: [Anime] = []
+
+    private var twoColumns: Bool { horizontalSizeClass == .regular && verticalSizeClass == .regular }
 
     var body: some View {
-        if horizontalSizeClass == .regular {
-            NavigationSplitView {
-                content()
-                    .navigationSplitViewColumnWidth(min: 340, ideal: 440, max: 600)
-                    .containerBackground(Self.background, for: .navigation)
-            } detail: {
-                ContentUnavailableView("Elige una serie", systemImage: "sidebar.left", description: Text("Se abre aquí, junto a la lista."))
-                    .containerBackground(Self.background, for: .navigation)
+        if twoColumns {
+            GeometryReader { proxy in
+                let columns = Self.columns(in: proxy)
+                HStack(spacing: 0) {
+                    NavigationStack(root: content)
+                        .environment(\.openSeries, OpenSeriesAction { path = [$0] })
+                        .environment(\.openedSeriesURL, path.last?.watchUrl)
+                        .frame(width: columns.list)
+                    if columns.gap > 0 {
+                        Color(uiColor: .systemGroupedBackground)
+                            .frame(width: columns.gap)
+                            .ignoresSafeArea()
+                    } else {
+                        Divider()
+                            .ignoresSafeArea()
+                    }
+                    NavigationStack {
+                        if let anime = path.last {
+                            EpisodesScreen(anime: anime)
+                                .id(anime.watchUrl)
+                        } else {
+                            ContentUnavailableView("Elige una serie", systemImage: "rectangle.split.2x1", description: Text("Se abre aquí, junto a la lista."))
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             }
-            .background(Self.background.ignoresSafeArea())
         } else {
-            NavigationStack(root: content)
+            NavigationStack(path: $path) {
+                content()
+                    .navigationDestination(for: Anime.self) { EpisodesScreen(anime: $0) }
+            }
+            .environment(\.openSeries, OpenSeriesAction { path.append($0) })
         }
     }
 
-    /// The grouped background the Continue list and the series screen use.
-    private static var background: Color { Color(uiColor: .systemGroupedBackground) }
+    /// The list's width and the gap after it. On a foldable (iOS 27.1+ reports
+    /// the fold as a division region) the columns meet at the fold, so the
+    /// hinge never splits a column; otherwise the list takes about a third.
+    private static func columns(in proxy: GeometryProxy) -> (list: CGFloat, gap: CGFloat) {
+        let width = proxy.size.width
+        if #available(iOS 27.1, *) {
+            let folds = proxy.reservedRegions(kind: .division, options: .includeInactive)
+            if let fold = folds.first(where: { $0.frame.height > $0.frame.width }),
+               fold.frame.minX >= 320, width - fold.frame.maxX >= 320 {
+                return (fold.frame.minX, max(0, fold.frame.width))
+            }
+        }
+        return (min(max(width * 0.34, 340), 440), 0)
+    }
 }

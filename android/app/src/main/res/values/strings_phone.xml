@@ -68,7 +68,8 @@
     <string name="connect_to_tv">Connect to a TV</string>
     <string name="no_tvs">No TVs connected. Open AniBridge Player on the TV with a profile linked to this identity.</string>
     <string name="searching_tvs">Looking for TVs…</string>
-    <string name="remember_tv">The app will remember the chosen TV until you press Disconnect.</string>
+    <string name="remember_tv">Only TVs that are on and waiting for this identity\'s commands are listed, also from another network: commands go through the bridge. The app remembers the chosen TV until you press Disconnect.</string>
+    <string name="tv_other_network">Another network · controlled through the bridge</string>
     <string name="tv_unavailable">%1$s is not available. Turn on the TV and open AniBridge Player with a profile linked to this identity.</string>
     <string name="connecting">Connecting…</string>
     <string name="play_on_this_phone">Play on this phone</string>

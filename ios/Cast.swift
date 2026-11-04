@@ -44,6 +44,8 @@ final class CastCenter {
     static let shared = CastCenter()
 
     private(set) var isConnected = false
+    /// The SDK found a Cast device on this Wi-Fi (or a session is open).
+    private(set) var devicesAvailable = false
     private(set) var deviceName: String?
     private(set) var state: CastPlaybackState = .idle
     private(set) var position: Double = 0
@@ -79,9 +81,11 @@ final class CastCenter {
         guard !GCKCastContext.isSharedInstanceInitialized() else { return }
         let criteria = GCKDiscoveryCriteria(applicationID: kGCKDefaultMediaReceiverApplicationID)
         let options = GCKCastOptions(discoveryCriteria: criteria)
-        // The Local Network prompt appears on the first tap of the Cast
-        // button, not at launch.
-        options.startDiscoveryAfterFirstTapOnCastButton = true
+        // Discovery starts with the app (the bridge on the home network
+        // already asks for local network access), so the Cast button can
+        // appear only when there is a device: the SDK's own button hides
+        // itself without devices or Wi-Fi, which left an empty glass circle.
+        options.startDiscoveryAfterFirstTapOnCastButton = false
         options.suspendSessionsWhenBackgrounded = true
         GCKCastContext.setSharedInstanceWith(options)
         shared.attach()
@@ -92,7 +96,15 @@ final class CastCenter {
 
     private func attach() {
         sessionManager.add(listener)
+        _ = NotificationCenter.default.addObserver(forName: NSNotification.Name(rawValue: kGCKCastStateDidChangeNotification), object: GCKCastContext.sharedInstance(), queue: .main) { _ in
+            MainActor.assumeIsolated { CastCenter.shared.castStateChanged() }
+        }
+        castStateChanged()
         sessionChanged()
+    }
+
+    private func castStateChanged() {
+        devicesAvailable = GCKCastContext.sharedInstance().castState != .noDevicesAvailable
     }
 
     // MARK: Session

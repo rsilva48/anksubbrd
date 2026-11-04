@@ -4530,6 +4530,23 @@
         }
       }
     },
+    "Otra red · se controla a través del bridge" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another network · controlled through the bridge"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Otra red · se controla a través del bridge"
+          }
+        }
+      }
+    },
     "Para mayores de 18 años" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5864,6 +5881,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Subtítulos, audio y velocidad"
+          }
+        }
+      }
+    },
+    "Sólo aparecen las TVs encendidas que esperan órdenes de esta identidad, también desde otra red: las órdenes pasan por el bridge. La app recordará la TV elegida hasta que pulses Desconectar." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Only TVs that are on and waiting for this identity’s commands are listed, also from another network: commands go through the bridge. The app remembers the chosen TV until you press Disconnect."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sólo aparecen las TVs encendidas que esperan órdenes de esta identidad, también desde otra red: las órdenes pasan por el bridge. La app recordará la TV elegida hasta que pulses Desconectar."
           }
         }
       }

@@ -27,10 +27,11 @@ import androidx.window.core.layout.WindowSizeClass
 /**
  * How the phone app uses the current window (Jetpack WindowManager through
  * Material 3 adaptive): compact windows keep the bottom bar and one pane;
- * from the medium width class (600 dp: unfolded foldables, tablets, large
- * phones in landscape, split screen) a navigation rail and the list beside
- * the series. Hinge bounds are in window pixels; devices without a fold
- * report none, so older phones keep the compact layout.
+ * from the medium width class (600 dp: unfolded foldables, tablets, phones
+ * in landscape, split screen) a navigation rail, and the list beside the
+ * series when the height is medium too (not a phone in landscape). Hinge
+ * bounds are in window pixels; devices without a fold report none, so older
+ * phones keep the compact layout.
  */
 internal data class PhoneLayout(
     val rail: Boolean,
@@ -45,10 +46,13 @@ internal data class PhoneLayout(
 internal fun rememberPhoneLayout(): PhoneLayout {
     val info = currentWindowAdaptiveInfoV2()
     val wide = info.windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
+    // A phone in landscape is wide but short: it keeps one pane (with the
+    // rail, which saves height); two panes need a medium height too.
+    val tall = info.windowSizeClass.isHeightAtLeastBreakpoint(WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND)
     val posture = info.windowPosture
     val verticalHinge = posture.allVerticalHingeBounds.firstOrNull()
     val tabletopHinge = posture.separatingHorizontalHingeBounds.firstOrNull()?.takeIf { posture.isTabletop }
-    return PhoneLayout(rail = wide, twoPane = wide, verticalHinge = verticalHinge, tabletopHinge = tabletopHinge)
+    return PhoneLayout(rail = wide, twoPane = wide && tall, verticalHinge = verticalHinge, tabletopHinge = tabletopHinge)
 }
 
 /**

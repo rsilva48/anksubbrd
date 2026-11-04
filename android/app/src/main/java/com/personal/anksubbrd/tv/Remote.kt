@@ -7,11 +7,13 @@ import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -47,6 +49,11 @@ object Remote {
     val foreground = MutableStateFlow(false)
     /** Bumped after each command so the phone sees its effect right away. */
     internal val handled = MutableStateFlow(0L)
+    /**
+     * Whether the screen is on. In standby the service keeps running, but the
+     * bridge stops listing this TV to the phones: nobody would see what they send.
+     */
+    val awake = MutableStateFlow(true)
 }
 
 /**
@@ -66,7 +73,8 @@ suspend fun runRemoteControl(
             val current = Remote.state.value
             val foreground = Remote.foreground.value
             val handled = Remote.handled.value
-            runCatching { client.reportDevice(deviceId, deviceName, current, foreground || canOpen()) }
+            val awake = Remote.awake.value
+            runCatching { client.reportDevice(deviceId, deviceName, current, foreground || canOpen(), awake) }
             // Status, episode or skip changes are sent right away; the
             // position alone every 5 s while playing, otherwise every 15 s.
             withTimeoutOrNull(if (current.status == "playing") 5_000L else 15_000L) {
@@ -77,6 +85,7 @@ suspend fun runRemoteControl(
                     },
                     Remote.foreground.filter { it != foreground },
                     Remote.handled.filter { it != handled },
+                    Remote.awake.filter { it != awake },
                 ).first()
             }
             delay(500)
@@ -120,6 +129,26 @@ class RemoteService : Service() {
     private var running: Pair<String, String>? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    // Screen on/off: standby is reported to the bridge right away.
+    private val screen = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_ON -> Remote.awake.value = true
+                Intent.ACTION_SCREEN_OFF -> Remote.awake.value = false
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        Remote.awake.value = getSystemService(PowerManager::class.java)?.isInteractive ?: true
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        ContextCompat.registerReceiver(this, screen, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
@@ -168,6 +197,7 @@ class RemoteService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { unregisterReceiver(screen) }
         scope.cancel()
         super.onDestroy()
     }

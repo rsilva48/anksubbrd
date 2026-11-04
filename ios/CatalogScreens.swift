@@ -147,6 +147,7 @@ struct CatalogGrid<EmptyState: View>: View {
     /// and its toolbar button, can be hidden by the search field).
     var onShowFilters: (() -> Void)? = nil
     @ViewBuilder let emptyState: () -> EmptyState
+    @Environment(\.openSeries) private var openSeries
 
     private var visible: [Anime] {
         feed.items.filter { filters.allows($0) && !(hideAdult && $0.isAdult) }
@@ -156,7 +157,9 @@ struct CatalogGrid<EmptyState: View>: View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 108, maximum: 176), spacing: 14, alignment: .top)], alignment: .leading, spacing: 22) {
                 ForEach(visible) { anime in
-                    NavigationLink(value: anime) {
+                    Button {
+                        openSeries(anime)
+                    } label: {
                         PosterCard(anime: anime, language: language)
                     }
                     .buttonStyle(.plain)
@@ -301,7 +304,6 @@ struct LatestScreen: View {
             }
             .navigationTitle("Recientes")
             .modifier(AdaptableTabRootTitleStyle())
-            .navigationDestination(for: Anime.self) { EpisodesScreen(anime: $0) }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
@@ -379,7 +381,6 @@ struct SearchScreen: View {
             }
             .navigationTitle("Buscar")
             .modifier(AdaptableTabRootTitleStyle())
-            .navigationDestination(for: Anime.self) { EpisodesScreen(anime: $0) }
             .searchable(text: $query, isPresented: $searchPresented, prompt: "Título de la serie")
             .task(id: activation) {
                 // Focus the field when the tab is selected, but not when the

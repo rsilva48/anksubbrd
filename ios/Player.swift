@@ -878,6 +878,32 @@ final class PlayerModel: Identifiable {
     }
 }
 
+/// The episode open in the player of a tab or sheet.
+@MainActor
+@Observable
+final class PlayerPresenter {
+    var model: PlayerModel?
+}
+
+/// Presents the player above the content it modifies (the tabs, or a sheet)
+/// instead of above a series screen: rotating or folding can rebuild that
+/// screen (one column becomes two), which would close a player presented
+/// from it and stop the episode.
+struct PlayerHost: ViewModifier {
+    @Environment(DownloadStore.self) private var downloads
+    @Environment(ProfileStore.self) private var profile
+    @State private var presenter = PlayerPresenter()
+
+    func body(content: Content) -> some View {
+        @Bindable var presenter = presenter
+        content
+            .environment(presenter)
+            .fullScreenCover(item: $presenter.model, onDismiss: { downloads.cleanUpWatched(profile: profile) }) { model in
+                PlayerScreen(model: model)
+            }
+    }
+}
+
 struct PlayerScreen: View {
     private enum Level { case brightness, volume }
     private enum EdgeDrag { case brightness(start: Double), volume(start: Float), ignored }
@@ -1241,10 +1267,13 @@ struct PlayerScreen: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Imagen dentro de imagen")
                     }
-                    CastButton()
-                        .frame(width: 44, height: 44)
-                        .glassEffect(.regular.interactive(), in: .circle)
-                        .accessibilityLabel("Google Cast")
+                    // Only with a Cast device on this Wi-Fi, or a session open.
+                    if cast.devicesAvailable || cast.isConnected {
+                        CastButton()
+                            .frame(width: 44, height: 44)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                            .accessibilityLabel("Google Cast")
+                    }
                     RoutePickerButton()
                         .frame(width: 44, height: 44)
                         .glassEffect(.regular.interactive(), in: .circle)

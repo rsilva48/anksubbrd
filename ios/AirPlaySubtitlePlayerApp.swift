@@ -123,6 +123,7 @@ struct RootView: View {
                 requiringBridge { SearchScreen(activation: searchActivation) }
             }
         }
+        .modifier(PlayerHost())
         .onChange(of: selection) { _, tab in
             if tab == .search { searchActivation += 1 }
         }
@@ -202,6 +203,8 @@ struct RootView: View {
                         }
                     }
             }
+            // Its own player: the tabs' one cannot present over this sheet.
+            .modifier(PlayerHost())
         }
         .task {
             await updates.checkOnLaunch()

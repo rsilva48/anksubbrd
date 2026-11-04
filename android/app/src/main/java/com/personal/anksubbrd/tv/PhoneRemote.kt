@@ -142,7 +142,13 @@ internal fun PhoneRemoteSheet(app: PhoneState, session: Session) {
                     tvs.forEach { item ->
                         ListItem(
                             headlineContent = { Text(item.name) },
-                            supportingContent = { Text(summary(item.state)) },
+                            supportingContent = {
+                                Column {
+                                    Text(summary(item.state))
+                                    // Not a condition: commands go through the bridge.
+                                    if (item.sameNetwork == false) Text(stringResource(R.string.tv_other_network))
+                                }
+                            },
                             leadingContent = { Icon(PhoneIcons.Tv, contentDescription = null) },
                             modifier = Modifier.clickable {
                                 app.connect(ConnectedTv(item.id, item.name))

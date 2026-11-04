@@ -11,6 +11,9 @@ struct RemoteDevice: Decodable, Identifiable, Hashable {
     let stateAge: Double?
     /// Whether the TV can open the app by itself for "play" (nil on older bridges).
     let canOpen: Bool?
+    /// Whether this phone and the TV reached the bridge from the same network
+    /// (nil when unknown). Not a condition: commands go through the bridge.
+    let sameNetwork: Bool?
 }
 
 struct RemoteDeviceState: Decodable, Hashable {
@@ -184,6 +187,11 @@ struct TVRemoteSheet: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
+                                if device.sameNetwork == false {
+                                    Text("Otra red · se controla a través del bridge")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         } icon: {
                             Image(systemName: "tv")
@@ -194,7 +202,7 @@ struct TVRemoteSheet: View {
         } header: {
             Text("Conectar a una TV")
         } footer: {
-            Text("La app recordará la TV elegida hasta que pulses Desconectar.")
+            Text("Sólo aparecen las TVs encendidas que esperan órdenes de esta identidad, también desde otra red: las órdenes pasan por el bridge. La app recordará la TV elegida hasta que pulses Desconectar.")
         }
     }
 

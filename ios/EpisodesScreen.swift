@@ -123,7 +123,9 @@ struct EpisodesScreen: View {
     /// The bridge could not be reached: saved series data and downloads only.
     @State private var isOffline = false
     @State private var pendingServer: (episode: Episode, server: Server)?
-    @State private var activePlayer: PlayerModel?
+    /// Presents the player above the tabs, so a layout change (rotating,
+    /// folding) that rebuilds this screen does not close it.
+    @Environment(PlayerPresenter.self) private var presenter
     @State private var busyMessage: String?
     /// Episode of a tapped new-episode reminder, played once the bridge
     /// confirms it; kept while it is not published or the bridge is offline.
@@ -204,6 +206,9 @@ struct EpisodesScreen: View {
                 }
             }
         }
+        // The header starts right below the navigation bar.
+        .listSectionSpacing(.compact)
+        .contentMargins(.top, 8, for: .scrollContent)
         // The title is shown next to the poster only.
         .navigationBarTitleDisplayMode(.inline)
         .task(id: current.watchUrl) { await loadSeries() }
@@ -250,9 +255,6 @@ struct EpisodesScreen: View {
                 downloadRequest = nil
                 download(request.episodes, server: server)
             }
-        }
-        .fullScreenCover(item: $activePlayer, onDismiss: { downloads.cleanUpWatched(profile: profile) }) { model in
-            PlayerScreen(model: model)
         }
         .toolbar {
             if let series, !isOffline {
@@ -704,7 +706,7 @@ struct EpisodesScreen: View {
     /// Never falls back to the other kind; when the episode or a server of
     /// that kind is missing, the list stays with a notice.
     private func runAutoplay() {
-        guard let request = pendingAutoplay, let series, !isOffline, activePlayer == nil else { return }
+        guard let request = pendingAutoplay, let series, !isOffline, presenter.model == nil else { return }
         guard let episode = series.episodes.first(where: { $0.number == request.episode }), episode.isAvailable(for: request.kind) else {
             autoplayNotice = String(localized: "El episodio \(request.episode) en \(request.kind.displayName) todavía no está publicado. Elige otro episodio de la lista o desliza hacia abajo para comprobarlo de nuevo.")
             return
@@ -724,14 +726,14 @@ struct EpisodesScreen: View {
     }
 
     private func start(_ resolve: @escaping (PlaybackResolver) async throws -> PlaybackSession) {
-        guard let resolver, busyMessage == nil, activePlayer == nil else { return }
+        guard let resolver, busyMessage == nil, presenter.model == nil else { return }
         pendingAutoplay = nil
         Task {
             busyMessage = String(localized: "Preparando reproducción…")
             defer { busyMessage = nil }
             do {
                 let session = try await resolve(resolver)
-                activePlayer = PlayerModel(session: session, resolver: resolver, profile: profile)
+                presenter.model = PlayerModel(session: session, resolver: resolver, profile: profile)
             } catch is CancellationError {
                 return
             } catch {

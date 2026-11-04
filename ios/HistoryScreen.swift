@@ -43,6 +43,8 @@ private enum ContinueState {
 
 private struct HistoryList: View {
     @Environment(ProfileStore.self) private var profile
+    @Environment(\.openSeries) private var openSeries
+    @Environment(\.openedSeriesURL) private var openedSeriesURL
     @State private var editMode: EditMode = .inactive
     @State private var selectedEntryIDs = Set<WatchHistoryEntry.ID>()
     @State private var showBulkDeleteConfirmation = false
@@ -138,16 +140,17 @@ private struct HistoryList: View {
             Section {
                 ForEach(entries) { entry in
                     let state = states[entry.id] ?? .inProgress
-                    NavigationLink {
-                        if case .nextSeason(let season) = state {
-                            EpisodesScreen(anime: season.anime)
-                        } else {
-                            EpisodesScreen(anime: entry.anime)
-                        }
+                    let target = series(for: entry, state: state)
+                    // While editing, a tap selects the row instead.
+                    Button {
+                        if !isEditing { openSeries(target) }
                     } label: {
-                        HistoryRow(entry: entry, state: state, language: profile.preferences.titleLanguage)
+                        HistoryRow(entry: entry, state: state, language: profile.preferences.titleLanguage, showsDisclosure: openedSeriesURL == nil && !isEditing)
                     }
+                    .buttonStyle(.plain)
                     .tag(entry.id)
+                    // Beside the list, the open series is marked.
+                    .listRowBackground(target.watchUrl == openedSeriesURL ? Color.accentColor.opacity(0.25) : nil)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
                             delete([entry])
@@ -162,6 +165,12 @@ private struct HistoryList: View {
                 if let footer { Text(footer) }
             }
         }
+    }
+
+    /// A finished series with a season not started yet opens that season.
+    private func series(for entry: WatchHistoryEntry, state: ContinueState) -> Anime {
+        if case .nextSeason(let season) = state { return season.anime }
+        return entry.anime
     }
 
     private func state(of entry: WatchHistoryEntry) -> ContinueState {
@@ -236,6 +245,8 @@ private struct HistoryRow: View {
     let entry: WatchHistoryEntry
     let state: ContinueState
     let language: TitleLanguage
+    /// The chevron of a row that pushes the series (one column).
+    var showsDisclosure = false
 
     private var serverLine: String {
         [entry.serverName.isEmpty ? nil : entry.serverName, entry.kind?.displayName].compactMap { $0 }.joined(separator: " · ")
@@ -255,8 +266,16 @@ private struct HistoryRow: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+            Spacer(minLength: 0)
+            if showsDisclosure {
+                Image(systemName: "chevron.forward")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxHeight: .infinity)
+            }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder

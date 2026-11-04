@@ -195,6 +195,11 @@ data class RemoteTv(
     val stateAge: Double? = null,
     /** Whether the TV can open the app by itself (null on older bridges). */
     val canOpen: Boolean? = null,
+    /**
+     * Whether this phone and the TV reached the bridge from the same network;
+     * null when unknown. Not a condition: commands go through the bridge.
+     */
+    val sameNetwork: Boolean? = null,
 )
 
 @Serializable
@@ -262,7 +267,7 @@ data class DeviceState(
 data class SubtitleOption(val id: String, val label: String)
 
 @Serializable
-private data class DeviceReport(val name: String, val state: DeviceState, val canOpen: Boolean)
+private data class DeviceReport(val name: String, val state: DeviceState, val canOpen: Boolean, val awake: Boolean)
 
 @Serializable
 private data class OkResponse(val ok: Boolean = true)
@@ -385,8 +390,8 @@ class BridgeClient(val baseUrl: String, private val token: String) {
         send<OkResponse>("POST", "/api/devices/$deviceId/commands", emptyList(), json.encodeToString(RemoteCommand.serializer(), command))
     }
 
-    suspend fun reportDevice(deviceId: String, name: String, state: DeviceState, canOpen: Boolean) {
-        send<OkResponse>("PUT", "/api/devices/$deviceId", emptyList(), json.encodeToString(DeviceReport.serializer(), DeviceReport(name, state, canOpen)))
+    suspend fun reportDevice(deviceId: String, name: String, state: DeviceState, canOpen: Boolean, awake: Boolean) {
+        send<OkResponse>("PUT", "/api/devices/$deviceId", emptyList(), json.encodeToString(DeviceReport.serializer(), DeviceReport(name, state, canOpen, awake)))
     }
 
     /** Long poll: returns when a command arrives, or empty after about 25 s. */
