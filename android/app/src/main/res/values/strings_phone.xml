@@ -238,4 +238,30 @@
     <string name="check_updates">Check for updates</string>
     <string name="allow_install">Allow installing apps from AniBridge Player and press Install again.</string>
     <string name="install_tag">Install %1$s</string>
+
+    <!-- Google Cast -->
+    <string name="cast">Google Cast</string>
+    <string name="cast_title">Cast to a device</string>
+    <string name="cast_searching">Looking for Cast devices on this Wi‑Fi…</string>
+    <string name="cast_network_hint">The phone and the Chromecast or Google TV must be on the same network, and the TV must be able to open your bridge\'s address (the same home network, or public HTTPS).</string>
+    <string name="cast_volume">Device volume</string>
+    <string name="cast_stop">Stop casting</string>
+    <string name="cast_connect_failed">Couldn\'t connect to the Cast device.</string>
+    <string name="cast_receiver_failed">The Cast device couldn\'t play the episode. Check that it can reach the bridge (same network or public HTTPS).</string>
+    <string name="cast_failed">Couldn\'t send the episode to Google Cast. %1$s</string>
+    <string name="cast_casting_to">Casting to %1$s</string>
+    <string name="cast_sending_to">Sending to %1$s…</string>
+    <string name="cast_download_local">Downloads play on this phone. Play the episode online to cast it.</string>
+    <string name="cast_subtitles">Subtitles</string>
+    <string name="cast_play">Play</string>
+    <string name="cast_pause">Pause</string>
+    <string name="cast_back10">Back 10 seconds</string>
+    <string name="cast_forward10">Forward 10 seconds</string>
+    <string name="version_title">Version</string>
+    <string name="kind_unavailable">Episode %1$d doesn\'t have a %2$s version yet.</string>
+    <string name="kind_switch_failed">Couldn\'t switch to %1$s. %2$s</string>
+
+    <!-- Large screens and foldables -->
+    <string name="choose_series_title">Choose a series</string>
+    <string name="choose_series_text">It opens here, next to the list.</string>
 </resources>

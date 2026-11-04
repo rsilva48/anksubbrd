@@ -6,7 +6,7 @@ process.env.PROVIDER_ORIGIN = 'https://catalog.example';
 // Identities created by the tests go to a throwaway store.
 process.env.BRIDGE_USER_STORE_PATH = (await import('node:path')).join((await import('node:os')).tmpdir(), `anksubbrd-users-${process.pid}-${Date.now()}.json`);
 process.env.BRIDGE_ADMIN_TOKEN = 'admin-secret';
-const { approvePairing, completeSetup, createIdentity, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
+const { approvePairing, completeSetup, createIdentity, liveContainerLinks, setupForm, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleTracks, transportStreamStartPts, withTimestampMap } = await import('../server.mjs');
 
 // One 188-byte MPEG-TS packet starting a PES with only a PTS.
 function pesPacket(streamId, pts) {
@@ -345,4 +345,97 @@ test('A profile creates profiles, and a TV is set up from the browser page', asy
   // Each identity creates at most five profiles an hour.
   for (let count = 1; count < 5; count += 1) await createIdentity(parent, `Perfil ${count}`);
   await assert.rejects(createIdentity(parent, 'Uno más'), (error) => error.status === 429);
+});
+
+test('The setup page opens the app directly or through LiveContainer', () => {
+  const app = 'anksubbrd://pair?bridge=https%3A%2F%2Fbridge.example&code=abc_-1';
+  const links = liveContainerLinks(app);
+  // LiveContainer decodes standard Base64 after URL decoding the query.
+  const decode = (link, name) => Buffer.from(new URL(link).searchParams.get(name), 'base64').toString('utf8');
+  assert.match(links.byScheme, /^livecontainer:\/\/open-url\?url=/);
+  assert.equal(decode(links.byScheme, 'url'), app);
+  assert.match(links.byName, /^livecontainer:\/\/livecontainer-launch\?bundle-name=com\.personal\.airplaysubtitleplayer\.app&open-url=/);
+  assert.equal(decode(links.byName, 'open-url'), app);
+
+  const { code } = startPairing();
+  const request = { headers: { host: 'bridge.example', 'x-forwarded-proto': 'https' }, socket: {} };
+  const page = setupForm(request, code);
+  assert.ok(page.includes(`href="anksubbrd://pair?bridge=`));
+  assert.ok(page.includes('href="livecontainer://open-url?url='));
+  assert.ok(page.includes('href="livecontainer://livecontainer-launch?bundle-name='));
+});
+
+test('Cast links open one playback without the identity token and can be revoked', async () => {
+  const { castSource, revokeCast, rewriteUriLines, shareForCast, sources } = await import('../server.mjs');
+  const owner = { userId: 'cast-owner', token: 'd'.repeat(64) };
+  sources.set('cast-source-1', {
+    hlsUrl: 'https://cdn.example/master.m3u8', userId: owner.userId, accessToken: owner.token, expiresAt: Date.now() + 60_000,
+    subtitles: [{ name: 'English', language: 'en', default: true, forced: false, vttUrl: 'https://cdn.example/en.vtt' }, { name: 'Signs', language: 'en', default: false, forced: true, vttUrl: 'https://cdn.example/signs.vtt' }],
+  });
+  const playbackUrl = `https://bridge.example/watch/cast-source-1/master.m3u8?access_token=${owner.token}`;
+  assert.throws(() => shareForCast({ userId: 'someone-else', token: 'e'.repeat(64) }, playbackUrl, 'https://bridge.example'), (error) => error.status === 403);
+  assert.throws(() => shareForCast(owner, 'https://bridge.example/watch/missing/master.m3u8', 'https://bridge.example'), (error) => error.status === 404);
+
+  const share = shareForCast(owner, playbackUrl, 'https://bridge.example');
+  assert.match(share.url, /^https:\/\/bridge\.example\/cast\/[\w-]{32}\/master\.m3u8$/);
+  assert.ok(!JSON.stringify(share).includes(owner.token));
+  assert.deepEqual(share.subtitles.map((track) => [track.id, track.language, track.forced, track.default]), [[1, 'en', false, true], [2, 'en', true, false]]);
+  assert.equal(share.subtitles[0].url, `https://bridge.example/cast/${share.id}/subtitle/0.vtt`);
+  assert.equal(castSource(share.id).id, 'cast-source-1');
+
+  // Segments and nested playlists become token-free cast links.
+  const castLink = (upstream) => `/cast/${share.id}/media?url=${encodeURIComponent(upstream)}`;
+  const rewritten = rewriteUriLines('#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI="audio.m3u8"\nseg-1.ts\n', 'https://cdn.example/v/index.m3u8', 'cast-source-1', sources.get('cast-source-1'), castLink);
+  assert.ok(!rewritten.includes('access_token'));
+  assert.ok(rewritten.includes(`URI="/cast/${share.id}/media?url=${encodeURIComponent('https://cdn.example/v/audio.m3u8')}"`));
+  assert.ok(rewritten.includes(`/cast/${share.id}/media?url=${encodeURIComponent('https://cdn.example/v/seg-1.ts')}`));
+  // Without a link builder the app's own playlists keep the token.
+  assert.ok(rewriteUriLines('seg-1.ts', 'https://cdn.example/v/index.m3u8', 'cast-source-1', sources.get('cast-source-1')).includes('access_token='));
+
+  // Another identity cannot revoke it; its owner can.
+  revokeCast({ userId: 'someone-else' }, share.id);
+  assert.ok(castSource(share.id));
+  revokeCast(owner, share.id);
+  assert.equal(castSource(share.id), null);
+
+  // A link stops working when its playback expires.
+  const second = shareForCast(owner, playbackUrl, 'https://bridge.example');
+  sources.delete('cast-source-1');
+  assert.equal(castSource(second.id), null);
+});
+
+test('Cast routes answer the receiver with CORS, without the identity token', async (context) => {
+  const http = await import('node:http');
+  const { server, shareForCast, sources } = await import('../server.mjs');
+  const vtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n';
+  const upstream = http.createServer((request, response) => { response.writeHead(200, { 'content-type': 'text/vtt' }); response.end(vtt); });
+  await new Promise((done) => upstream.listen(0, '127.0.0.1', done));
+  await new Promise((done) => server.listen(0, '127.0.0.1', done));
+  context.after(() => { upstream.close(); server.close(); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const owner = { userId: 'cast-http', token: 'f'.repeat(64) };
+  sources.set('cast-source-2', {
+    hlsUrl: 'https://cdn.example/master.m3u8', userId: owner.userId, accessToken: owner.token, expiresAt: Date.now() + 60_000,
+    subtitles: [{ name: 'English', language: 'en', default: true, forced: false, vttUrl: `http://127.0.0.1:${upstream.address().port}/en.vtt` }],
+  });
+  const share = shareForCast(owner, `${base}/watch/cast-source-2/master.m3u8`, base);
+
+  const preflight = await fetch(`${base}/cast/${share.id}/master.m3u8`, { method: 'OPTIONS' });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), '*');
+  assert.match(preflight.headers.get('access-control-allow-headers'), /Range/);
+
+  const subtitle = await fetch(share.subtitles[0].url);
+  assert.equal(subtitle.status, 200);
+  assert.equal(subtitle.headers.get('access-control-allow-origin'), '*');
+  assert.match(subtitle.headers.get('content-type'), /text\/vtt/);
+  // Side-loaded tracks keep the provider's timing (no HLS timestamp map).
+  assert.equal(await subtitle.text(), vtt);
+
+  const forged = await fetch(`${base}/cast/${share.id}/media?url=${encodeURIComponent('https://elsewhere.example/a.ts')}&sig=nope`);
+  assert.equal(forged.status, 403);
+  const unknown = await fetch(`${base}/cast/${'x'.repeat(32)}/master.m3u8`);
+  assert.equal(unknown.status, 404);
+  assert.equal(unknown.headers.get('access-control-allow-origin'), '*');
+  sources.delete('cast-source-2');
 });

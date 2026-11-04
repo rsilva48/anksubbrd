@@ -125,11 +125,16 @@ struct EpisodesScreen: View {
     @State private var pendingServer: (episode: Episode, server: Server)?
     @State private var activePlayer: PlayerModel?
     @State private var busyMessage: String?
+    /// Episode of a tapped new-episode reminder, played once the bridge
+    /// confirms it; kept while it is not published or the bridge is offline.
+    @State private var pendingAutoplay: ReleaseAutoplay?
+    @State private var autoplayNotice: String?
 
-    init(anime: Anime) {
+    init(anime: Anime, autoplay: ReleaseAutoplay? = nil) {
         _current = State(initialValue: anime)
         _selectedSeasonURL = State(initialValue: anime.watchUrl)
-        _latestEpisode = State(initialValue: anime.episode)
+        _latestEpisode = State(initialValue: autoplay?.episode ?? anime.episode)
+        _pendingAutoplay = State(initialValue: autoplay)
     }
 
     private var language: TitleLanguage { profile.preferences.titleLanguage }
@@ -150,6 +155,17 @@ struct EpisodesScreen: View {
                         }
                     }
                     .pickerStyle(.menu)
+                }
+            }
+            if let autoplayNotice {
+                Section {
+                    Label(autoplayNotice, systemImage: "bell.badge")
+                        .font(.footnote)
+                    Button("Entendido") {
+                        self.autoplayNotice = nil
+                        pendingAutoplay = nil
+                    }
+                    .font(.footnote)
                 }
             }
             if let downloadNotice {
@@ -457,10 +473,14 @@ struct EpisodesScreen: View {
             seasons = loaded.seasons
             resolver = PlaybackResolver(series: loaded, anime: current, profile: profile)
             SeriesCache.store(loaded, for: watchUrl)
+            runAutoplay()
         } catch is CancellationError {
             return
         } catch {
             guard watchUrl == current.watchUrl else { return }
+            if let pendingAutoplay {
+                autoplayNotice = String(localized: "No se pudo comprobar el episodio \(pendingAutoplay.episode) con el bridge. Se abrirá solo en cuanto vuelva la conexión; mientras tanto puedes reintentar o ver los episodios descargados.")
+            }
             // Offline: the last saved copy of the series, or its downloads.
             if let saved = SeriesCache.load(watchUrl) ?? downloads.offlineSeries(watchUrl: watchUrl) {
                 isOffline = true
@@ -533,6 +553,7 @@ struct EpisodesScreen: View {
     private var playSymbol: String { connectedTV.isEmpty || isOffline ? "play.fill" : "play.tv.fill" }
 
     private func watchOnTV(_ episode: Episode?, autoplay: Bool = true) {
+        pendingAutoplay = nil
         let kind = profile.entry(for: current.watchUrl)?.kind ?? profile.preferences.defaultTrack
         remoteEpisode = episode
         remoteRequest = RemotePlayRequest(
@@ -656,6 +677,7 @@ struct EpisodesScreen: View {
 
     private func chooseServer(for episode: Episode) {
         guard let resolver, busyMessage == nil else { return }
+        pendingAutoplay = nil
         Task {
             busyMessage = String(localized: "Cargando servidores del episodio \(episode.number)…")
             defer { busyMessage = nil }
@@ -676,8 +698,34 @@ struct EpisodesScreen: View {
         start { try await $0.session(for: pending.episode, server: pending.server) }
     }
 
+    /// The episode of a tapped reminder, in the Sub/Dub kind it announced:
+    /// its download if there is one, else the server last used for this
+    /// series when it offers that kind, else another server of that kind.
+    /// Never falls back to the other kind; when the episode or a server of
+    /// that kind is missing, the list stays with a notice.
+    private func runAutoplay() {
+        guard let request = pendingAutoplay, let series, !isOffline, activePlayer == nil else { return }
+        guard let episode = series.episodes.first(where: { $0.number == request.episode }), episode.isAvailable(for: request.kind) else {
+            autoplayNotice = String(localized: "El episodio \(request.episode) en \(request.kind.displayName) todavía no está publicado. Elige otro episodio de la lista o desliza hacia abajo para comprobarlo de nuevo.")
+            return
+        }
+        autoplayNotice = nil
+        let downloaded = downloads.record(watchUrl: current.watchUrl, episode: episode.number, kind: request.kind)?.state == .completed
+        let preferredName = profile.entry(for: current.watchUrl)?.serverName
+        start { resolver in
+            if downloaded { return try await resolver.session(for: episode, kind: request.kind) }
+            let servers = try await resolver.servers(for: episode)
+            guard let server = servers.first(where: { $0.kind == request.kind && $0.name == preferredName })
+                ?? servers.first(where: { $0.kind == request.kind }) else {
+                throw BridgeRequestError(message: String(localized: "El episodio \(episode.number) aún no tiene servidores \(request.kind.displayName). Vuelve a intentarlo en unos minutos o elige otro servidor en el menú del episodio."))
+            }
+            return try await resolver.session(for: episode, server: server)
+        }
+    }
+
     private func start(_ resolve: @escaping (PlaybackResolver) async throws -> PlaybackSession) {
         guard let resolver, busyMessage == nil, activePlayer == nil else { return }
+        pendingAutoplay = nil
         Task {
             busyMessage = String(localized: "Preparando reproducción…")
             defer { busyMessage = nil }

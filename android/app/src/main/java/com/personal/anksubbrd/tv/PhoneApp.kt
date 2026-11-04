@@ -27,6 +27,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.runtime.key
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -200,6 +206,8 @@ private fun PhoneRoot() {
     // One stack of series per tab, like the tabs on iOS.
     val stacks = remember { PhoneTab.entries.associateWith { mutableStateListOf<Anime>() } }
     val scope = rememberCoroutineScope()
+    // Google Cast discovery and a session that survived the app being closed.
+    LaunchedEffect(Unit) { PhoneCast.init(context) }
     LaunchedEffect(session) {
         session?.refresh()
         ReleaseReminders.refresh(context, session)
@@ -241,6 +249,31 @@ private fun PhoneRoot() {
         onDispose { if (activity?.phoneKeyHandler === handler) activity.phoneKeyHandler = null }
     }
 
+    // Compact windows: bottom bar, one pane. From the medium width class
+    // (unfolded foldables, tablets, landscape, split screen): a rail, and the
+    // list beside the series, split at the fold when there is one. Folding or
+    // rotating keeps the tab, the open series and the playing episode (the
+    // activity handles size changes itself and this state is not recreated).
+    val layout = rememberPhoneLayout()
+    // The list of each tab moves between the one- and two-pane layouts with
+    // its state (scroll position, loaded pages, search) instead of restarting.
+    val roots = remember(session) {
+        PhoneTab.entries.associateWith { item ->
+            movableContentOf<(Anime) -> Unit> { open ->
+                if (session != null) when (item) {
+                    PhoneTab.Recents -> PhoneCatalog(session, searching = false, onOpen = open)
+                    PhoneTab.Search -> PhoneCatalog(session, searching = true, onOpen = open)
+                    else -> PhoneContinue(session, onOpen = open)
+                }
+            }
+        }
+    }
+    fun select(item: PhoneTab) {
+        // Tapping the current tab goes back to its root.
+        if (tab == item) stacks.getValue(item).clear()
+        tab = item
+    }
+
     CompositionLocalProvider(LocalPhone provides app) {
         val request = app.playing
         if (request != null && session != null) {
@@ -249,39 +282,62 @@ private fun PhoneRoot() {
         }
         Scaffold(
             bottomBar = {
-                NavigationBar {
-                    PhoneTab.entries.forEach { item ->
-                        NavigationBarItem(
-                            selected = tab == item,
-                            onClick = {
-                                // Tapping the current tab goes back to its root.
-                                if (tab == item) stacks.getValue(item).clear()
-                                tab = item
-                            },
-                            icon = { Icon(item.icon, contentDescription = null) },
-                            label = { Text(stringResource(item.label), maxLines = 1) },
-                        )
+                if (!layout.rail) {
+                    NavigationBar {
+                        PhoneTab.entries.forEach { item ->
+                            NavigationBarItem(
+                                selected = tab == item,
+                                onClick = { select(item) },
+                                icon = { Icon(item.icon, contentDescription = null) },
+                                label = { Text(stringResource(item.label), maxLines = 1) },
+                            )
+                        }
                     }
                 }
             },
         ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                val stack = stacks.getValue(tab)
-                BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
-                val open: (Anime) -> Unit = { stack.add(it) }
-                when {
-                    tab == PhoneTab.Settings -> PhoneSettings(app)
-                    // Works without a bridge or a connection.
-                    tab == PhoneTab.Downloads -> PhoneDownloadsScreen(session) { app.playing = it }
-                    session == null -> PhoneMessage(
-                        stringResource(R.string.setup_title),
-                        stringResource(R.string.phone_setup_text),
-                        action = stringResource(R.string.go_to_settings) to { tab = PhoneTab.Settings },
-                    )
-                    stack.isNotEmpty() -> PhoneSeries(session, stack.last(), onBack = { stack.removeAt(stack.lastIndex) })
-                    tab == PhoneTab.Recents -> PhoneCatalog(session, searching = false, onOpen = open)
-                    tab == PhoneTab.Search -> PhoneCatalog(session, searching = true, onOpen = open)
-                    else -> PhoneContinue(session, onOpen = open)
+            Row(Modifier.fillMaxSize().padding(padding)) {
+                if (layout.rail) {
+                    NavigationRail(Modifier.fillMaxHeight()) {
+                        PhoneTab.entries.forEach { item ->
+                            NavigationRailItem(
+                                selected = tab == item,
+                                onClick = { select(item) },
+                                icon = { Icon(item.icon, contentDescription = null) },
+                                label = { Text(stringResource(item.label), maxLines = 1) },
+                            )
+                        }
+                    }
+                }
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    val stack = stacks.getValue(tab)
+                    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+                    val series: @Composable () -> Unit = {
+                        key(stack.lastOrNull()?.watchUrl) {
+                            stack.lastOrNull()?.let { anime -> session?.let { PhoneSeries(it, anime, onBack = { stack.removeAt(stack.lastIndex) }) } }
+                        }
+                    }
+                    when {
+                        tab == PhoneTab.Settings -> PhoneSettings(app)
+                        // Works without a bridge or a connection.
+                        tab == PhoneTab.Downloads -> PhoneDownloadsScreen(session) { app.playing = it }
+                        session == null -> PhoneMessage(
+                            stringResource(R.string.setup_title),
+                            stringResource(R.string.phone_setup_text),
+                            action = stringResource(R.string.go_to_settings) to { tab = PhoneTab.Settings },
+                        )
+                        layout.twoPane -> TwoPane(
+                            hinge = layout.verticalHinge,
+                            // A series chosen in the list replaces the one beside it.
+                            first = { roots.getValue(tab).invoke { anime: Anime -> stack.clear(); stack.add(anime) } },
+                            second = {
+                                if (stack.isEmpty()) PhoneMessage(stringResource(R.string.choose_series_title), stringResource(R.string.choose_series_text))
+                                else series()
+                            },
+                        )
+                        stack.isNotEmpty() -> series()
+                        else -> roots.getValue(tab).invoke { anime: Anime -> stack.add(anime) }
+                    }
                 }
             }
         }

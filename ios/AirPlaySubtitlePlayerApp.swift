@@ -1,8 +1,23 @@
 import AVFAudio
 import SwiftUI
+import UIKit
+
+/// Work that iOS requires before launching finishes: the notification
+/// delegate (so tapping a reminder can launch the app into its episode) and
+/// the Google Cast context (so a Cast session resumes after a relaunch).
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        MainActor.assumeIsolated {
+            ReleaseNotifier.shared.becomeNotificationDelegate()
+            CastCenter.configure()
+        }
+        return true
+    }
+}
 
 @main
 struct AirPlaySubtitlePlayerApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var profile = ProfileStore()
     @State private var updates = AppUpdateCenter()
     /// Created at launch so background downloads reconnect right away.
@@ -178,9 +193,9 @@ struct RootView: View {
         .sheet(item: $identityRequest) { request in
             IdentityImportSheet(request: request)
         }
-        .sheet(item: $notifier.openedSeries) { anime in
+        .sheet(item: $notifier.openedSeries) { request in
             NavigationStack {
-                EpisodesScreen(anime: anime)
+                EpisodesScreen(anime: request.anime, autoplay: request.autoplay)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Cerrar") { notifier.openedSeries = nil }

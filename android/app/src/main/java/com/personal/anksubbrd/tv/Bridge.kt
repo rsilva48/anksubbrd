@@ -369,6 +369,15 @@ class BridgeClient(val baseUrl: String, private val token: String) {
     /** Episodes the catalog expects to release (release reminders). */
     suspend fun schedule(): List<ScheduleEntry> = get<ScheduleReply>("/api/schedule").entries
 
+    /** A temporary, token-free link to one playback for a Google Cast receiver. */
+    suspend fun castShare(playbackUrl: String): CastShare =
+        post("/api/cast", json.encodeToString(CastShareRequest.serializer(), CastShareRequest(playbackUrl)))
+
+    /** Revokes a cast link once the receiver no longer needs it. */
+    suspend fun revokeCast(id: String) {
+        send<OkResponse>("DELETE", "/api/cast/$id", emptyList(), null)
+    }
+
     /** The TVs of this identity (phone remote control). */
     suspend fun tvs(): List<RemoteTv> = get<RemoteTvs>("/api/devices").devices
 

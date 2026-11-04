@@ -52,6 +52,14 @@ final class PlayerModel: Identifiable {
     private(set) var errorMessage: String?
     private(set) var speed: PlaybackSpeed = .normal
     var videoGravity: AVLayerVideoGravity = .resizeAspect
+    /// The cast link this episode plays from on a Google Cast device; nil
+    /// while it plays here (or through AirPlay).
+    private(set) var castShare: CastShare?
+    private(set) var isPreparingCast = false
+    /// The receiver's subtitle track (`CastSubtitle.id`), nil when off.
+    private(set) var castSubtitleID: Int?
+
+    var isCasting: Bool { castShare != nil }
 
     private let resolver: PlaybackResolver
     private let profile: ProfileStore
@@ -112,6 +120,9 @@ final class PlayerModel: Identifiable {
 
     func close() {
         guard started, !closed else { return }
+        // A Cast device keeps playing after the player closes; its controls
+        // stay in the Cast button.
+        if isCasting { saveCastProgress(force: true) }
         closed = true
         TVVolumeRelay.shared.localPlayback = false
         loadWatchdog?.cancel()
@@ -157,11 +168,20 @@ final class PlayerModel: Identifiable {
             didFinish = false
             seek(to: 0)
         }
+        if isCasting {
+            CastCenter.shared.play()
+            return
+        }
         player.defaultRate = speed.rawValue
         player.play()
     }
 
     func pause() {
+        if isCasting {
+            CastCenter.shared.pause()
+            saveCastProgress(force: true)
+            return
+        }
         player.pause()
         saveProgress()
     }
@@ -174,6 +194,10 @@ final class PlayerModel: Identifiable {
         let upper = duration > 0 ? max(0, duration - 0.5) : max(0, seconds)
         let target = min(max(0, seconds), upper)
         currentTime = target
+        if isCasting {
+            CastCenter.shared.seek(to: target)
+            return
+        }
         let time = CMTime(seconds: target, preferredTimescale: 600)
         guard player.currentItem?.status == .readyToPlay else {
             player.seek(to: time)
@@ -226,6 +250,10 @@ final class PlayerModel: Identifiable {
         guard !isChangingEpisode, !closed,
               let episode = offset > 0 ? nextEpisode : resolver.episode(adjacentTo: session.historyEntry.episode, offset: offset) else { return }
         saveProgress()
+        if isCasting {
+            saveCastProgress(force: true)
+            CastCenter.shared.pause()
+        }
         player.pause()
         isChangingEpisode = true
         errorMessage = nil
@@ -246,6 +274,213 @@ final class PlayerModel: Identifiable {
 
     func dismissError() {
         errorMessage = nil
+    }
+
+    /// Plays the same episode in the other version (Sub: Japanese audio with
+    /// subtitles; Dub: English audio) from the same position, preferring a
+    /// server with the current name. The Default Media Receiver cannot switch
+    /// audio tracks inside a stream, so this is how Cast changes the audio.
+    func switchKind(to kind: StreamKind) {
+        guard kind != session.kind, !isChangingEpisode, !closed, session.downloadID == nil,
+              let episode = resolver.series.episodes.first(where: { $0.number == session.historyEntry.episode }) else { return }
+        guard episode.isAvailable(for: kind) else {
+            errorMessage = String(localized: "El episodio \(episode.number) todavía no tiene versión \(kind.displayName).")
+            return
+        }
+        if isCasting { saveCastProgress(force: true) } else { saveProgress() }
+        player.pause()
+        isChangingEpisode = true
+        errorMessage = nil
+        let current = session
+        Task {
+            defer { isChangingEpisode = false }
+            do {
+                let servers = try await resolver.servers(for: episode)
+                guard let server = servers.first(where: { $0.kind == kind && $0.name == current.playback.serverName })
+                    ?? servers.first(where: { $0.kind == kind }) else {
+                    errorMessage = String(localized: "El episodio \(episode.number) todavía no tiene servidores \(kind.displayName).")
+                    return
+                }
+                let next = try await resolver.session(for: episode, server: server)
+                guard !closed else { return }
+                load(next)
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = String(localized: "No se pudo cambiar a \(kind.displayName). \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: Google Cast
+
+    /// A Cast session started or resumed. After a resume the receiver may
+    /// still be playing this episode: then nothing is reloaded.
+    func castSessionStarted() {
+        guard started, !closed, CastCenter.shared.isConnected else { return }
+        if let castShare, CastCenter.shared.loadedURL == castShare.url { return }
+        beginCasting()
+    }
+
+    /// The Cast session ended: the episode continues here, paused, from the
+    /// receiver's last position.
+    func castSessionEnded() {
+        guard started, !closed, isCasting || isPreparingCast else { return }
+        saveCastProgress(force: true)
+        if let castShare { CastCenter.revoke(castShare, base: profile.bridgeURL) }
+        castShare = nil
+        castSubtitleID = nil
+        load(session, autoplay: false)
+    }
+
+    /// Mirrors the receiver's status: position, play state, progress saved
+    /// for Continue, automatic intro/outro skipping.
+    func followCast() {
+        guard let castShare, !closed, !isChangingEpisode else { return }
+        let cast = CastCenter.shared
+        // Another phone replaced the media on the receiver.
+        guard cast.loadedURL == nil || cast.loadedURL == castShare.url else { return }
+        let playing = cast.state != .idle && cast.state != .paused
+        if isPlaying != playing { isPlaying = playing }
+        let buffering = cast.state == .buffering || cast.state == .loading
+        if isBuffering != buffering { isBuffering = buffering }
+        if cast.duration > 0, abs(cast.duration - duration) >= 0.5 { duration = cast.duration }
+        let seconds = cast.position
+        guard seconds.isFinite, seconds > 0, cast.state != .loading else { return }
+        currentTime = seconds
+        let preferences = profile.preferences
+        if preferences.autoSkipIntro, let intro = session.playback.intro, intro.contains(seconds) {
+            seek(to: intro.end)
+            return
+        }
+        if preferences.autoSkipOutro, let outro = session.playback.outro, outro.contains(seconds) {
+            seek(to: outro.end)
+            return
+        }
+        saveCastProgress()
+        updateNowPlaying()
+    }
+
+    /// The receiver played the episode to its end.
+    func castFinished() {
+        guard isCasting, !closed, !isChangingEpisode else { return }
+        playbackEnded()
+    }
+
+    func castFailed(_ message: String) {
+        guard isCasting || isPreparingCast, !closed else { return }
+        errorMessage = message
+        CastCenter.shared.clearFailure()
+    }
+
+    func selectCastSubtitle(_ track: CastSubtitle?) {
+        CastCenter.shared.setSubtitle(track?.id)
+        castSubtitleID = track?.id
+        let choice = track?.language ?? UserPreferences.subtitlesOff
+        if session.kind == .sub {
+            var preferences = profile.preferences
+            preferences.subtitleLanguage = choice
+            profile.setPreferences(preferences)
+        } else {
+            dubSubtitleChoice = choice
+        }
+    }
+
+    func stopCasting() {
+        CastCenter.shared.disconnect()
+    }
+
+    /// Sends this episode to the connected Cast device. The bridge makes a
+    /// temporary link without the identity token; the receiver loads it with
+    /// the subtitle files as side-loaded tracks, at `start` (by default the
+    /// current position).
+    private func beginCasting(at start: Double? = nil) {
+        guard started, !closed, !isPreparingCast, CastCenter.shared.isConnected else { return }
+        guard session.downloadID == nil else {
+            errorMessage = String(localized: "Este episodio se reproduce desde una descarga. Para verlo con Google Cast, reprodúcelo en línea.")
+            return
+        }
+        let position = start ?? currentTime
+        if player.currentItem != nil { saveProgress() }
+        stopLocalItem()
+        isPreparingCast = true
+        isBuffering = true
+        errorMessage = nil
+        let current = session
+        Task {
+            defer { isPreparingCast = false }
+            do {
+                let share: CastShare = try await BridgeClient.post(base: profile.bridgeURL, path: "/api/cast", body: CastShareRequest(playbackUrl: current.playback.playbackUrl))
+                guard !closed, session.id == current.id, CastCenter.shared.isConnected else {
+                    CastCenter.revoke(share, base: profile.bridgeURL)
+                    return
+                }
+                let subtitleID = castSubtitle(in: share)
+                let entry = current.historyEntry
+                guard CastCenter.shared.load(share, title: entry.seriesTitle, subtitle: "\(entry.episodeLabel) · \(current.kind.displayName)", imageURL: entry.imageUrl, startAt: position, subtitleID: subtitleID) else {
+                    CastCenter.revoke(share, base: profile.bridgeURL)
+                    load(current, autoplay: false)
+                    return
+                }
+                if let previous = castShare { CastCenter.revoke(previous, base: profile.bridgeURL) }
+                castShare = share
+                castSubtitleID = subtitleID
+                currentTime = position
+                lastSavedSecond = Int(position)
+                updateNowPlaying()
+            } catch is CancellationError {
+                return
+            } catch let error as BridgeRequestError where error.statusCode == 404 {
+                // The bridge forgot this playback (restart or 2 h expiry):
+                // resolve it again; loading it casts it.
+                guard !closed else { return }
+                retry()
+            } catch {
+                guard !closed else { return }
+                errorMessage = String(localized: "No se pudo enviar el episodio a Google Cast. \(error.localizedDescription)")
+                load(current, autoplay: false)
+            }
+        }
+    }
+
+    /// The same subtitle rules as here: the remembered language for Sub
+    /// (then the device languages, then the bridge default), the choice of
+    /// this session for Dub. Forced tracks are not offered.
+    private func castSubtitle(in share: CastShare) -> Int? {
+        let tracks = share.subtitles.filter { $0.forced != true }
+        let choice = session.kind == .sub ? profile.preferences.subtitleLanguage : dubSubtitleChoice
+        func matching(_ tag: String) -> CastSubtitle? {
+            let wanted = tag.lowercased()
+            return tracks.first { $0.language.lowercased() == wanted }
+                ?? tracks.first { $0.language.lowercased().hasPrefix(wanted + "-") || wanted.hasPrefix($0.language.lowercased() + "-") }
+        }
+        if choice == UserPreferences.subtitlesOff { return nil }
+        if !choice.isEmpty, let track = matching(choice) { return track.id }
+        guard session.kind == .sub else { return nil }
+        for language in Locale.preferredLanguages {
+            if let track = matching(language) ?? matching(String(language.prefix(2))) { return track.id }
+        }
+        return (tracks.first { $0.isDefault == true } ?? matching("en") ?? tracks.first)?.id
+    }
+
+    /// Progress of the episode on the receiver, once per second.
+    private func saveCastProgress(force: Bool = false) {
+        let seconds = currentTime
+        guard seconds.isFinite, seconds > 0 else { return }
+        let second = Int(seconds)
+        guard force || second != lastSavedSecond else { return }
+        lastSavedSecond = second
+        let finished = reachedEnd(at: seconds)
+        profile.update(session.historyEntry, positionSeconds: seconds, durationSeconds: duration, completed: finished)
+        Task { await profile.sync(force: force) }
+    }
+
+    /// Releases the local item so the phone does not stream the episode too.
+    private func stopLocalItem() {
+        loadWatchdog?.cancel()
+        stopObservingItem()
+        player.pause()
+        player.replaceCurrentItem(with: nil)
     }
 
     /// Resolves the same episode and server again (fresh playback URL and CDN
@@ -274,7 +509,7 @@ final class PlayerModel: Identifiable {
 
     // MARK: Item
 
-    private func load(_ session: PlaybackSession) {
+    private func load(_ session: PlaybackSession, autoplay: Bool = true) {
         stopObservingItem()
         loadWatchdog?.cancel()
         mediaOptionsRequested = false
@@ -299,6 +534,21 @@ final class PlayerModel: Identifiable {
         }
         profile.open(session.historyEntry)
         let resumeAt = profile.position(for: session.historyEntry.watchUrl, episode: session.historyEntry.episode)
+        // With a Cast device connected the episode goes there (downloads
+        // stay here); the phone does not load the stream.
+        if CastCenter.shared.isConnected, session.downloadID == nil {
+            // The previous item's clock is not this episode's position.
+            stopLocalItem()
+            currentTime = resumeAt > 3 ? resumeAt : 0
+            updateNowPlaying()
+            beginCasting(at: currentTime)
+            return
+        }
+        if let castShare {
+            CastCenter.revoke(castShare, base: profile.bridgeURL)
+            self.castShare = nil
+            castSubtitleID = nil
+        }
         let asset = AVURLAsset(url: url)
         // A download plays from its package; an incomplete one would need the
         // bridge source it came from, which has expired by now.
@@ -325,7 +575,7 @@ final class PlayerModel: Identifiable {
         }
         updateNowPlaying()
         player.defaultRate = speed.rawValue
-        player.play()
+        if autoplay { player.play() }
     }
 
     private func observe(_ item: AVPlayerItem) {
@@ -378,7 +628,7 @@ final class PlayerModel: Identifiable {
     }
 
     private func refreshState() {
-        guard started, !closed else { return }
+        guard started, !closed, !isCasting, !isPreparingCast else { return }
         let status = player.timeControlStatus
         let playing = status != .paused
         let buffering = status == .waitingToPlayAtSpecifiedRate
@@ -536,7 +786,7 @@ final class PlayerModel: Identifiable {
     }
 
     private func tick(_ seconds: Double) {
-        guard seconds.isFinite, seconds >= 0, !isChangingEpisode, !closed else { return }
+        guard seconds.isFinite, seconds >= 0, !isChangingEpisode, !closed, !isCasting, !isPreparingCast else { return }
         currentTime = seconds
         refreshItem()
         let preferences = profile.preferences
@@ -656,6 +906,7 @@ struct PlayerScreen: View {
     @FocusState private var keyboardFocused: Bool
 
     private var entry: WatchHistoryEntry { model.session.historyEntry }
+    private var cast: CastCenter { CastCenter.shared }
     private var compact: Bool { horizontalSizeClass == .compact }
     /// iPhone in portrait has no room for the side bars next to the transport
     /// buttons; there they only appear while adjusting.
@@ -671,7 +922,9 @@ struct PlayerScreen: View {
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
 
-            if model.isExternalPlayback {
+            if model.isCasting || model.isPreparingCast {
+                castCard
+            } else if model.isExternalPlayback {
                 externalPlaybackCard
             }
 
@@ -748,6 +1001,18 @@ struct PlayerScreen: View {
         }
         .onChange(of: model.didFinish) { _, finished in
             if finished { showControls(autoHide: false) }
+        }
+        .onChange(of: cast.sessionGeneration) { _, _ in model.castSessionStarted() }
+        .onChange(of: cast.endedGeneration) { _, _ in model.castSessionEnded() }
+        .onChange(of: cast.position) { _, _ in model.followCast() }
+        .onChange(of: cast.state) { _, _ in model.followCast() }
+        .onChange(of: cast.finishedCount) { _, _ in model.castFinished() }
+        .onChange(of: cast.failure) { _, failure in
+            if let failure { model.castFailed(failure) }
+        }
+        .onChange(of: model.isCasting) { _, casting in
+            // The receiver is controlled from here: keep the controls up.
+            if casting { showControls(autoHide: false) }
         }
         .sheet(isPresented: $showMediaOptions, onDismiss: scheduleAutoHide) {
             MediaOptionsSheet(model: model)
@@ -976,6 +1241,10 @@ struct PlayerScreen: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Imagen dentro de imagen")
                     }
+                    CastButton()
+                        .frame(width: 44, height: 44)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .accessibilityLabel("Google Cast")
                     RoutePickerButton()
                         .frame(width: 44, height: 44)
                         .glassEffect(.regular.interactive(), in: .circle)
@@ -1060,6 +1329,10 @@ struct PlayerScreen: View {
             .font(.footnote.weight(.medium).monospacedDigit())
             .foregroundStyle(.white)
 
+            if model.isCasting {
+                castVolumeBar
+            }
+
             HStack {
                 Spacer()
                 GlassEffectContainer(spacing: 10) {
@@ -1088,7 +1361,7 @@ struct PlayerScreen: View {
             hideTask?.cancel()
             showMediaOptions = true
         } label: {
-            GlassIcon(systemName: model.selectedLegible == nil ? "captions.bubble" : "captions.bubble.fill")
+            GlassIcon(systemName: (model.isCasting ? model.castSubtitleID == nil : model.selectedLegible == nil) ? "captions.bubble" : "captions.bubble.fill")
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Subtítulos, audio y velocidad")
@@ -1135,6 +1408,42 @@ struct PlayerScreen: View {
         .foregroundStyle(.white)
         .padding(32)
         .allowsHitTesting(false)
+    }
+
+    private var castCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "tv.and.mediabox")
+                .font(.system(size: 56, weight: .regular))
+            if model.isPreparingCast {
+                Text("Enviando a \(cast.deviceName ?? "Google Cast")…")
+                    .font(.title3.weight(.semibold))
+            } else {
+                Text("Transmitiendo a \(cast.deviceName ?? "Google Cast")")
+                    .font(.title3.weight(.semibold))
+                Text("Controla la reproducción, los subtítulos, la versión Sub/Dub y el volumen desde aquí.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+        }
+        .multilineTextAlignment(.center)
+        .foregroundStyle(.white)
+        .padding(32)
+        .allowsHitTesting(false)
+    }
+
+    /// Volume of the Cast device and the way back to this phone.
+    private var castVolumeBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "speaker.fill")
+            Slider(value: Binding(get: { Double(cast.volume) }, set: { cast.setVolume(Float($0)) }), in: 0...1)
+                .accessibilityLabel("Volumen de \(cast.deviceName ?? "Google Cast")")
+            Image(systemName: "speaker.wave.3.fill")
+            Button("Dejar de transmitir", systemImage: "stop.circle") { model.stopCasting() }
+                .buttonStyle(.glass)
+                .labelStyle(.titleAndIcon)
+        }
+        .font(.footnote.weight(.medium))
+        .foregroundStyle(.white)
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -1187,7 +1496,7 @@ struct PlayerScreen: View {
 
     private func scheduleAutoHide() {
         hideTask?.cancel()
-        guard model.isPlaying, !scrubbing, !showMediaOptions else { return }
+        guard model.isPlaying, !model.isCasting, !scrubbing, !showMediaOptions else { return }
         hideTask = Task {
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled, model.isPlaying, !scrubbing, !showMediaOptions else { return }
@@ -1203,26 +1512,52 @@ private struct MediaOptionsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Subtítulos") {
-                    option(String(localized: "Desactivados"), selected: model.selectedLegible == nil) { model.selectLegible(nil) }
-                    ForEach(model.legibleOptions, id: \.self) { track in
-                        option(track.displayName, selected: model.selectedLegible == track) { model.selectLegible(track) }
+                if let share = model.castShare {
+                    Section("Subtítulos") {
+                        option(String(localized: "Desactivados"), selected: model.castSubtitleID == nil) { model.selectCastSubtitle(nil) }
+                        ForEach(share.subtitles.filter { $0.forced != true }) { track in
+                            option(track.name, selected: model.castSubtitleID == track.id) { model.selectCastSubtitle(track) }
+                        }
+                        if share.subtitles.isEmpty {
+                            Text("Este servidor no publicó subtítulos.")
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    if model.legibleOptions.isEmpty {
-                        (model.hasLoadedMediaOptions ? Text("Este servidor no publicó subtítulos.") : Text("Cargando pistas…"))
-                            .foregroundStyle(.secondary)
+                } else {
+                    Section("Subtítulos") {
+                        option(String(localized: "Desactivados"), selected: model.selectedLegible == nil) { model.selectLegible(nil) }
+                        ForEach(model.legibleOptions, id: \.self) { track in
+                            option(track.displayName, selected: model.selectedLegible == track) { model.selectLegible(track) }
+                        }
+                        if model.legibleOptions.isEmpty {
+                            (model.hasLoadedMediaOptions ? Text("Este servidor no publicó subtítulos.") : Text("Cargando pistas…"))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
-                if model.audibleOptions.count > 1 {
+                if model.session.downloadID == nil {
+                    Section {
+                        ForEach(StreamKind.allCases) { kind in
+                            option("\(kind.displayName) · \(kind.detail)", selected: model.session.kind == kind) { model.switchKind(to: kind) }
+                        }
+                    } header: {
+                        Text("Versión")
+                    } footer: {
+                        Text("Cambia de versión en el mismo punto del episodio.")
+                    }
+                }
+                if !model.isCasting, model.audibleOptions.count > 1 {
                     Section("Audio") {
                         ForEach(model.audibleOptions, id: \.self) { track in
                             option(track.displayName, selected: model.selectedAudible == track) { model.selectAudible(track) }
                         }
                     }
                 }
-                Section("Velocidad") {
-                    ForEach(PlaybackSpeed.allCases) { speed in
-                        option(speed.label, selected: model.speed == speed) { model.setSpeed(speed) }
+                if !model.isCasting {
+                    Section("Velocidad") {
+                        ForEach(PlaybackSpeed.allCases) { speed in
+                            option(speed.label, selected: model.speed == speed) { model.setSpeed(speed) }
+                        }
                     }
                 }
             }

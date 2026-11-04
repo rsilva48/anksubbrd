@@ -579,6 +579,8 @@ const setupStrings = {
     haveApp: '¿Tienes AniBridge Player en este teléfono?',
     haveAppNote: 'La TV usará la identidad de la app: el mismo historial y las mismas preferencias.',
     openApp: 'Abrir en la app',
+    liveContainer: 'Abrir en LiveContainer',
+    liveContainerNote: (other) => `Si la app está instalada dentro de LiveContainer, «Abrir en la app» no funciona: iOS no conoce los enlaces de las apps de LiveContainer. Si este botón no la abre, prueba <a href="${other}">abrirla por su nombre</a> o escanea el código desde la app: Ajustes › Escanear código de la TV.`,
     existing: 'Usar una identidad existente', tokenLabel: 'Token de 64 caracteres', link: 'Vincular la TV',
     create: 'Crear una identidad nueva',
     createNote: 'La primera vez, con el token administrador del bridge. Sólo se usa para crear la identidad: no se guarda. Después, la TV puede crear más perfiles sin él.',
@@ -599,6 +601,8 @@ const setupStrings = {
     haveApp: 'Do you have AniBridge Player on this phone?',
     haveAppNote: 'The TV will use the app’s identity: the same history and the same preferences.',
     openApp: 'Open in the app',
+    liveContainer: 'Open in LiveContainer',
+    liveContainerNote: (other) => `If the app is installed inside LiveContainer, “Open in the app” does not work: iOS does not know the links of LiveContainer’s apps. If this button does not open it, try <a href="${other}">opening it by name</a>, or scan the code from the app: Settings › Scan TV code.`,
     existing: 'Use an existing identity', tokenLabel: '64-character token', link: 'Link the TV',
     create: 'Create a new identity',
     createNote: 'The first time, with the bridge’s administrator token. It is only used to create the identity and is not stored. Afterwards, the TV can create more profiles without it.',
@@ -647,15 +651,29 @@ function setupPage(response, status, title, content, text = setupStrings.es) {
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   });
   response.end(`<!doctype html><html lang="${text.lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px;background:#0b0b12;color:#eee}main{max-width:520px;margin:auto}h1{font-size:1.5rem}section{background:#1a1a26;border-radius:16px;padding:16px;margin:16px 0}label{display:block;margin:10px 0 4px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #444;background:#0b0b12;color:#eee;font:inherit}button,a.button{display:block;width:100%;box-sizing:border-box;margin-top:14px;padding:12px;border:0;border-radius:10px;background:#6366f1;color:#fff;font:inherit;text-align:center;text-decoration:none}p.note{color:#aaa;font-size:.9rem}p.error{color:#fca5a5}</style>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;padding:24px 16px;background:#0b0b12;color:#eee}main{max-width:520px;margin:auto}h1{font-size:1.5rem}section{background:#1a1a26;border-radius:16px;padding:16px;margin:16px 0}label{display:block;margin:10px 0 4px}input{width:100%;box-sizing:border-box;padding:12px;border-radius:10px;border:1px solid #444;background:#0b0b12;color:#eee;font:inherit}button,a.button{display:block;width:100%;box-sizing:border-box;margin-top:14px;padding:12px;border:0;border-radius:10px;background:#6366f1;color:#fff;font:inherit;text-align:center;text-decoration:none}a.button.secondary{background:#2a2a3e}a{color:#a5b4fc}p.note{color:#aaa;font-size:.9rem}p.error{color:#fca5a5}</style>
 </head><body><main><h1>${escapeHtml(title)}</h1>${content}</main></body></html>`);
+}
+// LiveContainer runs unsigned IPAs without registering their URL schemes with
+// iOS, so Safari cannot open `anksubbrd://` for an app inside it. Its own
+// scheme forwards the link (standard Base64): `open-url` to the app that
+// declares the scheme, `livecontainer-launch` to the app folder by name
+// (the bundle identifier plus `.app` unless LiveContainer renamed it).
+const liveContainerBundle = cleanText(process.env.LIVECONTAINER_BUNDLE_NAME) || 'com.personal.airplaysubtitleplayer.app';
+function liveContainerLinks(appUrl) {
+  const payload = encodeURIComponent(Buffer.from(appUrl, 'utf8').toString('base64'));
+  return {
+    byScheme: `livecontainer://open-url?url=${payload}`,
+    byName: `livecontainer://livecontainer-launch?bundle-name=${encodeURIComponent(liveContainerBundle)}&open-url=${payload}`,
+  };
 }
 function setupForm(request, code, error = '', text = setupStrings.es) {
   const app = `anksubbrd://pair?bridge=${encodeURIComponent(requestOrigin(request))}&code=${encodeURIComponent(code)}`;
+  const liveContainer = liveContainerLinks(app);
   const hidden = `<input type="hidden" name="code" value="${escapeHtml(code)}">`;
   const nameField = `<label for="label-MODE">${text.nameLabel}</label><input id="label-MODE" name="label" maxlength="40" placeholder="${text.namePlaceholder}" autocomplete="off">`;
   return `${error ? `<p class="error">${escapeHtml(error)}</p>` : ''}
-<section><strong>${text.haveApp}</strong><p class="note">${text.haveAppNote}</p><a class="button" href="${escapeHtml(app)}">${text.openApp}</a></section>
+<section><strong>${text.haveApp}</strong><p class="note">${text.haveAppNote}</p><a class="button" href="${escapeHtml(app)}">${text.openApp}</a><a class="button secondary" href="${escapeHtml(liveContainer.byScheme)}">${text.liveContainer}</a><p class="note">${text.liveContainerNote(escapeHtml(liveContainer.byName))}</p></section>
 <section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="existing"><strong>${text.existing}</strong>${nameField.replaceAll('MODE', 'existing')}<label for="token">${text.tokenLabel}</label><input id="token" name="token" autocomplete="off" autocapitalize="off" spellcheck="false" required minlength="64" maxlength="64"><button type="submit">${text.link}</button></form></section>
 ${bridgeAdminToken ? `<section><form method="post" action="/setup">${hidden}<input type="hidden" name="mode" value="create"><strong>${text.create}</strong><p class="note">${text.createNote}</p>${nameField.replaceAll('MODE', 'create')}<label for="admin">${text.adminLabel}</label><input id="admin" name="adminToken" type="password" autocomplete="off" required><button type="submit">${text.createAndLink}</button></form></section>` : ''}
 <p class="note">${text.expiresNote}</p>`;
@@ -868,11 +886,81 @@ async function createPlayback(seriesKey, episodeNumber, serverIndex, playbackOri
   console.info(`[bridge] HLS candidate: ${playlistDescriptor(media.hlsUrl)}`);
   // Dub audio is English, so no subtitle is forced on; Sub keeps its default track.
   if (server.type === 'dub') media.subtitles.forEach((track) => { track.default = false; });
-  const id = randomUUID(); sources.set(id, { ...media, kind: server.type, declareAudio: declareAudioLanguage, userId: user.userId, accessToken: user.token });
-  const expiry = setTimeout(() => { sources.delete(id); }, 2 * 60 * 60 * 1000);
+  const lifetime = 2 * 60 * 60 * 1000;
+  const id = randomUUID(); sources.set(id, { ...media, kind: server.type, declareAudio: declareAudioLanguage, userId: user.userId, accessToken: user.token, expiresAt: Date.now() + lifetime });
+  const expiry = setTimeout(() => { sources.delete(id); }, lifetime);
   expiry.unref();
   console.info(`[bridge] Playback ready with ${media.subtitles.length} subtitle track(s)`);
   return { playbackUrl: `${playbackOrigin}${protectedPath(`/watch/${id}/master.m3u8`, user.token)}`, subtitleTracks: media.subtitles.length, serverName: server.name, serverKind: server.type, intro: media.intro, outro: media.outro };
+}
+
+// Google Cast. A receiver (Chromecast, Google TV) loads media by URL and
+// cannot send our headers, and what it loads is outside our control, so it
+// never gets the identity token: the phone asks for a cast link to one of its
+// playbacks, an unguessable id that opens only that playback (manifest,
+// segments and subtitle files), expires with it and is revoked when the Cast
+// session ends. Responses carry CORS headers: the receiver is a web page on
+// another origin. Subtitles are offered as whole WebVTT files for the
+// receiver's side-loaded text tracks, with the provider's own timing.
+const castLinks = new Map();
+const castCorsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Accept-Encoding, Range',
+  'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
+  'Access-Control-Max-Age': '600',
+};
+function castMediaUrl(castId, id, upstream) { return `/cast/${castId}/media?url=${encodeURIComponent(upstream)}&sig=${mediaUrlSignature(id, upstream)}`; }
+function shareForCast(user, playbackUrl, origin) {
+  const id = String(playbackUrl ?? '').match(/\/watch\/([\w-]+)\/master\.m3u8/)?.[1];
+  const source = id ? sources.get(id) : null;
+  if (!source) throw new HttpError(404, 'Unknown or expired playback');
+  if (source.userId !== user.userId) throw new HttpError(403, 'Playback belongs to another user');
+  for (const [key, link] of castLinks) if (link.expiresAt < Date.now() || !sources.has(link.id)) castLinks.delete(key);
+  if (castLinks.size >= 500) throw new HttpError(429, 'Too many cast links; try again later');
+  const castId = randomBytes(24).toString('base64url');
+  const expiresAt = source.expiresAt ?? Date.now() + 2 * 60 * 60 * 1000;
+  castLinks.set(castId, { id, userId: user.userId, expiresAt });
+  return {
+    id: castId,
+    url: `${origin}/cast/${castId}/master.m3u8`,
+    contentType: 'application/x-mpegURL',
+    subtitles: (source.subtitles ?? []).map((track, index) => ({
+      id: index + 1, name: track.name, language: track.language, forced: Boolean(track.forced), default: Boolean(track.default),
+      url: `${origin}/cast/${castId}/subtitle/${index}.vtt`,
+    })),
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
+}
+function revokeCast(user, castId) {
+  const key = cleanText(castId); const link = castLinks.get(key);
+  if (link && link.userId === user.userId) castLinks.delete(key);
+  return { ok: true };
+}
+function castSource(castId) {
+  const link = castLinks.get(castId);
+  const source = link && link.expiresAt > Date.now() ? sources.get(link.id) : null;
+  if (!source) { castLinks.delete(castId); return null; }
+  return { id: link.id, source };
+}
+async function sendCast(request, response, requestUrl, route) {
+  for (const [name, value] of Object.entries(castCorsHeaders)) response.setHeader(name, value);
+  if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
+  if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, 405, { error: 'Method not allowed' });
+  const castId = route[1]; const shared = castSource(castId);
+  if (!shared) return json(response, 404, { error: 'Unknown or expired cast link' });
+  const { id, source } = shared; const linkFor = (upstream) => castMediaUrl(castId, id, upstream);
+  if (route[2] === 'master.m3u8') return await sendUpstream(response, source.hlsUrl, id, source, false, request.headers.range, linkFor);
+  if (route[3] !== undefined) {
+    const track = source.subtitles?.[Number(route[3])];
+    if (!track) return json(response, 404, { error: 'Unknown subtitle track' });
+    const vtt = (await fetchUpstream(track.vttUrl, source)).body.toString('utf8');
+    if (!/^(?:﻿)?WEBVTT(?:\s|$)/.test(vtt)) throw new Error('Subtitle did not return WebVTT');
+    return text(response, 200, vtt, 'text/vtt; charset=utf-8');
+  }
+  const upstream = requestUrl.searchParams.get('url');
+  if (!upstream || !sameSecret(requestUrl.searchParams.get('sig'), mediaUrlSignature(id, upstream))) return json(response, 403, { error: 'Invalid media request' });
+  return await sendUpstream(response, new URL(upstream).toString(), id, source, false, request.headers.range, linkFor);
 }
 
 // ANK provider: AJAX catalog endpoints, `/watch/<slug>` series pages and an
@@ -1256,11 +1344,13 @@ function createAnkProvider(configuredOrigin) {
   return { type: 'ANK', origin: providerOrigin, watchUrl, search, latest, filters: catalogFilters, series, schedule, servers, source, segment, signUpstream };
 }
 
-function rewriteUriLines(textValue, baseUrl, id, source) {
+// `linkFor` builds the bridge URL of an upstream URL: by default a signed
+// /media link carrying the identity token, for Cast a token-free cast link.
+function rewriteUriLines(textValue, baseUrl, id, source, linkFor = (upstream) => mediaUrl(id, upstream, source.accessToken)) {
   return textValue.split(/\r?\n/).map((line) => {
     const value = line.trim(); if (!value) return line;
-    if (!value.startsWith('#')) return mediaUrl(id, absoluteUrl(value, baseUrl), source.accessToken);
-    return line.replace(/URI="([^"]+)"/g, (match, uri) => uri.startsWith('/subtitle/') ? match : `URI="${mediaUrl(id, absoluteUrl(uri, baseUrl), source.accessToken)}"`);
+    if (!value.startsWith('#')) return linkFor(absoluteUrl(value, baseUrl));
+    return line.replace(/URI="([^"]+)"/g, (match, uri) => uri.startsWith('/subtitle/') ? match : `URI="${linkFor(absoluteUrl(uri, baseUrl))}"`);
   }).join('\n');
 }
 function withStreamAttribute(playlist, name, value) {
@@ -1419,7 +1509,7 @@ async function detectStartPts(source, masterUrl, masterText) {
     return null;
   }
 }
-async function sendUpstream(response, upstreamUrl, id, source, inject, range) {
+async function sendUpstream(response, upstreamUrl, id, source, inject, range, linkFor = undefined) {
   const upstream = await fetchUpstream(upstreamUrl, source, range); upstream.body = provider.segment(upstream.url, upstream.body); const type = upstream.type;
   const isVtt = upstream.url.toLowerCase().includes('.vtt') || /text\/vtt/i.test(type);
   if (isVtt) {
@@ -1433,7 +1523,7 @@ async function sendUpstream(response, upstreamUrl, id, source, inject, range) {
     source.startPts ??= detectStartPts(source, upstream.url, playlist);
     playlist = injectRenditions(playlist, source, id);
   }
-  playlist = rewriteUriLines(playlist, upstream.url, id, source);
+  playlist = rewriteUriLines(playlist, upstream.url, id, source, linkFor);
   text(response, 200, playlist, 'application/vnd.apple.mpegurl; charset=utf-8');
 }
 async function sendSingleVttPlaylist(response, track, id, source) {
@@ -1481,6 +1571,9 @@ const server = http.createServer(async (request, response) => {
     // Pairing start and status are open: the TV has no identity yet.
     if (request.method === 'POST' && requestUrl.pathname === '/api/pair/start') return json(response, 201, startPairing());
     if (request.method === 'GET' && requestUrl.pathname === '/api/pair/status') return json(response, 200, pairingStatus(requestUrl.searchParams.get('pairingId')));
+    // Cast links authorize by their own id, never by the identity token.
+    const castRoute = requestUrl.pathname.match(/^\/cast\/([\w-]{16,64})\/(master\.m3u8|media|subtitle\/(\d{1,3})\.vtt)$/);
+    if (castRoute) return await sendCast(request, response, requestUrl, castRoute);
     const user = await authenticatedUser(request, requestUrl);
     if (!user) return json(response, 401, { error: 'A valid bridge access token is required' });
     if (request.method === 'GET' && requestUrl.pathname === '/api/search') {
@@ -1515,6 +1608,9 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'POST' && requestUrl.pathname === '/api/series/status') return json(response, 200, await getSeriesStatuses(JSON.parse(await readBody(request)).watchUrls));
     const serversRoute = requestUrl.pathname.match(/^\/api\/series\/([\w-]+)\/servers$/);
     if (request.method === 'GET' && serversRoute) return json(response, 200, await getServers(serversRoute[1], requestUrl.searchParams.get('episode')));
+    if (request.method === 'POST' && requestUrl.pathname === '/api/cast') return json(response, 201, shareForCast(user, JSON.parse(await readBody(request)).playbackUrl, requestOrigin(request)));
+    const castLink = requestUrl.pathname.match(/^\/api\/cast\/([\w-]+)$/);
+    if (request.method === 'DELETE' && castLink) return json(response, 200, revokeCast(user, castLink[1]));
     if (request.method === 'POST' && requestUrl.pathname === '/api/play') { const body = JSON.parse(await readBody(request)); return json(response, 201, await createPlayback(body.seriesKey, body.episode, body.serverIndex, requestOrigin(request), user)); }
     const watch = requestUrl.pathname.match(/^\/watch\/([\w-]+)\/master\.m3u8$/);
     if (request.method === 'GET' && watch) { const source = sources.get(watch[1]); if (!source) return json(response, 404, { error: 'Unknown or expired source' }); if (source.userId !== user.userId) return json(response, 403, { error: 'Playback belongs to another user' }); return await sendUpstream(response, source.hlsUrl, watch[1], source, true, request.headers.range); }
@@ -1537,4 +1633,4 @@ const server = http.createServer(async (request, response) => {
 // Tests import the pure helpers without opening a port.
 if (!process.env.BRIDGE_NO_LISTEN) server.listen(port, host, () => console.log(`AirPlay Subtitle Bridge: http://${host}:${port}`));
 
-export { approvePairing, completeSetup, createIdentity, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };
+export { approvePairing, castSource, server, completeSetup, liveContainerLinks, revokeCast, rewriteUriLines, setupForm, shareForCast, sources, createIdentity, createAnkProvider, listDevices, reportDevice, sendCommand, waitForCommands, fetchUpstream, injectRenditions, pairingStatus, startPairing, normalizePreferences, normalizeHistoryEntry, subtitleDetails, subtitleTracks, transportStreamStartPts, withTimestampMap };

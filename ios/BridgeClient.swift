@@ -132,6 +132,16 @@ enum BridgeClient {
         try await sendJSON(method: "PUT", base: base, path: path, body: body, timeoutInterval: 30)
     }
 
+    static func delete<T: Decodable>(base: String, path: String) async throws -> T {
+        let components = try components(base: base, path: path)
+        guard let url = components.url else { throw BridgeRequestError(message: String(localized: "La dirección del bridge no es válida.")) }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 15
+        authorize(&request, bridgeBaseURL: base)
+        return try await send(request)
+    }
+
     static func provisionUser<T: Decodable, Body: Encodable>(base: String, administratorToken: String, body: Body) async throws -> T {
         let components = try components(base: base, path: "/api/admin/users")
         guard let url = components.url else { throw BridgeRequestError(message: String(localized: "La dirección del bridge no es válida.")) }

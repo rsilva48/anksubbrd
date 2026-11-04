@@ -78,4 +78,9 @@ dependencies {
     // app: an on-device model would add tens of MB the TVs also download.
     implementation(libs.work.runtime)
     implementation(libs.code.scanner)
+    // Phone and tablet: Google Cast to a Chromecast or Google TV (Default
+    // Media Receiver); the device picker is our own on top of MediaRouter.
+    implementation(libs.cast.framework)
+    // Phone and tablet: window size classes and the fold's posture and hinge.
+    implementation(libs.compose.material3.adaptive)
 }

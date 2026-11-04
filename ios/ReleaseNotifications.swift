@@ -18,6 +18,28 @@ struct ScheduleEntry: Decodable {
 
 struct ScheduleResponse: Decodable { let entries: [ScheduleEntry] }
 
+/// A tapped reminder: the series, and the episode and Sub/Dub kind it
+/// announced (reminders scheduled before 0.2.28 carry only the series).
+struct ReleaseOpenRequest: Identifiable {
+    let anime: Anime
+    let episode: Int?
+    let kind: StreamKind?
+    var id: String { "\(anime.watchUrl)#\(episode ?? 0)#\(kind?.rawValue ?? "")" }
+
+    /// The episode to play right away, when the reminder named one.
+    var autoplay: ReleaseAutoplay? {
+        guard let episode, let kind else { return nil }
+        return ReleaseAutoplay(episode: episode, kind: kind)
+    }
+}
+
+/// An episode the series screen opens in the player as soon as the bridge
+/// confirms it is published with a server of that kind.
+struct ReleaseAutoplay: Equatable {
+    let episode: Int
+    let kind: StreamKind
+}
+
 /// Reminders for new episodes of the series in Continue. They are local
 /// notifications scheduled on the device from the estimated schedule: remote
 /// push would need a signed app with the push entitlement and a sender.
@@ -33,12 +55,19 @@ final class ReleaseNotifier {
     private static let publishingDelay: TimeInterval = 5 * 60
 
     /// Series opened from a notification; the root view presents it.
-    var openedSeries: Anime?
+    var openedSeries: ReleaseOpenRequest?
 
     @ObservationIgnored private let delegate = ReleaseNotificationDelegate()
 
     private init() {
         delegate.notifier = self
+        UNUserNotificationCenter.current().delegate = delegate
+    }
+
+    /// iOS delivers the tap that launched the app only to a delegate set
+    /// before launching finishes; the app delegate calls this from
+    /// `application(_:didFinishLaunchingWithOptions:)`.
+    func becomeNotificationDelegate() {
         UNUserNotificationCenter.current().delegate = delegate
     }
 
@@ -91,8 +120,9 @@ final class ReleaseNotifier {
         }
     }
 
-    fileprivate func open(watchUrl: String, title: String, titleJp: String?, imageUrl: String?) {
-        openedSeries = Anime(title: title, watchUrl: watchUrl, imageUrl: imageUrl, meta: "", rating: nil, score: nil, mediaType: nil, year: nil, titleJp: titleJp)
+    fileprivate func open(watchUrl: String, title: String, titleJp: String?, imageUrl: String?, episode: Int?, kind: StreamKind?) {
+        let anime = Anime(title: title, watchUrl: watchUrl, imageUrl: imageUrl, meta: "", rating: nil, score: nil, mediaType: nil, year: nil, titleJp: titleJp)
+        openedSeries = ReleaseOpenRequest(anime: anime, episode: episode, kind: kind)
     }
 
     private func removeScheduled(keeping identifiers: Set<String>) async {
@@ -115,6 +145,8 @@ final class ReleaseNotifier {
             "title": item.title,
             "titleJp": japanese ?? "",
             "imageUrl": item.imageUrl ?? "",
+            "episode": item.episode,
+            "kind": item.kind.rawValue,
         ]
         let date = item.airingDate.addingTimeInterval(Self.publishingDelay)
         let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
@@ -131,7 +163,8 @@ private final class ReleaseNotificationDelegate: NSObject, UNUserNotificationCen
         completionHandler([.banner, .list, .sound])
     }
 
-    /// Tapping a reminder opens that series.
+    /// Tapping a reminder opens that series and plays the episode it
+    /// announced, whether the app was closed, suspended or open.
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         let text = { (key: String) -> String? in
@@ -140,9 +173,11 @@ private final class ReleaseNotificationDelegate: NSObject, UNUserNotificationCen
         }
         if let watchUrl = text("watchUrl") {
             let title = text("title") ?? "", titleJp = text("titleJp"), imageUrl = text("imageUrl")
+            let episode = (info["episode"] as? NSNumber)?.intValue
+            let kind = text("kind").flatMap(StreamKind.init(rawValue:))
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    self.notifier?.open(watchUrl: watchUrl, title: title, titleJp: titleJp, imageUrl: imageUrl)
+                    self.notifier?.open(watchUrl: watchUrl, title: title, titleJp: titleJp, imageUrl: imageUrl, episode: episode, kind: kind)
                 }
             }
         }

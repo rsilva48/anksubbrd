@@ -914,6 +914,23 @@
         }
       }
     },
+    "Cambia de versión en el mismo punto del episodio." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Switches version at the same point of the episode."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cambia de versión en el mismo punto del episodio."
+          }
+        }
+      }
+    },
     "Cambia o limpia los filtros." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1402,6 +1419,23 @@
         }
       }
     },
+    "Controla la reproducción, los subtítulos, la versión Sub/Dub y el volumen desde aquí." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Control playback, subtitles, the Sub/Dub version and the volume from here."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Controla la reproducción, los subtítulos, la versión Sub/Dub y el volumen desde aquí."
+          }
+        }
+      }
+    },
     "Copiar o compartir de forma segura" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1466,6 +1500,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cualquiera"
+          }
+        }
+      }
+    },
+    "Dejar de transmitir" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop Casting"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dejar de transmitir"
           }
         }
       }
@@ -1946,6 +1997,57 @@
         }
       }
     },
+    "El dispositivo Cast no pudo reproducir el episodio. Comprueba que puede acceder al bridge (misma red o HTTPS público)." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Cast device couldn't play the episode. Check that it can reach the bridge (same network or public HTTPS)."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El dispositivo Cast no pudo reproducir el episodio. Comprueba que puede acceder al bridge (misma red o HTTPS público)."
+          }
+        }
+      }
+    },
+    "El episodio %lld aún no tiene servidores %@. Vuelve a intentarlo en unos minutos o elige otro servidor en el menú del episodio." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Episode %lld has no %@ servers yet. Try again in a few minutes, or choose another server from the episode's menu."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El episodio %lld aún no tiene servidores %@. Vuelve a intentarlo en unos minutos o elige otro servidor en el menú del episodio."
+          }
+        }
+      }
+    },
+    "El episodio %lld en %@ todavía no está publicado. Elige otro episodio de la lista o desliza hacia abajo para comprobarlo de nuevo." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Episode %lld in %@ isn't published yet. Choose another episode from the list, or pull down to check again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El episodio %lld en %@ todavía no está publicado. Elige otro episodio de la lista o desliza hacia abajo para comprobarlo de nuevo."
+          }
+        }
+      }
+    },
     "El episodio %lld en %@ ya debería estar disponible." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1993,6 +2095,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "El episodio %lld no tiene servidores %@."
+          }
+        }
+      }
+    },
+    "El episodio %lld todavía no tiene servidores %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Episode %lld has no %@ servers yet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El episodio %lld todavía no tiene servidores %@."
+          }
+        }
+      }
+    },
+    "El episodio %lld todavía no tiene versión %@." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Episode %lld doesn't have a %@ version yet."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "El episodio %lld todavía no tiene versión %@."
           }
         }
       }
@@ -2371,6 +2507,23 @@
         }
       }
     },
+    "Enviando a %@…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending to %@…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enviando a %@…"
+          }
+        }
+      }
+    },
     "Episodio %lld" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2711,6 +2864,23 @@
         }
       }
     },
+    "Esta copia se ejecuta dentro de LiveContainer: la app Cámara no puede abrir los códigos de la TV. Escanéalos aquí, o en la página de vinculación usa «Abrir en LiveContainer»." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This copy runs inside LiveContainer: the Camera app can't open the TV's codes. Scan them here, or use “Open in LiveContainer” on the pairing page."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Esta copia se ejecuta dentro de LiveContainer: la app Cámara no puede abrir los códigos de la TV. Escanéalos aquí, o en la página de vinculación usa «Abrir en LiveContainer»."
+          }
+        }
+      }
+    },
     "Esta descarga no se completó y no puede verse sin conexión. Bórrala y descárgala de nuevo." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2843,6 +3013,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Este episodio no publicó fuentes de este tipo."
+          }
+        }
+      }
+    },
+    "Este episodio se reproduce desde una descarga. Para verlo con Google Cast, reprodúcelo en línea." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This episode plays from a download. To watch it with Google Cast, play it online."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Este episodio se reproduce desde una descarga. Para verlo con Google Cast, reprodúcelo en línea."
           }
         }
       }
@@ -2996,6 +3183,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Generar token seguro"
+          }
+        }
+      }
+    },
+    "Google Cast" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Cast"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Google Cast"
           }
         }
       }
@@ -3833,6 +4037,40 @@
         }
       }
     },
+    "No se pudo cambiar a %@. %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't switch to %@. %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo cambiar a %@. %@"
+          }
+        }
+      }
+    },
+    "No se pudo comprobar el episodio %lld con el bridge. Se abrirá solo en cuanto vuelva la conexión; mientras tanto puedes reintentar o ver los episodios descargados." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't check episode %lld with the bridge. It will open by itself as soon as the connection returns; meanwhile you can retry or watch your downloads."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo comprobar el episodio %lld con el bridge. Se abrirá solo en cuanto vuelva la conexión; mientras tanto puedes reintentar o ver los episodios descargados."
+          }
+        }
+      }
+    },
     "No se pudo conectar con el bridge. Comprueba que esté encendido y accesible." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3867,6 +4105,23 @@
         }
       }
     },
+    "No se pudo conectar con el dispositivo Cast: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't connect to the Cast device: %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo conectar con el dispositivo Cast: %@"
+          }
+        }
+      }
+    },
     "No se pudo consultar GitHub: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3880,6 +4135,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No se pudo consultar GitHub: %@"
+          }
+        }
+      }
+    },
+    "No se pudo enviar el episodio a Google Cast. %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't send the episode to Google Cast. %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se pudo enviar el episodio a Google Cast. %@"
           }
         }
       }
@@ -5783,6 +6055,23 @@
         }
       }
     },
+    "Transmitiendo a %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Casting to %@"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transmitiendo a %@"
+          }
+        }
+      }
+    },
     "Título de la serie" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6038,6 +6327,23 @@
         }
       }
     },
+    "Versión" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Version"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Versión"
+          }
+        }
+      }
+    },
     "Versión instalada" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6136,6 +6442,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Volumen"
+          }
+        }
+      }
+    },
+    "Volumen de %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ volume"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Volumen de %@"
           }
         }
       }

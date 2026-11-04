@@ -126,13 +126,13 @@
     <string name="show_code">Mostrar código</string>
     <string name="profile_qr_description">Código QR del perfil</string>
     <string name="scan_with_app">Escanéalo con AniBridge Player</string>
-    <string name="transfer_scan_hint">En el iPhone, con la cámara o en Ajustes › Escanear código. El teléfono usará el perfil «%1$s».</string>
+    <string name="transfer_scan_hint">En el iPhone, con la cámara o en Ajustes › Escanear código de la TV (dentro de LiveContainer, sólo desde la app). El teléfono usará el perfil «%1$s».</string>
     <string name="code_hides">El código se oculta en un minuto.</string>
     <string name="pairing_qr_description">Código QR para vincular</string>
     <string name="generating_code">Generando código…</string>
     <string name="pairing_title">Vincula un perfil</string>
     <string name="pairing_step1">1. Escanea el código con la cámara de cualquier teléfono.</string>
-    <string name="pairing_step2">2. En la página que se abre, elige «Abrir en la app» o pega un token. La primera vez puedes crear la identidad con el token administrador del bridge.</string>
+    <string name="pairing_step2">2. En la página que se abre, elige «Abrir en la app» (o «Abrir en LiveContainer» si la app está dentro de él) o pega un token. La primera vez puedes crear la identidad con el token administrador del bridge.</string>
     <string name="pairing_step3">3. Esta pantalla continúa sola.</string>
     <string name="pairing_note">El perfil usa esa identidad: el mismo Continuar viendo y las mismas preferencias. El código cambia cada 10 minutos.</string>
 

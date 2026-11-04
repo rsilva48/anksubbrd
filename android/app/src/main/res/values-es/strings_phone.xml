@@ -238,4 +238,30 @@
     <string name="check_updates">Buscar actualizaciones</string>
     <string name="allow_install">Permite instalar aplicaciones desde AniBridge Player y vuelve a pulsar Instalar.</string>
     <string name="install_tag">Instalar %1$s</string>
+
+    <!-- Google Cast -->
+    <string name="cast">Google Cast</string>
+    <string name="cast_title">Enviar a un dispositivo</string>
+    <string name="cast_searching">Buscando dispositivos Cast en esta Wi‑Fi…</string>
+    <string name="cast_network_hint">El teléfono y el Chromecast o Google TV deben estar en la misma red, y la TV debe poder abrir la dirección de tu bridge (la misma red de casa o HTTPS público).</string>
+    <string name="cast_volume">Volumen del dispositivo</string>
+    <string name="cast_stop">Dejar de transmitir</string>
+    <string name="cast_connect_failed">No se pudo conectar con el dispositivo Cast.</string>
+    <string name="cast_receiver_failed">El dispositivo Cast no pudo reproducir el episodio. Comprueba que puede acceder al bridge (misma red o HTTPS público).</string>
+    <string name="cast_failed">No se pudo enviar el episodio a Google Cast. %1$s</string>
+    <string name="cast_casting_to">Transmitiendo a %1$s</string>
+    <string name="cast_sending_to">Enviando a %1$s…</string>
+    <string name="cast_download_local">Las descargas se reproducen en este teléfono. Reproduce el episodio en línea para transmitirlo.</string>
+    <string name="cast_subtitles">Subtítulos</string>
+    <string name="cast_play">Reproducir</string>
+    <string name="cast_pause">Pausar</string>
+    <string name="cast_back10">Retroceder 10 segundos</string>
+    <string name="cast_forward10">Adelantar 10 segundos</string>
+    <string name="version_title">Versión</string>
+    <string name="kind_unavailable">El episodio %1$d todavía no tiene versión %2$s.</string>
+    <string name="kind_switch_failed">No se pudo cambiar a %1$s. %2$s</string>
+
+    <!-- Pantallas grandes y plegables -->
+    <string name="choose_series_title">Elige una serie</string>
+    <string name="choose_series_text">Se abre aquí, junto a la lista.</string>
 </resources>

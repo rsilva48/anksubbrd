@@ -217,6 +217,13 @@ struct SettingsScreen: View {
             }
             // A TV's "Llevar al teléfono" profile, or a TV pairing code.
             Button("Escanear código de la TV…", systemImage: "qrcode.viewfinder") { showScanner = true }
+            // LiveContainer does not register its apps' URL schemes with iOS,
+            // so the Camera app cannot open anksubbrd:// codes for this copy.
+            if ProcessInfo.processInfo.environment["LC_HOME_PATH"] != nil {
+                Text("Esta copia se ejecuta dentro de LiveContainer: la app Cámara no puede abrir los códigos de la TV. Escanéalos aquí, o en la página de vinculación usa «Abrir en LiveContainer».")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             if let tokenError {
                 ErrorNotice(message: tokenError)
             }

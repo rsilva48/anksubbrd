@@ -34,7 +34,12 @@
     <key>NSCameraUsageDescription</key>
     <string>La cámara escanea los códigos QR de la TV para vincularla o para usar un perfil en este dispositivo.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>La app se conecta al bridge de vídeo dentro de tu red local.</string>
+    <string>La app se conecta al bridge de vídeo dentro de tu red local y busca dispositivos Google Cast en tu Wi‑Fi.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_googlecast._tcp</string>
+        <string>_CC1AD845._googlecast._tcp</string>
+    </array>
     <key>AVInitialRouteSharingPolicy</key>
     <string>LongFormVideo</string>
     <key>UIBackgroundModes</key>

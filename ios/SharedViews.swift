@@ -226,11 +226,15 @@ struct LoadingOverlay: View {
     }
 }
 
-/// On iPad the adaptable tab bar shares the navigation bar area while it
-/// morphs to and from the sidebar; inline root titles avoid being covered.
+/// On regular width (iPad, an unfolded iPhone Duo) the adaptable tab bar
+/// floats over the navigation bar area; inline root titles avoid being
+/// covered. Decided by size class, not by device idiom: an unfolded iPhone
+/// Duo reports the iPhone idiom with a regular-width layout.
 struct AdaptableTabRootTitleStyle: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
     func body(content: Content) -> some View {
-        content.navigationBarTitleDisplayMode(UIDevice.current.userInterfaceIdiom == .pad ? .inline : .automatic)
+        content.navigationBarTitleDisplayMode(horizontalSizeClass == .regular ? .inline : .automatic)
     }
 }
 
@@ -254,6 +258,12 @@ struct GlassIcon: View {
 /// width (an unfolded iPhone Duo, iPad, large iPhones in landscape) the list
 /// stays on the left and the series opens beside it. Links in the list show
 /// their destination in the detail column, so the screens do not change.
+///
+/// A split view created when its tab is first selected is laid out once below
+/// the floating tab bar and then moved up under it, which left a strip of the
+/// window background above the list (black in dark mode). The columns and
+/// what lies behind them share one background, so that first layout already
+/// looks like the final one.
 struct AdaptiveSeriesNavigation<Content: View>: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ViewBuilder let content: () -> Content
@@ -263,11 +273,17 @@ struct AdaptiveSeriesNavigation<Content: View>: View {
             NavigationSplitView {
                 content()
                     .navigationSplitViewColumnWidth(min: 340, ideal: 440, max: 600)
+                    .containerBackground(Self.background, for: .navigation)
             } detail: {
                 ContentUnavailableView("Elige una serie", systemImage: "sidebar.left", description: Text("Se abre aquí, junto a la lista."))
+                    .containerBackground(Self.background, for: .navigation)
             }
+            .background(Self.background.ignoresSafeArea())
         } else {
             NavigationStack(root: content)
         }
     }
+
+    /// The grouped background the Continue list and the series screen use.
+    private static var background: Color { Color(uiColor: .systemGroupedBackground) }
 }

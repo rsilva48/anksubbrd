@@ -39,11 +39,18 @@ Las apps (iOS, Android TV y Android en teléfono) están en español y en inglé
 - Sub activa los subtítulos automáticamente: el idioma elegido en **Subtítulos en Sub**, si no el idioma del dispositivo y, si no existe, la pista predeterminada del bridge (inglés). Cambiar de subtítulo durante un episodio Sub actualiza esa preferencia.
 - Los controles de la pantalla bloqueada y del Centro de control funcionan mientras se reproduce por AirPlay.
 
+- **Versión** (en el panel de subtítulos y audio): cambia entre Sub y Dub en el mismo punto del episodio, prefiriendo un servidor con el mismo nombre.
+- **Google Cast**: el botón Cast del reproductor envía el episodio a un Chromecast o Google TV (ver [Google Cast](#google-cast)). AirPlay sigue siendo independiente.
+
 Usa el botón AirPlay del reproductor, no **Duplicar pantalla**: la app configura la sesión de vídeo de larga duración para que el TV reciba vídeo, audio y pistas VTT.
 
 ### Pantallas anchas (iPhone Duo, iPad)
 
 Con pantalla ancha (el iPhone Duo abierto, iPad o un iPhone grande en horizontal), Recientes, Buscar y Continuar muestran la lista a la izquierda y la ficha de la serie a la derecha. Plegado o en vertical, cada pestaña es una sola columna como siempre.
+
+- La disposición depende de la clase de tamaño horizontal (`regular` o `compact`), no del modelo: el iPhone Duo abierto se identifica como iPhone, pero su pantalla interior es `regular`. Por eso los títulos de las pestañas son compactos en cualquier pantalla ancha, igual que en iPad.
+- Las columnas y lo que queda detrás de ellas comparten el mismo fondo (`systemGroupedBackground`, con `containerBackground(_:for: .navigation)`). La pestaña que se abre por primera vez coloca su columna bajo la barra de pestañas flotante en dos pasos, y antes dejaba ver una franja negra arriba a la izquierda (capturas del 3 de noviembre en Continue). Ahora ese primer paso ya tiene el color definitivo.
+- El iOS 27.1 SDK trae APIs propias del iPhone Duo (`ArrangementView`, `ReservedRegion`, barras verticales en la columna de detalle). La app no las necesita: `NavigationSplitView` ya ajusta las columnas al pliegue y las barras verticales.
 
 ### Continuar viendo
 
@@ -74,7 +81,12 @@ Cada episodio de la ficha tiene su botón de descarga (también al mantenerlo pu
 
 ### Avisos de nuevos episodios
 
-La primera vez que abres la app con un bridge configurado, te pregunta si quieres estos avisos; también se activan o desactivan en **Ajustes → Este dispositivo → Avisar de nuevos episodios**. La app programa notificaciones locales para los episodios que estrenan en los próximos 8 días, según el horario estimado del catálogo. Sólo avisa de las series de **Continuar viendo**, cuando el episodio es posterior al que viste y del mismo tipo (Sub o Dub) que sigues. La notificación llega unos minutos después de la hora estimada y, al tocarla, abre la serie.
+La primera vez que abres la app con un bridge configurado, te pregunta si quieres estos avisos; también se activan o desactivan en **Ajustes → Este dispositivo → Avisar de nuevos episodios**. La app programa notificaciones locales para los episodios que estrenan en los próximos 8 días, según el horario estimado del catálogo. Sólo avisa de las series de **Continuar viendo**, cuando el episodio es posterior al que viste y del mismo tipo (Sub o Dub) que sigues. La notificación llega unos minutos después de la hora estimada. Al tocarla, con la app cerrada, en segundo plano o abierta:
+
+- La app abre la serie y comprueba en el bridge que ese episodio esté publicado en el tipo anunciado (Sub o Dub).
+- Si lo está, abre directamente el reproductor. Usa la descarga si la hay; si no, el servidor que usaste por última vez en la serie, si tiene ese tipo, o cualquier otro servidor del mismo tipo. Nunca cambia a la otra versión.
+- Si el episodio aún no está publicado o no tiene servidores de ese tipo, se queda en la lista de episodios con un aviso. Si no hay conexión con el bridge, el episodio se abre solo en cuanto vuelve.
+- Los avisos programados antes de esta versión sólo llevan la serie: se actualizan solos la próxima vez que abras la app.
 
 - Los avisos se reprograman al abrir o volver a la app (y al sincronizar el historial), así que basta con abrirla de vez en cuando. No requieren servidor de push: el push remoto (APNs) exigiría una app firmada con ese permiso, algo que un IPA sin firmar instalado con LiveContainer no tiene.
 - El horario es una estimación y por ahora el catálogo sólo publica horarios de Sub.
@@ -136,6 +148,7 @@ El flujo con `open-web-page` y `itms-services` está pendiente de validación en
 | `HISTORY_STORE_PATH` | `proxy/data/history.json` | Historial por usuario. |
 | `PREFERENCES_STORE_PATH` | junto a `history.json` | Preferencias por usuario. |
 | `BRIDGE_USER_STORE_PATH` | `proxy/data/users.json` | Hash y salt de los tokens registrados. |
+| `LIVECONTAINER_BUNDLE_NAME` | `com.personal.airplaysubtitleplayer.app` | Carpeta de la app dentro de LiveContainer, para el enlace «abrirla por su nombre» de la página `/setup`. |
 
 Sin `BRIDGE_ADMIN_TOKEN` ni usuarios registrados, el bridge funciona sin autenticación (sólo para tu red local).
 
@@ -271,6 +284,8 @@ La app usa estas rutas; no necesitas llamarlas manualmente.
 - `POST /api/identities` con `{ "label" }`: crea un perfil nuevo con la identidad que hace la petición; responde `{ token, userId, label }`. `GET`/`POST /setup?code=…`: página para completar la vinculación de una TV desde el navegador.
 - `GET /api/devices`: TVs conectadas de la identidad, con lo que reproducen, `stateAge` (ms desde ese informe) y `canOpen` (si la TV puede abrir la app sola). `PUT /api/devices/:id` con `{ "name", "state", "canOpen" }`: la TV informa su estado. `GET /api/devices/:id/commands`: la TV espera órdenes (long polling de hasta 25 s). `POST /api/devices/:id/commands` con `{ "type": "play" | "pause" | "resume" | "toggle" | "seek" | "skip" | "next" | "previous" | "stop" | "volume" | "subtitles", … }`: el teléfono envía una orden (`play` lleva `watchUrl`, `episode` y `kind`; `seek`, `position` absoluta o `seconds` relativos; `volume`, `steps`; `subtitles`, `track` con el id de una pista de `state.subtitles` u `off`).
 
+- `POST /api/cast` con `{ "playbackUrl" }`: crea un enlace temporal de Google Cast para una reproducción de la misma identidad. Responde `{ id, url, contentType, subtitles: [{ id, name, language, url, forced, default }], expiresAt }`. `DELETE /api/cast/:id` lo revoca. `GET /cast/:id/master.m3u8`, `/cast/:id/media?url=…&sig=…` y `/cast/:id/subtitle/:n.vtt` sirven el manifiesto, los segmentos y los WebVTT al receptor, con CORS y sin token de identidad.
+
 Las sesiones de serie caducan a los 20 minutos (HTTP 410); la app recarga la serie y reintenta sola. El bridge sólo acepta URLs `/watch/…` del origen configurado y no expone un proxy genérico.
 
 ### Control de la TV desde el teléfono
@@ -289,9 +304,10 @@ Para que el teléfono pueda **abrir** la app de la TV cuando está cerrada, Andr
 ### Perfiles de la TV
 
 - **Vincular perfil** muestra un código QR que abre la página `/setup` del bridge en cualquier teléfono, sin instalar nada. Desde ahí se puede abrir la app («Abrir en la app», que vincula la TV con la identidad del teléfono), pegar un token existente o, la primera vez, crear la identidad con el token administrador del bridge. El token administrador sólo se comprueba, no se guarda; cada código admite cinco intentos y caduca a los 10 minutos.
+- **LiveContainer**: iOS no conoce los esquemas de URL de las apps que viven dentro de LiveContainer, así que «Abrir en la app» sólo funciona con la IPA instalada directamente. La página ofrece además **Abrir en LiveContainer** (`livecontainer://open-url?url=<Base64 del enlace anksubbrd://pair…>`): LiveContainer busca entre sus apps la que declara el esquema `anksubbrd` y le entrega el enlace. Debajo hay un enlace alternativo, «abrirla por su nombre» (`livecontainer://livecontainer-launch?bundle-name=com.personal.airplaysubtitleplayer.app&open-url=…`), útil si otra app de LiveContainer está abierta. Si LiveContainer renombró la carpeta de la app (por ejemplo, al instalarla dos veces), configura ese nombre en `LIVECONTAINER_BUNDLE_NAME`. La forma más directa sigue siendo escanear desde la app: **Ajustes › Escanear código de la TV…**, que lee el QR de la TV sin pasar por iOS. Dentro de LiveContainer, la app lo recuerda debajo de ese botón.
 - **Crear perfil** crea un perfil nuevo con la identidad del perfil activo, sin token administrador (`POST /api/identities`, como mucho 10 perfiles por identidad y 5 por hora).
 - Manteniendo OK sobre un perfil: **Llevar al teléfono** muestra, tras un aviso, un QR con su identidad (`anksubbrd://identity?…`) que se oculta en un minuto; **Quitar** lo borra de la TV.
-- En el iPhone, ese QR se abre con la app Cámara o con **Ajustes › Escanear código de la TV…**, que también lee los códigos de vinculación. Usar el perfil reemplaza la identidad actual (pide confirmar que guardaste su token) y, si el código es de otro bridge, lo prueba y se conecta a él.
+- En el iPhone, ese QR se abre con la app Cámara (sólo con la IPA instalada directamente) o con **Ajustes › Escanear código de la TV…** (también dentro de LiveContainer), que también lee los códigos de vinculación. Usar el perfil reemplaza la identidad actual (pide confirmar que guardaste su token) y, si el código es de otro bridge, lo prueba y se conecta a él.
 
 ### Android (teléfono)
 
@@ -307,7 +323,34 @@ El mismo APK (`AniBridgePlayer-TV.apk`) instalado en un teléfono abre la app de
 - **Avisos de nuevos episodios**: la primera vez la app ofrece activarlos (pide el permiso de notificaciones en Android 13+). Avisan, a la hora estimada del catálogo más 5 minutos, de los episodios nuevos de las series de Continuar en el tipo Sub o Dub que sigues; tocar el aviso abre la serie. Se reprograman cada vez que la app vuelve al frente.
 - **Ajustes**: bridge, identidad privada (crear con el token administrador, importar, respaldar, cambiar; el token se guarda cifrado con Android Keystore), preferencias sincronizadas, este dispositivo (avisos y descargas) y actualizaciones desde GitHub.
 
+- **Google Cast**: botón Cast en el reproductor, con el selector de dispositivos de la app, y un panel de control mientras se transmite (ver [Google Cast](#google-cast)). El menú **Sub ▾ / Dub ▾** del reproductor cambia de versión en el mismo punto del episodio.
+- **Plegables, tablets y ventanas redimensionables**: usa la clase de tamaño de ventana y la postura de Jetpack WindowManager (a través de `androidx.compose.material3.adaptive`). En ventanas compactas (menos de 600 dp) mantiene la barra inferior y un solo panel. Desde 600 dp (un plegable abierto, una tablet, pantalla dividida) muestra un riel de navegación y la lista junto a la ficha de la serie. Si hay un pliegue vertical, los dos paneles se separan justo en él, así que la bisagra no tapa contenido. En postura de mesa (medio plegado en horizontal), el reproductor pone el vídeo en la mitad superior y el título, la versión, Cast y el episodio anterior/siguiente en la inferior. Al plegar, desplegar o girar se conservan la pestaña, la serie abierta, la lista de cada pestaña y la reproducción: la actividad gestiona los cambios de tamaño sin recrearse. En teléfonos sin pliegue y en Android antiguo (desde Android 8) todo sigue como antes.
+
 Pendiente: los controles en la pantalla de bloqueo (el reproductor del teléfono se pausa al bloquear).
+
+## Google Cast
+
+Desde el reproductor del iPhone o iPad (SDK oficial de Google Cast 4.8.6 por Swift Package Manager) y del teléfono o tablet Android (`play-services-cast-framework` 23.0.0) se puede enviar el episodio a un Chromecast, un Google TV o una TV con Chromecast integrado. Se usa el receptor predeterminado de Google (Default Media Receiver, `CC1AD845`): no hace falta registrar nada en la consola de Google Cast.
+
+- **Cómo funciona**: al conectar un dispositivo, la app pide al bridge un enlace temporal para el episodio (`POST /api/cast`) y se lo envía al receptor con el HLS (segmentos MPEG-TS) y los subtítulos como pistas WebVTT laterales. El reproductor del teléfono se detiene, para no descargar el vídeo dos veces, y pasa a ser el mando.
+- **Controles**: reproducir y pausar, ±10 s, barra de posición, subtítulos (o ninguno), episodio anterior y siguiente, siguiente episodio automático, saltar intro y outro, volumen del dispositivo y dejar de transmitir. El progreso se guarda en Continuar como al ver en el teléfono. En iPhone, el botón Cast del SDK también muestra el dispositivo, su volumen y el botón para desconectar.
+- **Audio**: el receptor predeterminado sólo deja al emisor cambiar pistas de texto; el audio de un HLS lo elige el propio receptor. Por eso el audio se cambia con **Versión** (Sub: japonés con subtítulos; Dub: inglés), que carga la otra versión en el mismo punto. Para elegir pistas de audio dentro del mismo stream haría falta un receptor propio (Custom Web Receiver) registrado en la consola de Google Cast.
+- **Sesiones**: si la app pasa a segundo plano, el receptor sigue reproduciendo; al volver, la sesión se reanuda sin recargar el episodio. Si la sesión termina (desde la app, el SDK o la TV), el episodio sigue en el teléfono, en pausa, donde lo dejó el receptor. Cerrar el reproductor no detiene la TV.
+- **Las descargas** se reproducen siempre en el teléfono: el receptor necesita el bridge.
+
+### Seguridad y red
+
+- El receptor nunca recibe el token de identidad, que no se puede revocar. Recibe un id aleatorio de 192 bits que sólo abre esa reproducción (manifiesto, segmentos firmados y sus WebVTT), caduca con ella (2 horas) y se revoca al terminar la sesión Cast. Mientras es válido, quien tenga el enlace puede ver ese episodio.
+- Las respuestas de `/cast/…` llevan `Access-Control-Allow-Origin: *` (no usan cookies ni credenciales) y responden a `OPTIONS`, como pide el receptor web.
+- **El dispositivo Cast tiene que poder abrir la dirección del bridge que usa el teléfono**. Con un bridge en la red de casa (`http://192.168.x.x:8787`) funciona si la TV está en esa misma red. Con un bridge público, usa HTTPS con un certificado válido. Google no garantiza que el receptor cargue HLS por `http://`; si el receptor no reproduce, prueba con la dirección HTTPS del bridge.
+- **iOS**: la búsqueda de dispositivos usa la red local (`NSLocalNetworkUsageDescription`, `NSBonjourServices` con `_googlecast._tcp` y `_CC1AD845._googlecast._tcp`). iOS pide el permiso de red local la primera vez que se toca el botón Cast. No hace falta el permiso de multicast.
+- **Android**: el selector de dispositivos es propio (Material 3 sobre MediaRouter), así que la actividad no necesita AppCompat. Requiere Google Play services.
+
+### Qué falta comprobar en dispositivos reales
+
+- Nada de Cast se ha probado todavía contra un receptor real. Cubren el bridge pruebas automáticas, incluida una petición HTTP real a `/cast` (CORS, `OPTIONS`, WebVTT y firma). La app Android compila; en el emulador se comprobaron el botón y el diálogo de búsqueda, pero el emulador no ve dispositivos Cast de la red. El código de iOS sólo pasa el análisis sintáctico en Windows: se compilará por primera vez en GitHub Actions.
+- Pendiente de probar en un iPhone y en un teléfono Android con un Chromecast o Google TV en la misma red: descubrimiento, carga del HLS con segmentos TS y subtítulos WebVTT (y su sincronía), cambio de subtítulos, Sub/Dub, búsqueda, volumen, siguiente episodio, segundo plano y reanudación, y fin de sesión.
+- iOS dentro de LiveContainer: falta comprobar que el aviso de red local aparece y que el framework dinámico del SDK carga en la app invitada.
 
 ## Versiones y releases
 
