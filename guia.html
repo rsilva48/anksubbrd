@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Guía de instalación de AniBridge</title>
+  <meta name="description" content="Instala AniBridge Player en tu iPhone o iPad con SideStore, paso a paso, aunque nunca hayas instalado apps fuera de la App Store.">
+  <style>
+    :root {
+      --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --line: #d1d1d6;
+      --accent: #4b49d6; --accent-soft: #e9e8fb; --accent-text: #ffffff;
+      --ok: #1f8a4c; --ok-soft: #e3f5ea; --warn: #b25e00; --warn-soft: #fff1dc; --stop: #c4314b; --stop-soft: #fde7eb;
+      --pc: #0a7ea4; --pc-soft: #e0f2f9; --phone: #7a3fd1; --phone-soft: #f0e8fc;
+      --shadow: 0 1px 2px rgba(0,0,0,.05), 0 6px 24px rgba(0,0,0,.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #000000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989d; --line: #38383a;
+        --accent: #8b88ff; --accent-soft: #24234a; --accent-text: #000000;
+        --ok: #4cd383; --ok-soft: #12301f; --warn: #ffb547; --warn-soft: #3a2a10; --stop: #ff6b81; --stop-soft: #3d1820;
+        --pc: #5cc8ee; --pc-soft: #0f2c38; --phone: #b78cff; --phone-soft: #2a1d40;
+        --shadow: none;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-text-size-adjust: 100%; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+    a { color: var(--accent); }
+    h1 { font-size: clamp(1.8rem, 6vw, 2.5rem); line-height: 1.15; margin: .25rem 0 .5rem; letter-spacing: -.02em; }
+    h2 { font-size: 1.45rem; line-height: 1.2; margin: 0; letter-spacing: -.01em; }
+    h3 { font-size: 1.05rem; margin: 1.25rem 0 .4rem; }
+    p { margin: .5rem 0; }
+    .eyebrow { color: var(--accent); font-weight: 700; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; margin: 0; }
+    .lead { color: var(--muted); font-size: 1.1rem; margin: 0 0 1.5rem; }
+    .card { background: var(--card); border-radius: 20px; padding: 1.4rem; margin: 1rem 0; box-shadow: var(--shadow); }
+    .row { display: grid; gap: 1rem; }
+    @media (min-width: 640px) { .row.two { grid-template-columns: 1fr 1fr; } .row.three { grid-template-columns: repeat(3, 1fr); } }
+
+    /* What you need */
+    .needs { list-style: none; padding: 0; margin: .5rem 0 0; display: grid; gap: .6rem; }
+    @media (min-width: 640px) { .needs { grid-template-columns: 1fr 1fr; } }
+    .needs li { display: flex; gap: .7rem; align-items: flex-start; }
+    .needs .ico { flex: none; width: 2.2rem; height: 2.2rem; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+    .needs small { display: block; color: var(--muted); font-size: .85rem; line-height: 1.35; }
+
+    /* How it works */
+    .flow { display: grid; gap: .6rem; margin-top: .75rem; }
+    @media (min-width: 640px) { .flow { grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; } }
+    .flow .box { border-radius: 16px; padding: .9rem; text-align: center; }
+    .flow .box b { display: block; }
+    .flow .box small { color: var(--muted); }
+    .flow .arrow { text-align: center; color: var(--muted); font-size: 1.4rem; }
+    @media (max-width: 639px) { .flow .arrow { transform: rotate(90deg); } }
+    .pc { background: var(--pc-soft); } .pc b { color: var(--pc); }
+    .phone { background: var(--phone-soft); } .phone b { color: var(--phone); }
+    .app { background: var(--accent-soft); } .app b { color: var(--accent); }
+
+    /* Progress map */
+    .map { list-style: none; counter-reset: part; padding: 0; margin: 1rem 0 0; display: grid; gap: .5rem; }
+    .map a { display: flex; align-items: center; gap: .8rem; text-decoration: none; color: var(--text); background: var(--card); border-radius: 16px; padding: .75rem .9rem; box-shadow: var(--shadow); }
+    .map a:hover { outline: 2px solid var(--accent); }
+    .map .n { flex: none; width: 2rem; height: 2rem; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; }
+    .map .t { flex: 1; }
+    .map small { color: var(--muted); }
+    .where { display: inline-block; font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; border-radius: 999px; padding: .15rem .55rem; }
+    .where.pc { color: var(--pc); } .where.phone { color: var(--phone); }
+
+    /* Parts */
+    .part { margin-top: 2.5rem; scroll-margin-top: 1rem; }
+    .part-head { display: flex; align-items: center; gap: .9rem; margin-bottom: .25rem; }
+    .part-head .n { flex: none; width: 2.6rem; height: 2.6rem; border-radius: 14px; display: grid; place-items: center; font-weight: 800; font-size: 1.2rem; color: #fff; }
+    .part-head .meta { color: var(--muted); font-size: .9rem; }
+    .c-pc { background: var(--pc); } .c-phone { background: var(--phone); } .c-app { background: var(--accent); } .c-ok { background: var(--ok); }
+
+    /* Steps */
+    ol.steps { list-style: none; counter-reset: step; padding: 0; margin: .75rem 0 0; }
+    ol.steps > li { counter-increment: step; position: relative; padding: 0 0 1.1rem 3rem; }
+    ol.steps > li::before { content: counter(step); position: absolute; left: 0; top: -.1rem; width: 2rem; height: 2rem; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; display: grid; place-items: center; }
+    ol.steps > li:not(:last-child)::after { content: ""; position: absolute; left: .95rem; top: 2.1rem; bottom: .3rem; width: 2px; background: var(--line); }
+    ol.steps > li > b:first-child { display: block; }
+    .ui { font-weight: 600; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 0 .35rem; white-space: nowrap; }
+    .path { font-weight: 600; }
+
+    /* Callouts */
+    .note { border-radius: 14px; padding: .8rem 1rem; margin: .9rem 0; font-size: .95rem; display: flex; gap: .7rem; }
+    .note::before { flex: none; font-size: 1.1rem; line-height: 1.4; }
+    .note.ok { background: var(--ok-soft); } .note.ok::before { content: "✓"; color: var(--ok); font-weight: 800; }
+    .note.warn { background: var(--warn-soft); } .note.warn::before { content: "!"; color: var(--warn); font-weight: 900; width: 1rem; text-align: center; }
+    .note.stop { background: var(--stop-soft); } .note.stop::before { content: "✕"; color: var(--stop); font-weight: 800; }
+    .note.tip { background: var(--accent-soft); } .note.tip::before { content: "i"; color: var(--accent); font-weight: 900; font-style: italic; width: 1rem; text-align: center; }
+    .note p { margin: 0; } .note p + p { margin-top: .35rem; }
+
+    /* Buttons */
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; text-decoration: none; font-weight: 600; border-radius: 14px; padding: .75rem 1.1rem; margin: .4rem .4rem .2rem 0; border: 1px solid var(--line); color: var(--text); background: var(--card); }
+    .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+
+    /* Screenshots */
+    figure { margin: 0; text-align: center; }
+    figure img { width: 100%; max-width: 240px; height: auto; border-radius: 26px; border: 6px solid #111; background: #111; display: block; margin: 0 auto; }
+    figcaption { color: var(--muted); font-size: .85rem; margin-top: .5rem; }
+    .shots { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin: 1rem 0; }
+
+    /* Shortcut recipe */
+    .recipe { list-style: none; padding: 0; margin: .75rem 0; display: grid; gap: .5rem; }
+    .recipe li { display: flex; align-items: center; gap: .75rem; background: var(--bg); border-radius: 14px; padding: .7rem .9rem; }
+    .recipe .chip { flex: none; width: 2rem; height: 2rem; border-radius: 9px; display: grid; place-items: center; color: #fff; font-size: .95rem; font-weight: 700; }
+    .recipe small { display: block; color: var(--muted); }
+
+    /* Troubleshooting */
+    details { background: var(--card); border-radius: 16px; margin: .6rem 0; box-shadow: var(--shadow); }
+    summary { cursor: pointer; padding: 1rem 1.1rem; font-weight: 600; list-style: none; display: flex; gap: .6rem; align-items: center; }
+    summary::-webkit-details-marker { display: none; }
+    summary::before { content: "›"; font-size: 1.3rem; line-height: 1; color: var(--muted); transition: transform .15s; }
+    details[open] summary::before { transform: rotate(90deg); }
+    details > div { padding: 0 1.1rem 1.1rem; }
+
+    .done { text-align: center; }
+    .done .big { font-size: 3rem; line-height: 1; }
+    footer { color: var(--muted); font-size: .85rem; text-align: center; margin-top: 3rem; }
+    @media print {
+      body { background: #fff; font-size: 12pt; }
+      .card, details, .map a { box-shadow: none; border: 1px solid #ddd; }
+      details > div { display: block !important; }
+      .part { break-before: page; }
+      .button { border: 1px solid #999; }
+      figure img { max-width: 170px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">Guía paso a paso · iPhone y iPad</p>
+  <h1>Instala AniBridge en tu iPhone o iPad</h1>
+  <p class="lead">Aunque nunca hayas instalado una app fuera de la App Store. Usaremos <b>SideStore</b>: una app gratuita que instala AniBridge con tu propio Apple ID y la mantiene funcionando. Unos 30 minutos, una sola vez.</p>
+
+  <div class="card">
+    <h2>Lo que necesitas</h2>
+    <ul class="needs">
+      <li><span class="ico" aria-hidden="true">📱</span><div>iPhone o iPad con iOS 15 o posterior<small>Con código de desbloqueo activado.</small></div></li>
+      <li><span class="ico" aria-hidden="true">💻</span><div>Una computadora con Windows o Mac<small>Sólo para la primera instalación (y si algún día actualizas iOS).</small></div></li>
+      <li><span class="ico" aria-hidden="true">🔌</span><div>El cable de tu iPhone o iPad<small>Que sirva para datos, no sólo para cargar.</small></div></li>
+      <li><span class="ico" aria-hidden="true">🍎</span><div>Tu Apple ID y su contraseña<small>Con verificación en dos pasos por código (la normal). Las llaves de seguridad físicas no funcionan.</small></div></li>
+      <li><span class="ico" aria-hidden="true">📶</span><div>Wi‑Fi<small>Los datos móviles no sirven para instalar ni renovar.</small></div></li>
+      <li><span class="ico" aria-hidden="true">🔳</span><div>El código QR de tu servidor<small>Te lo da quien administra tu servidor de AniBridge.</small></div></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Cómo funciona, en un minuto</h2>
+    <div class="flow">
+      <div class="box pc"><b>La computadora</b><small>instala SideStore en tu iPhone, una sola vez</small></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="box phone"><b>SideStore</b><small>instala AniBridge y la renueva desde el propio iPhone</small></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="box app"><b>AniBridge</b><small>se conecta a tu servidor con el código QR</small></div>
+    </div>
+    <div class="note tip" style="margin-bottom:0"><span><p>Las apps instaladas así duran <b>7 días</b>. SideStore las renueva antes de que caduquen; en la parte 5 lo dejamos automático. Con un Apple ID gratuito puedes tener hasta 3 apps así a la vez (SideStore cuenta como una).</p></span></div>
+  </div>
+
+  <ol class="map" aria-label="Partes de la guía">
+    <li><a href="#parte1"><span class="n c-pc">1</span><span class="t">Prepara la computadora<br><small>iloader · 5 min</small></span><span class="where pc">Computadora</span></a></li>
+    <li><a href="#parte2"><span class="n c-pc">2</span><span class="t">Instala SideStore en tu iPhone<br><small>con el cable · 5 min</small></span><span class="where pc">Computadora</span></a></li>
+    <li><a href="#parte3"><span class="n c-phone">3</span><span class="t">Activa SideStore<br><small>confiar, Modo desarrollador, VPN · 10 min</small></span><span class="where phone">iPhone</span></a></li>
+    <li><a href="#parte4"><span class="n c-app">4</span><span class="t">Instala y configura AniBridge<br><small>5 min</small></span><span class="where phone">iPhone</span></a></li>
+    <li><a href="#parte5"><span class="n c-ok">5</span><span class="t">Renovación automática<br><small>un atajo · 5 min</small></span><span class="where phone">iPhone</span></a></li>
+  </ol>
+
+  <!-- ───────────────────────────── 1 -->
+  <section class="part" id="parte1">
+    <div class="part-head"><span class="n c-pc">1</span><div><h2>Prepara la computadora</h2><span class="meta">En la computadora · 5 minutos</span></div></div>
+    <div class="card">
+      <p>Sólo necesitas una herramienta: <b>iloader</b>, el instalador oficial que recomienda SideStore.</p>
+      <div class="row two">
+        <div>
+          <h3>Si tienes Windows</h3>
+          <ol class="steps">
+            <li><b>Instala iTunes de Apple</b>Descárgalo desde la página de Apple (no desde la Microsoft Store): así Windows reconoce tu iPhone.<br><a class="button" href="https://www.apple.com/itunes/" target="_blank" rel="noopener">iTunes para Windows</a></li>
+            <li><b>Instala iloader</b>En su página descarga el instalador para Windows (el archivo <b>.msi</b>) y ábrelo.<br><a class="button primary" href="https://iloader.app" target="_blank" rel="noopener">Descargar iloader</a></li>
+          </ol>
+        </div>
+        <div>
+          <h3>Si tienes Mac</h3>
+          <ol class="steps">
+            <li><b>Instala iloader</b>Descarga el archivo <b>.dmg</b>, ábrelo y arrastra iloader a Aplicaciones. No hace falta nada más.<br><a class="button primary" href="https://iloader.app" target="_blank" rel="noopener">Descargar iloader</a></li>
+          </ol>
+        </div>
+      </div>
+      <div class="note warn"><span><p>Descarga iloader sólo desde <b>iloader.app</b>. Le darás tu Apple ID; no uses copias de otras páginas.</p></span></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────── 2 -->
+  <section class="part" id="parte2">
+    <div class="part-head"><span class="n c-pc">2</span><div><h2>Instala SideStore en tu iPhone</h2><span class="meta">En la computadora, con el iPhone conectado · 5 minutos</span></div></div>
+    <div class="card">
+      <ol class="steps">
+        <li><b>Conecta el iPhone con el cable y desbloquéalo</b>Si en el iPhone aparece <span class="ui">¿Confiar en esta computadora?</span>, toca <span class="ui">Confiar</span> y escribe tu código.</li>
+        <li><b>Abre iloader e inicia sesión</b>En <span class="ui">Account</span> (Cuenta) toca <span class="ui">Add Account +</span>, escribe tu Apple ID y contraseña y toca <span class="ui">Login</span>. Si Apple te manda un código de verificación, escríbelo.</li>
+        <li><b>Elige tu iPhone</b>En <span class="ui">Devices</span> (Dispositivos) selecciónalo. Si no aparece, desbloquéalo, prueba otro puerto USB y toca <span class="ui">Refresh Devices</span>.</li>
+        <li><b>Instala SideStore</b>En <span class="ui">Installers</span> (Instaladores) toca <span class="ui">SideStore (Stable)</span>. iloader descarga, firma e instala SideStore y coloca el archivo de emparejamiento él solo. Espera sin desconectar el cable.</li>
+      </ol>
+      <div class="note ok"><span><p>Listo cuando iloader muestre <b>SideStore Installed!</b>. El icono de SideStore ya está en tu iPhone, pero todavía no abre: eso lo resolvemos en la parte 3.</p></span></div>
+      <div class="note tip"><span><p>Elige siempre <b>SideStore (Stable)</b>. Las opciones <i>Nightly</i> son versiones de prueba, y <i>LiveContainer + SideStore</i> es otro método que no usaremos en esta guía.</p></span></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────── 3 -->
+  <section class="part" id="parte3">
+    <div class="part-head"><span class="n c-phone">3</span><div><h2>Activa SideStore</h2><span class="meta">En el iPhone · 10 minutos · ya puedes desconectar el cable</span></div></div>
+
+    <div class="card">
+      <h3 style="margin-top:0">A. Confía en tu Apple ID</h3>
+      <ol class="steps">
+        <li><b>Abre <span class="path">Configuración → General → VPN y administración de dispositivos</span></b>En algunos países se llama <i>Admón. de dispositivos y VPN</i>.</li>
+        <li><b>Toca tu Apple ID</b>Está bajo <span class="ui">App de desarrollador</span>. Aparece tu correo, no el nombre de SideStore: es normal, porque la app está firmada con tu cuenta.</li>
+        <li><b>Toca <span class="ui">Confiar</span></b>En iOS 18 o posterior verás <span class="ui">Permitir y reiniciar</span>: tócalo y escribe tu código.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">B. Activa el Modo desarrollador</h3>
+      <div class="row two" style="align-items:center">
+        <ol class="steps">
+          <li><b>Abre <span class="path">Configuración → Privacidad y seguridad</span></b></li>
+          <li><b>Baja hasta el final y toca <span class="ui">Modo desarrollador</span></b></li>
+          <li><b>Actívalo y toca <span class="ui">Reiniciar</span></b>Al encender, confirma con <span class="ui">Activar</span> y tu código.</li>
+        </ol>
+        <figure><img src="guia/modo-desarrollador.jpg" alt="Privacidad y seguridad con Modo desarrollador activado" loading="lazy" width="480" height="826"><figcaption>Al final de Privacidad y seguridad.</figcaption></figure>
+      </div>
+      <div class="note tip"><span><p>No hace nada raro: sólo permite abrir apps que tú mismo instalaste. Si no aparece la opción, reinicia el iPhone una vez y vuelve a mirar.</p></span></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">C. Instala LocalDevVPN</h3>
+      <p>Es una «VPN» que no envía nada a internet: sólo deja que SideStore hable con el propio iPhone para instalar y renovar apps.</p>
+      <ol class="steps">
+        <li><b>Instálala desde la App Store</b><a class="button" href="https://apps.apple.com/app/localdevvpn/id6755608044" target="_blank" rel="noopener">LocalDevVPN en la App Store</a></li>
+        <li><b>Ábrela y toca <span class="ui">Connect</span></b>iOS te pedirá permiso para agregar una configuración de VPN: toca <span class="ui">Permitir</span> y escribe tu código.</li>
+      </ol>
+      <div class="note warn"><span><p><b>Regla de oro:</b> LocalDevVPN conectada y Wi‑Fi cada vez que SideStore instale, actualice o renueve algo. Verás el icono <b>VPN</b> arriba en la pantalla.</p></span></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0">D. Abre SideStore e inicia sesión</h3>
+      <div class="row two" style="align-items:center">
+        <ol class="steps">
+          <li><b>Abre SideStore</b>Con LocalDevVPN conectada.</li>
+          <li><b>Inicia sesión con el mismo Apple ID</b>El que usaste en iloader. Ojo con las mayúsculas: se escriben igual que en tu cuenta.</li>
+          <li><b>Renueva SideStore una vez</b>Ve a la pestaña <span class="ui">My Apps</span> y toca el botón <span class="ui">7 DAYS</span> junto a SideStore. Si pregunta por el certificado, toca <span class="ui">Yes</span> o <span class="ui">Refresh Now</span>.</li>
+        </ol>
+        <figure><img src="guia/bienvenida.jpg" alt="Pantalla Welcome to SideStore con los campos Apple ID y Password" loading="lazy" width="480" height="583"><figcaption>Inicio de sesión en SideStore.</figcaption></figure>
+      </div>
+      <div class="note ok"><span><p>Listo cuando en <b>My Apps</b> SideStore muestra el contador de <b>7 días</b> sin errores. Si al iniciar sesión sale un error, mira <a href="#problemas">Si algo sale mal</a>.</p></span></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────── 4 -->
+  <section class="part" id="parte4">
+    <div class="part-head"><span class="n c-app">4</span><div><h2>Instala y configura AniBridge</h2><span class="meta">En el iPhone · 5 minutos</span></div></div>
+    <div class="card">
+      <h3 style="margin-top:0">A. Instala AniBridge</h3>
+      <ol class="steps">
+        <li><b>Con LocalDevVPN conectada, abre esta página en Safari en tu iPhone</b>y toca el botón: SideStore se abre y agrega la fuente de AniBridge.<br><a class="button primary" id="sidestore-source" href="./">Agregar AniBridge a SideStore</a></li>
+        <li><b>Confirma en SideStore</b>Toca <span class="ui">Add Source</span> (agregar fuente) si lo pregunta.</li>
+        <li><b>Instala</b>En <span class="ui">Browse</span> o dentro de la fuente, busca <b>AniBridge Player</b> y toca el botón de instalar. Espera a que termine.</li>
+      </ol>
+      <div class="note tip"><span><p>¿El botón no hace nada? En SideStore ve a <span class="ui">Sources</span>, toca <span class="ui">+</span> y pega esta dirección: <br><a id="source-url" href="#" style="overflow-wrap:anywhere">source.json</a></p></span></div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">B. Configura AniBridge</h3>
+      <ol class="steps">
+        <li><b>Abre AniBridge desde la pantalla de inicio</b>Aparece el <b>Asistente de configuración inicial</b>. Toca <span class="ui">Empezar</span>.</li>
+        <li><b>Toca <span class="ui">Escanear código de configuración</span> y apunta al QR de tu servidor</b>Si el QR está en este mismo iPhone (una captura o una foto), toca <span class="ui">Elegir imagen de Fotos</span>.</li>
+        <li><b>Elige cómo identificarte</b>
+          <span style="display:block;margin-top:.3rem"><b>Ya tengo una cuenta</b> (por ejemplo, la usas en otro teléfono o en la TV): escanea el <i>código del perfil</i> que muestra ese dispositivo (en el teléfono: Ajustes › botón del código QR; en la TV: mantén OK sobre tu perfil › Llevar al teléfono).</span>
+          <span style="display:block;margin-top:.3rem"><b>No tengo cuenta</b>: la app crea una nueva con el código del servidor y te muestra su token. Guárdalo (por ejemplo en tus Notas o en un gestor de contraseñas): es la llave para recuperar tu cuenta.</span></li>
+        <li><b>Pon tu nombre y una foto o avatar</b>Es lo que verán tus otros dispositivos y tus TVs.</li>
+        <li><b>Avisos de episodios nuevos</b>Toca <span class="ui">Activar avisos</span> si quieres que te avise cuando salga un episodio de lo que estás viendo, y luego <span class="ui">Empezar a ver</span>.</li>
+      </ol>
+      <div class="note stop"><span><p>El QR del servidor y tu token son como contraseñas: no los publiques ni los compartas en grupos.</p></span></div>
+      <div class="note ok"><span><p>Listo cuando ves la pestaña <b>Recientes</b> con las series. Las versiones nuevas de AniBridge aparecen en SideStore, en <b>My Apps</b>, como <b>UPDATE</b>; la app también te avisa.</p></span></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────── 5 -->
+  <section class="part" id="parte5">
+    <div class="part-head"><span class="n c-ok">5</span><div><h2>Renovación automática</h2><span class="meta">En el iPhone · Atajos · 5 minutos</span></div></div>
+    <div class="card">
+      <p>Cada 7 días hay que renovar las apps. En lugar de acordarte, creamos un atajo que lo hace solo todos los días. Antes, comprueba que funciona a mano: con LocalDevVPN conectada, en SideStore → <span class="ui">My Apps</span> toca <span class="ui">Refresh All</span>.</p>
+      <div class="note tip"><span><p><b>Novedad de iOS 27:</b> ya no existe la pestaña <i>Automatización</i> aparte. Ahora la programación se pone dentro de cada atajo, desde <b>Editar</b>.</p></span></div>
+
+      <h3>A. Atajo «Renovar apps»</h3>
+      <ol class="steps">
+        <li><b>Abre la app Atajos y toca <span class="ui">+</span></b>Ponle de nombre <b>Renovar apps</b>.</li>
+        <li><b>Agrega estas tres acciones, en este orden</b>Usa el buscador de acciones:
+          <ul class="recipe">
+            <li><span class="chip c-phone">1</span><span><b>LocalDevVPN</b> → <b>Enable</b><small>Busca «LocalDevVPN». Enciende la VPN.</small></span></li>
+            <li><span class="chip c-pc">2</span><span><b>Esperar</b> → <b>5 segundos</b><small>Busca «Esperar». Le da tiempo a la VPN de conectarse.</small></span></li>
+            <li><span class="chip c-ok">3</span><span><b>Refresh All Apps</b> (de SideStore)<small>Busca «SideStore». Renueva todas tus apps.</small></span></li>
+          </ul>
+          No agregues nada después de <b>Refresh All Apps</b>: lo que va detrás suele no ejecutarse. La VPN la apagamos con el segundo atajo.</li>
+        <li><b>Pruébalo una vez</b>Toca ▶︎. iOS te pedirá permiso para cada acción la primera vez: elige <span class="ui">Permitir siempre</span>.</li>
+      </ol>
+
+      <h3>B. Prográmalo para todos los días</h3>
+      <ol class="steps">
+        <li><b>En el atajo, toca <span class="ui">Editar</span> → <span class="ui">Automatización</span></b>(<i>Automation</i> si tu iPhone está en inglés).</li>
+        <li><b>Elige <span class="ui">Hora del día</span></b>y pon una hora en la que <b>sueles estar usando el iPhone</b>, por ejemplo 1:00 p. m., repitiendo todos los días.</li>
+        <li><b>Que no pregunte antes de ejecutarse</b>Toca <span class="ui">Editar</span> → el botón <span class="ui">ⓘ</span> (Información) → <span class="ui">Privacidad</span> y activa <span class="ui">Permitir ejecución con el dispositivo bloqueado</span> (<i>Allow Running When Locked</i>).</li>
+      </ol>
+      <div class="note warn"><span><p><b>Por qué a una hora en la que usas el iPhone:</b> iOS 27 sólo deja renovar si el iPhone se desbloqueó hace poco. A las 3 de la mañana, con el teléfono bloqueado toda la noche, falla.</p></span></div>
+
+      <h3>C. Atajo «Apagar VPN»</h3>
+      <ol class="steps">
+        <li><b>Crea otro atajo con una sola acción</b><b>LocalDevVPN</b> → <b>Disable</b>.</li>
+        <li><b>Prográmalo igual, 5 minutos después</b><span class="ui">Editar</span> → <span class="ui">Automatización</span> → <span class="ui">Hora del día</span> (por ejemplo 1:05 p. m., todos los días) y activa también <span class="ui">Permitir ejecución con el dispositivo bloqueado</span>.</li>
+      </ol>
+      <div class="note ok"><span><p>Al día siguiente abre SideStore → <b>My Apps</b>: los contadores deben volver a <b>7 días</b>. Aun así, entra una vez por semana a comprobarlo; si algo falló, toca <b>Refresh All</b> a mano (con LocalDevVPN conectada).</p></span></div>
+      <div class="note tip"><span><p>Atajos a veces muestra «No se pudo ejecutar Refresh All Apps» aunque la renovación sí se hizo. Fíate de los contadores de My Apps.</p></span></div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────── done -->
+  <section class="part">
+    <div class="card done">
+      <div class="big" aria-hidden="true">🎉</div>
+      <h2>¡Listo!</h2>
+      <p>AniBridge está instalada, conectada a tu servidor y se renueva sola. La computadora ya no hace falta, salvo si actualizas iOS (ver abajo).</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────── troubleshooting -->
+  <section class="part" id="problemas">
+    <div class="part-head"><span class="n" style="background:var(--muted)">?</span><div><h2>Si algo sale mal</h2><span class="meta">Toca un problema para ver la solución</span></div></div>
+
+    <details>
+      <summary>SideStore no abre (se cierra o dice que no es de confianza)</summary>
+      <div><p>Repasa la parte 3: <b>A</b> (confiar en tu Apple ID) y <b>B</b> (Modo desarrollador). Las dos son necesarias.</p></div>
+    </details>
+
+    <details>
+      <summary>SideStore dice «Setup Incomplete» o «Pairing File Not Configured»</summary>
+      <div>
+        <div class="row two" style="align-items:center">
+          <div>
+            <p>Falta el archivo de emparejamiento. Vuelve a la computadora:</p>
+            <ol class="steps">
+              <li><b>Conecta el iPhone y abre iloader</b></li>
+              <li><b>Toca <span class="ui">Manage Pairing File</span></b></li>
+              <li><b>Toca <span class="ui">Place</span> junto a SideStore</b>Debe decir <i>Pairing file placed successfully!</i></li>
+            </ol>
+          </div>
+          <figure><img src="guia/setup-incompleto.jpg" alt="Pantalla Setup Incomplete de SideStore" loading="lazy" width="480" height="968"><figcaption>Así se ve si falta.</figcaption></figure>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>Error al iniciar sesión en SideStore (por ejemplo «-80045»)</summary>
+      <div>
+        <p>Es un fallo conocido de estas semanas con el inicio de sesión de Apple. La solución que funciona es usar un servidor de Anisette en lugar del del iPhone:</p>
+        <ol class="steps">
+          <li><b>SideStore → <span class="ui">Settings</span> → <span class="ui">User Customizations</span></b></li>
+          <li><b>Apaga <span class="ui">On-Device Anisette</span></b>y toca <span class="ui">Restart Now</span> cuando lo pida.</li>
+          <li><b>Vuelve a <span class="ui">Settings</span> → <span class="ui">Anisette Servers</span></b>y elige <b>jkcoxson</b> (el número de la lista puede cambiar).</li>
+          <li><b>Inicia sesión de nuevo</b></li>
+        </ol>
+        <div class="shots">
+          <figure><img src="guia/anisette-dispositivo.jpg" alt="User Customizations con On-Device Anisette" loading="lazy" width="480" height="968"><figcaption>1. On-Device Anisette.</figcaption></figure>
+          <figure><img src="guia/anisette-reiniciar.jpg" alt="Aviso Restart Required con el botón Restart Now" loading="lazy" width="480" height="968"><figcaption>2. Al apagarlo, Restart Now.</figcaption></figure>
+          <figure><img src="guia/anisette-servidores.jpg" alt="Lista Anisette Servers con jkcoxson marcado" loading="lazy" width="480" height="968"><figcaption>3. Elige jkcoxson.</figcaption></figure>
+        </div>
+      </div>
+    </details>
+
+    <details>
+      <summary>iloader no ve mi iPhone (Windows)</summary>
+      <div>
+        <ol class="steps">
+          <li><b>Desbloquea el iPhone y prueba otro cable o puerto USB</b></li>
+          <li><b>Comprueba que iTunes es el de la página de Apple</b>Si sigue sin verlo: desinstala iTunes y «Apple Mobile Device Support», e instala la app <b>Dispositivos Apple</b> (Apple Devices) desde la Microsoft Store.</li>
+        </ol>
+      </div>
+    </details>
+
+    <details>
+      <summary>Actualicé iOS y SideStore ya no renueva</summary>
+      <div>
+        <p>Al actualizar o restaurar iOS, el archivo de emparejamiento puede dejar de valer. En la computadora, con iloader:</p>
+        <ol class="steps">
+          <li><b>Toca <span class="ui">Delete Stored Pairing</span></b></li>
+          <li><b>Selecciona tu iPhone</b>y toca <span class="ui">Confiar</span> en el teléfono.</li>
+          <li><b><span class="ui">Manage Pairing File</span> → <span class="ui">Place</span> junto a SideStore</b></li>
+        </ol>
+        <figure style="margin-top:.5rem"><img src="guia/pairing-activo.jpg" alt="Pairing File Management con Lockdown Pairing File configurado y activo" loading="lazy" width="480" height="968"><figcaption>En SideStore → Settings → Pairing File Management debe verse «Configured» y «Active».</figcaption></figure>
+      </div>
+    </details>
+
+    <details>
+      <summary>Dice que llegué al límite de apps</summary>
+      <div><p>Con un Apple ID gratuito puedes tener 3 apps instaladas así a la vez (SideStore cuenta como una, AniBridge como otra) y registrar 10 apps nuevas por semana. Borra de SideStore las que no uses, o espera unos días.</p></div>
+    </details>
+
+    <details>
+      <summary>AniBridge no abre y dice que caducó</summary>
+      <div><p>Pasaron más de 7 días sin renovar. Conecta LocalDevVPN, abre SideStore → <b>My Apps</b> → <b>Refresh All</b>. Si SideStore también caducó, vuelve a instalarlo con iloader (parte 2): tus datos de AniBridge se conservan.</p></div>
+    </details>
+  </section>
+
+  <footer>
+    <p>¿Ya lo tienes? La <a href="./">página de instalación</a> tiene la fuente y la última versión.</p>
+  </footer>
+</main>
+<script>
+  // Project pages live at https://<owner>.github.io/<repo>/; the source is
+  // this repository's latest release, as on the install page.
+  const owner = location.hostname.split('.')[0];
+  const repo = location.pathname.split('/').filter(Boolean)[0] || '';
+  const source = `https://github.com/${owner}/${repo}/releases/latest/download/source.json`;
+  document.getElementById('sidestore-source').href = `sidestore://source?url=${encodeURIComponent(source)}`;
+  const sourceLink = document.getElementById('source-url');
+  sourceLink.href = source;
+  sourceLink.textContent = source;
+  // Printed or saved as PDF: every solution expanded.
+  addEventListener('beforeprint', () => document.querySelectorAll('details').forEach((d) => { d.open = true; }));
+</script>
+</body>
+</html>
