@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>AniBridge Player</title>
+  <style>
+    :root { --bg: #f2f2f7; --card: #ffffff; --text: #1c1c1e; --muted: #6e6e73; --accent: #4b49d6; --accent-text: #ffffff; --line: #d1d1d6; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #000000; --card: #1c1c1e; --text: #f2f2f7; --muted: #98989d; --accent: #7d7aff; --accent-text: #000000; --line: #38383a; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { max-width: 34rem; margin: 0 auto; padding: 2.5rem 1rem 3rem; }
+    header { display: flex; align-items: center; gap: .9rem; margin-bottom: 1.5rem; }
+    header img { width: 56px; height: 56px; border-radius: 13px; flex: none; }
+    h1 { font-size: 1.4rem; margin: 0; overflow-wrap: anywhere; }
+    h2 { font-size: 1.1rem; margin: 0 0 .25rem; }
+    .subtitle { color: var(--muted); margin: .1rem 0 0; }
+    .card { background: var(--card); border-radius: 18px; padding: 1.25rem; margin-bottom: 1rem; }
+    .button { display: block; text-align: center; text-decoration: none; font-weight: 600; border-radius: 14px; padding: .9rem 1rem; margin: .6rem 0; border: 1px solid var(--line); color: var(--text); }
+    .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    p.note { color: var(--muted); font-size: .9rem; margin: .5rem 0 0; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <img src="AppIcon.png" alt="">
+      <div>
+        <h1 id="title">AniBridge Player</h1>
+        <p class="subtitle" id="subtitle">Serie compartida</p>
+      </div>
+    </header>
+
+    <div class="card" id="invalid" hidden>
+      <p id="invalid-text">Este enlace no es válido o está incompleto.</p>
+    </div>
+
+    <div class="card" id="android" hidden>
+      <h2>Android</h2>
+      <a class="button primary" id="android-open" href="#">Abrir en la app</a>
+      <a class="button" id="android-install" href="#">Descargar la app (APK)</a>
+      <p class="note" id="android-note">Si no la tienes instalada, «Abrir en la app» descarga el APK.</p>
+    </div>
+
+    <div class="card" id="ios" hidden>
+      <h2>iPhone y iPad</h2>
+      <a class="button primary" id="ios-open" href="#">Abrir en la app</a>
+      <a class="button" id="lc-open" href="#">Abrir en LiveContainer</a>
+      <p class="note" id="ios-note">Si la app está dentro de LiveContainer, «Abrir en la app» no funciona: iOS no conoce los enlaces de sus apps.</p>
+      <a class="button" id="ios-install" href="index.html">Instalar la app</a>
+    </div>
+
+    <p class="note" id="bridge-note">La serie se abre con el bridge que tengas configurado en la app.</p>
+  </main>
+  <script>
+    const english = !/^es\b/i.test(navigator.language || '');
+    const text = english ? {
+      lang: 'en', subtitle: 'Shared series', invalid: 'This link is not valid or is incomplete.', open: 'Open in the app',
+      apk: 'Download the app (APK)', androidNote: 'If the app is not installed, “Open in the app” downloads the APK.',
+      lc: 'Open in LiveContainer', iosNote: 'If the app runs inside LiveContainer, “Open in the app” does not work: iOS does not know its apps’ links.',
+      install: 'Install the app', bridge: 'The series opens with the bridge set up in your app.',
+    } : null;
+    if (text) {
+      document.documentElement.lang = text.lang;
+      const set = (id, value) => { document.getElementById(id).textContent = value; };
+      set('subtitle', text.subtitle); set('invalid-text', text.invalid); set('android-open', text.open); set('android-install', text.apk);
+      set('android-note', text.androidNote); set('ios-open', text.open); set('lc-open', text.lc); set('ios-note', text.iosNote);
+      set('ios-install', text.install); set('bridge-note', text.bridge);
+    }
+
+    // ?w=/watch/<series>&t=<title>: only a catalog path, never a host or a token.
+    const params = new URLSearchParams(location.search);
+    const path = params.get('w') || '';
+    const title = (params.get('t') || '').trim().slice(0, 200);
+    const valid = path.length <= 300 && /^\/watch\/[A-Za-z0-9._~%-]+$/.test(path);
+    if (title) {
+      document.getElementById('title').textContent = title;
+      document.title = `${title} · AniBridge Player`;
+    }
+    if (!valid) {
+      document.getElementById('invalid').hidden = false;
+      document.getElementById('bridge-note').hidden = true;
+    } else {
+      const owner = location.hostname.split('.')[0];
+      const repo = location.pathname.split('/').filter(Boolean)[0] || '';
+      const apk = `https://github.com/${owner}/${repo}/releases/latest/download/AniBridgePlayer-TV.apk`;
+      const query = `path=${encodeURIComponent(path)}${title ? `&title=${encodeURIComponent(title)}` : ''}`;
+      const app = `anksubbrd://series?${query}`;
+      // Chrome opens the app, or the APK download when it is not installed.
+      const intent = `intent://series?${query}#Intent;scheme=anksubbrd;package=com.personal.anksubbrd.tv;S.browser_fallback_url=${encodeURIComponent(apk)};end`;
+      // LiveContainer forwards the link (standard Base64) to the app that declares the scheme.
+      const liveContainer = `livecontainer://open-url?url=${encodeURIComponent(btoa(app))}`;
+      document.getElementById('android-open').href = intent;
+      document.getElementById('android-install').href = apk;
+      document.getElementById('ios-open').href = app;
+      document.getElementById('lc-open').href = liveContainer;
+      const agent = navigator.userAgent;
+      const android = /Android/i.test(agent);
+      const ios = /iPhone|iPad|iPod/i.test(agent) || (/Macintosh/i.test(agent) && navigator.maxTouchPoints > 1);
+      document.getElementById('android').hidden = ios;
+      document.getElementById('ios').hidden = android;
+    }
+  </script>
+</body>
+</html>
