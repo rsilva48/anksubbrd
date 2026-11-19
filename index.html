@@ -46,7 +46,9 @@
     <div class="card">
       <h2>SideStore</h2>
       <a class="button primary" id="sidestore-source" href="#">Añadir fuente a SideStore</a>
+      <a class="button" id="sidestore-watch-source" href="#">Añadir fuente con Apple Watch</a>
       <p class="note">Después, en SideStore, abre la fuente e instala AniBridge Player. SideStore firma la app con tu Apple ID y la renueva antes de que caduque; las versiones nuevas aparecen en My Apps como UPDATE, y la app también avisa y abre SideStore para actualizar.</p>
+      <p class="note"><strong>Con Apple Watch:</strong> la segunda fuente instala la misma app con la app del reloj dentro (control remoto de tus dispositivos). Añade una fuente u otra, no las dos: es la misma app. Con una cuenta gratuita el reloj usa un App ID más.</p>
     </div>
 
     <div class="card">
@@ -59,9 +61,12 @@
     <div class="card">
       <h2>Otras opciones</h2>
       <a class="button" id="download" href="#">Descargar IPA</a>
+      <a class="button" id="watch-download" href="#">Descargar IPA con Apple Watch</a>
       <a class="button" id="release" href="#">Ver la release en GitHub</a>
       <p class="note">URL de la fuente, para pegarla en LiveContainer (Sources), SideStore (Sources) u otra tienda compatible con AltStore:</p>
       <p class="note"><a id="source-url" href="#">source.json</a></p>
+      <p class="note">Con la app del Apple Watch (SideStore; LiveContainer no instala apps del reloj):</p>
+      <p class="note"><a id="watch-source-url" href="#">source-watch.json</a></p>
     </div>
   </main>
   <script>
@@ -77,6 +82,8 @@
     const manifest = `${base}/manifest.plist`;
     const source = `${releases}/latest/download/source.json`;
     const tvSource = `${releases}/latest/download/tvos-source.json`;
+    // The same app with the Apple Watch app inside (SideStore), from v0.3.92.
+    const watchSource = `${releases}/latest/download/source-watch.json`;
     const link = (id, href) => { document.getElementById(id).href = href; };
     // LiveContainer refuses livecontainer://install while one of its apps is
     // running; open-web-page relaunches it and installs from the OTA manifest.
@@ -88,7 +95,11 @@
     // names the app after the IPA file and then refuses it (bundle ID
     // mismatch), so the page only adds the source.
     link('sidestore-source', `sidestore://source?url=${encodeURIComponent(source)}`);
+    link('sidestore-watch-source', `sidestore://source?url=${encodeURIComponent(watchSource)}`);
     link('download', ipa);
+    link('watch-download', `${base}/AirPlaySubtitlePlayer-Watch-unsigned.ipa`);
+    link('watch-source-url', watchSource);
+    document.getElementById('watch-source-url').textContent = watchSource;
     link('apparition-source', `apparition://source?url=${encodeURIComponent(tvSource)}`);
     link('tv-download', `${base}/AniBridgeTV-unsigned.ipa`);
     link('release', tag ? `${releases}/tag/${tag}` : `${releases}/latest`);
