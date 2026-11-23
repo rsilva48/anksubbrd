@@ -56,6 +56,22 @@
       <a class="button primary" id="apparition-source" href="#">Añadir fuente a Apparition</a>
       <a class="button" id="tv-download" href="#">Descargar IPA de Apple TV</a>
       <p class="note">Instala Apparition en tu computadora (Windows, macOS o Linux), vincula el Apple TV y añade la fuente desde el Apple TV o la computadora. Apparition firma la app con tu Apple ID y la renueva antes de que caduque. La fuente también se puede añadir como <code>github:rsilva48/anksubbrd</code> con «Asset name contains» <code>AniBridgeTV</code>.</p>
+      <p class="note">¿El botón no abre Apparition? Pega esta dirección en sus fuentes:</p>
+      <p class="note"><a id="tv-source-url" href="#">tvos-source.json</a></p>
+    </div>
+
+    <div class="card">
+      <h2>Android</h2>
+      <a class="button primary" id="apk" href="#">Descargar APK</a>
+      <p class="note">Un solo APK para teléfono, tablet y Android TV. Ábrelo y permite instalar apps de esta fuente si Android lo pide. Después la app avisa de las versiones nuevas y se actualiza desde la propia app. En la TV, descárgalo con un navegador o un gestor de archivos (por ejemplo Downloader).</p>
+    </div>
+
+    <div class="card">
+      <h2>Windows</h2>
+      <a class="button primary" id="windows-setup" href="#">Descargar instalador</a>
+      <a class="button" id="windows-x64" href="#">Versión portátil (ZIP x64)</a>
+      <a class="button" id="windows-arm64" href="#">Versión portátil (ZIP ARM64)</a>
+      <p class="note">El instalador sirve para x64 y ARM64 y pregunta si instalar sólo para ti (sin permisos de administrador) o para todos los usuarios. Queda en el menú Inicio, se actualiza sola y se desinstala desde Configuración de Windows. Windows 10 (2004) o posterior. No está firmada: si SmartScreen avisa, elige <strong>Más información › Ejecutar de todas formas</strong>.</p>
     </div>
 
     <div class="card">
@@ -102,6 +118,15 @@
     document.getElementById('watch-source-url').textContent = watchSource;
     link('apparition-source', `apparition://source?url=${encodeURIComponent(tvSource)}`);
     link('tv-download', `${base}/AniBridgeTV-unsigned.ipa`);
+    link('tv-source-url', tvSource);
+    document.getElementById('tv-source-url').textContent = tvSource;
+    // Android and Windows always from the "latest" release: a ?tag= release
+    // may not change them and then has no APK or Windows files of its own.
+    const latest = `${releases}/latest/download`;
+    link('apk', `${latest}/AniBridgePlayer-TV.apk`);
+    link('windows-setup', `${latest}/AniBridgePlayer-Windows-Setup.exe`);
+    link('windows-x64', `${latest}/AniBridge-Windows-x64.zip`);
+    link('windows-arm64', `${latest}/AniBridge-Windows-arm64.zip`);
     link('release', tag ? `${releases}/tag/${tag}` : `${releases}/latest`);
     link('source-url', source);
     document.getElementById('source-url').textContent = source;
