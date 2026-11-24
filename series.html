@@ -19,11 +19,17 @@
     header img { width: 56px; height: 56px; border-radius: 13px; flex: none; }
     h1 { font-size: 1.4rem; margin: 0; overflow-wrap: anywhere; }
     h2 { font-size: 1.1rem; margin: 0 0 .25rem; }
+    h3 { font-size: 1rem; margin: 1.1rem 0 0; }
     .subtitle { color: var(--muted); margin: .1rem 0 0; }
     .card { background: var(--card); border-radius: 18px; padding: 1.25rem; margin-bottom: 1rem; }
     .button { display: block; text-align: center; text-decoration: none; font-weight: 600; border-radius: 14px; padding: .9rem 1rem; margin: .6rem 0; border: 1px solid var(--line); color: var(--text); }
     .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+    .button:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     p.note { color: var(--muted); font-size: .9rem; margin: .5rem 0 0; }
+    details.card { padding: 0; }
+    summary { cursor: pointer; font-weight: 600; padding: 1rem 1.25rem; border-radius: 18px; }
+    details > div { padding: 0 1.25rem 1.25rem; }
+    details > div h3:first-child { margin-top: 0; }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -41,37 +47,103 @@
       <p id="invalid-text">Este enlace no es válido o está incompleto.</p>
     </div>
 
-    <div class="card" id="android" hidden>
-      <h2>Android</h2>
-      <a class="button primary" id="android-open" href="#">Abrir en la app</a>
-      <a class="button" id="android-install" href="#">Descargar la app (APK)</a>
-      <p class="note" id="android-note">Si no la tienes instalada, «Abrir en la app» descarga el APK.</p>
+    <!-- One link for this device: the script picks the URL by platform. -->
+    <div class="card" id="main" hidden>
+      <h2 id="platform">Abrir la serie</h2>
+      <a class="button primary" id="open" href="#">Abrir en AniBridge</a>
+      <a class="button" id="lc-open" href="#" hidden>Abrir en LiveContainer</a>
+      <a class="button" id="install" href="index.html">Descargar la app</a>
+      <p class="note" id="note"></p>
     </div>
 
-    <div class="card" id="ios" hidden>
-      <h2>iPhone y iPad</h2>
-      <a class="button primary" id="ios-open" href="#">Abrir en la app</a>
-      <a class="button" id="lc-open" href="#">Abrir en LiveContainer</a>
-      <p class="note" id="ios-note">Si la app está dentro de LiveContainer, «Abrir en la app» no funciona: iOS no conoce los enlaces de sus apps.</p>
-      <a class="button" id="ios-install" href="index.html">Instalar la app</a>
-    </div>
+    <!-- Every platform's links, for opening the series on another device. -->
+    <details class="card" id="others" hidden>
+      <summary id="others-title">¿Otro dispositivo?</summary>
+      <div>
+        <h3>Android</h3>
+        <a class="button" id="android-open" href="#">Abrir en la app</a>
+        <a class="button" id="android-install" href="#">Descargar la app (APK)</a>
+        <h3 id="ios-title">iPhone y iPad</h3>
+        <a class="button" id="ios-open" href="#">Abrir en la app</a>
+        <a class="button" id="ios-lc-open" href="#">Abrir en LiveContainer</a>
+        <a class="button" id="ios-install" href="index.html">Instalar la app</a>
+        <h3>Windows</h3>
+        <a class="button" id="windows-open" href="#">Abrir en la app</a>
+        <a class="button" id="windows-install" href="#">Descargar el instalador</a>
+      </div>
+    </details>
 
     <p class="note" id="bridge-note">La serie se abre con el bridge que tengas configurado en la app.</p>
   </main>
   <script>
     const english = !/^es\b/i.test(navigator.language || '');
     const text = english ? {
-      lang: 'en', subtitle: 'Shared series', invalid: 'This link is not valid or is incomplete.', open: 'Open in the app',
-      apk: 'Download the app (APK)', androidNote: 'If the app is not installed, “Open in the app” downloads the APK.',
-      lc: 'Open in LiveContainer', iosNote: 'If the app runs inside LiveContainer, “Open in the app” does not work: iOS does not know its apps’ links.',
-      install: 'Install the app', bridge: 'The series opens with the bridge set up in your app.',
-    } : null;
-    if (text) {
+      lang: 'en', subtitle: 'Shared series', invalid: 'This link is not valid or is incomplete.',
+      openMain: 'Open in AniBridge', open: 'Open in the app', lc: 'Open in LiveContainer',
+      platform: { android: 'Android', ios: 'iPhone and iPad', windows: 'Windows', other: 'Open the series' },
+      install: { android: 'Download the app (APK)', ios: 'Install the app', windows: 'Download the app for Windows', other: 'Get the app' },
+      note: {
+        android: 'If the app is not installed, “Open in AniBridge” downloads the APK.',
+        ios: 'If the app runs inside LiveContainer, use “Open in LiveContainer”: iOS does not know its apps’ links.',
+        windows: 'If nothing happens, install the app (or run the portable app once) and open this link again.',
+        other: 'AniBridge is available for Android, iPhone and iPad, Apple TV and Windows.',
+      },
+      others: 'Another device?', iosTitle: 'iPhone and iPad', apk: 'Download the app (APK)', iosInstall: 'Install the app',
+      windowsInstall: 'Download the installer', bridge: 'The series opens with the bridge set up in your app.',
+    } : {
+      lang: 'es', openMain: 'Abrir en AniBridge',
+      platform: { android: 'Android', ios: 'iPhone y iPad', windows: 'Windows', other: 'Abrir la serie' },
+      install: { android: 'Descargar la app (APK)', ios: 'Instalar la app', windows: 'Descargar la app para Windows', other: 'Conseguir la app' },
+      note: {
+        android: 'Si no la tienes instalada, «Abrir en AniBridge» descarga el APK.',
+        ios: 'Si la app está dentro de LiveContainer, usa «Abrir en LiveContainer»: iOS no conoce los enlaces de sus apps.',
+        windows: 'Si no pasa nada, instala la app (o abre una vez la versión portable) y vuelve a abrir este enlace.',
+        other: 'AniBridge está disponible para Android, iPhone y iPad, Apple TV y Windows.',
+      },
+    };
+    const set = (id, value) => { document.getElementById(id).textContent = value; };
+    if (english) {
       document.documentElement.lang = text.lang;
-      const set = (id, value) => { document.getElementById(id).textContent = value; };
-      set('subtitle', text.subtitle); set('invalid-text', text.invalid); set('android-open', text.open); set('android-install', text.apk);
-      set('android-note', text.androidNote); set('ios-open', text.open); set('lc-open', text.lc); set('ios-note', text.iosNote);
-      set('ios-install', text.install); set('bridge-note', text.bridge);
+      set('subtitle', text.subtitle); set('invalid-text', text.invalid); set('open', text.openMain); set('lc-open', text.lc);
+      set('others-title', text.others); set('android-open', text.open); set('android-install', text.apk);
+      set('ios-title', text.iosTitle); set('ios-open', text.open); set('ios-lc-open', text.lc); set('ios-install', text.iosInstall);
+      set('windows-open', text.open); set('windows-install', text.windowsInstall); set('bridge-note', text.bridge);
+    }
+
+    // The device this page runs on. iPadOS asks for the desktop site and
+    // reports a Mac, so a Mac with a touch screen counts as iPad.
+    function detectPlatform(agent, touchPoints) {
+      if (/Android/i.test(agent)) return 'android';
+      if (/iPhone|iPad|iPod/i.test(agent) || (/Macintosh/i.test(agent) && touchPoints > 1)) return 'ios';
+      if (/Windows/i.test(agent)) return 'windows';
+      return 'other';
+    }
+
+    // Every link for the series. Project pages live at
+    // https://<owner>.github.io/<repo>/ and downloads only ever point at this
+    // repository's latest GitHub release (as in index.html).
+    function seriesLinks(path, title, owner, repo) {
+      const latest = `https://github.com/${owner}/${repo}/releases/latest/download`;
+      const apk = `${latest}/AniBridgePlayer-TV.apk`;
+      const windowsSetup = `${latest}/AniBridgePlayer-Windows-Setup.exe`;
+      const query = `path=${encodeURIComponent(path)}${title ? `&title=${encodeURIComponent(title)}` : ''}`;
+      // iOS and Windows (installer and portable app) register this scheme.
+      const app = `anksubbrd://series?${query}`;
+      // Chrome opens the app, or the APK download when it is not installed.
+      const intent = `intent://series?${query}#Intent;scheme=anksubbrd;package=com.personal.anksubbrd.tv;S.browser_fallback_url=${encodeURIComponent(apk)};end`;
+      // LiveContainer forwards the link (standard Base64) to the app that declares the scheme.
+      const liveContainer = `livecontainer://open-url?url=${encodeURIComponent(btoa(app))}`;
+      return { app, intent, liveContainer, apk, windowsSetup, iosInstall: 'index.html' };
+    }
+
+    // The main button and its install link for each platform.
+    function primaryLinks(platform, links) {
+      switch (platform) {
+        case 'android': return { open: links.intent, install: links.apk, liveContainer: null };
+        case 'ios': return { open: links.app, install: links.iosInstall, liveContainer: links.liveContainer };
+        case 'windows': return { open: links.app, install: links.windowsSetup, liveContainer: null };
+        default: return { open: links.app, install: 'index.html', liveContainer: null };
+      }
     }
 
     // ?w=/watch/<series>&t=<title>: only a catalog path, never a host or a token.
@@ -89,22 +161,31 @@
     } else {
       const owner = location.hostname.split('.')[0];
       const repo = location.pathname.split('/').filter(Boolean)[0] || '';
-      const apk = `https://github.com/${owner}/${repo}/releases/latest/download/AniBridgePlayer-TV.apk`;
-      const query = `path=${encodeURIComponent(path)}${title ? `&title=${encodeURIComponent(title)}` : ''}`;
-      const app = `anksubbrd://series?${query}`;
-      // Chrome opens the app, or the APK download when it is not installed.
-      const intent = `intent://series?${query}#Intent;scheme=anksubbrd;package=com.personal.anksubbrd.tv;S.browser_fallback_url=${encodeURIComponent(apk)};end`;
-      // LiveContainer forwards the link (standard Base64) to the app that declares the scheme.
-      const liveContainer = `livecontainer://open-url?url=${encodeURIComponent(btoa(app))}`;
-      document.getElementById('android-open').href = intent;
-      document.getElementById('android-install').href = apk;
-      document.getElementById('ios-open').href = app;
-      document.getElementById('lc-open').href = liveContainer;
-      const agent = navigator.userAgent;
-      const android = /Android/i.test(agent);
-      const ios = /iPhone|iPad|iPod/i.test(agent) || (/Macintosh/i.test(agent) && navigator.maxTouchPoints > 1);
-      document.getElementById('android').hidden = ios;
-      document.getElementById('ios').hidden = android;
+      const links = seriesLinks(path, title, owner, repo);
+      const platform = detectPlatform(navigator.userAgent || '', navigator.maxTouchPoints || 0);
+      const primary = primaryLinks(platform, links);
+      const link = (id, href) => { document.getElementById(id).href = href; };
+
+      set('platform', text.platform[platform]);
+      link('open', primary.open);
+      link('install', primary.install);
+      set('install', text.install[platform]);
+      set('note', text.note[platform]);
+      if (primary.liveContainer) {
+        link('lc-open', primary.liveContainer);
+        document.getElementById('lc-open').hidden = false;
+      }
+
+      link('android-open', links.intent);
+      link('android-install', links.apk);
+      link('ios-open', links.app);
+      link('ios-lc-open', links.liveContainer);
+      link('ios-install', links.iosInstall);
+      link('windows-open', links.app);
+      link('windows-install', links.windowsSetup);
+
+      document.getElementById('main').hidden = false;
+      document.getElementById('others').hidden = false;
     }
   </script>
 </body>
