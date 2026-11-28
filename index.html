@@ -44,6 +44,13 @@
     </div>
 
     <div class="card">
+      <h2>SideInstaller</h2>
+      <a class="button primary" id="sideinstaller-open" href="https://sideinstaller.net/install.html">Instalar o actualizar con SideInstaller</a>
+      <a class="button" href="https://sideinstaller.net/install.html">Obtener SideInstaller</a>
+      <p class="note">En iPhone o iPad, el primer botón intenta abrir SideInstaller con el IPA de esta versión. Si la app no se abre, instala SideInstaller y vuelve a esta página.</p>
+    </div>
+
+    <div class="card">
       <h2>SideStore</h2>
       <a class="button primary" id="sidestore-source" href="#">Añadir fuente a SideStore</a>
       <a class="button" id="sidestore-watch-source" href="#">Añadir fuente con Apple Watch</a>
@@ -107,6 +114,7 @@
     link('install', `livecontainer://open-web-page?url=${encodeURIComponent(btoa(itms))}`);
     link('direct', `livecontainer://install?url=${encodeURIComponent(ipa)}`);
     link('lc-source', `livecontainer://source?url=${encodeURIComponent(source)}`);
+    link('sideinstaller-open', `https://sideinstaller.net/open.html?url=${encodeURIComponent(ipa)}`);
     // SideStore installs and updates from the source. Its install?url= link
     // names the app after the IPA file and then refuses it (bundle ID
     // mismatch), so the page only adds the source.
